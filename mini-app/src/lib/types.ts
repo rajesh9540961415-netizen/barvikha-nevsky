@@ -38,6 +38,19 @@ export type Employee = {
  */
 export type Kind = "cash" | "terminal" | "service";
 
+/**
+ * Состав смены и роли.
+ *
+ * Живёт здесь, а не в crew.ts, чтобы серверный слой базы мог ссылаться
+ * на этот тип, не втягивая за собой браузерный код.
+ */
+export type Shift = {
+  crew: number[];
+  operator: number | null;
+  admin: number | null;
+  cashier: number | null;
+};
+
 /** Одна запись о полученных деньгах. */
 export type Entry = {
   id: string;

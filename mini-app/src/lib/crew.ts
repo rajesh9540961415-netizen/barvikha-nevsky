@@ -1,3 +1,6 @@
+import { readLastShift, readShift, writeShift } from "./db/actions";
+import type { Shift } from "./types";
+
 /**
  * Состав смены.
  *
@@ -10,17 +13,15 @@
  *   — администратор смены: ему уходят 20 % от заработка официантов;
  *   — кассир смены: ему уходит доля от 750 ₽.
  * Последние две нужны отчёту: там у каждого своя строка.
+ *
+ * Состав лежит в общей базе, а не только на одном телефоне: иначе
+ * администратор собрал бы смену у себя, а сменщик открыл бы приложение
+ * и увидел пустой экран.
  */
 
-const KEY = "chaevye.shift.v2";
-const LAST_KEY = "chaevye.shift.last.v2";
-
-export type Shift = {
-  crew: number[];
-  operator: number | null;
-  admin: number | null;
-  cashier: number | null;
-};
+// Тип объявлен в types.ts, чтобы на него мог ссылаться серверный слой базы.
+// Здесь оставлен для экранов: они берут его отсюда с самого начала.
+export type { Shift } from "./types";
 
 export const EMPTY_SHIFT: Shift = {
   crew: [],
@@ -29,35 +30,23 @@ export const EMPTY_SHIFT: Shift = {
   cashier: null,
 };
 
-type ShiftsByDay = Record<string, Shift>;
-
-function read<T>(key: string, fallback: T): T {
-  if (typeof window === "undefined") return fallback;
-  try {
-    const raw = window.localStorage.getItem(key);
-    return raw ? (JSON.parse(raw) as T) : fallback;
-  } catch {
-    return fallback;
-  }
+export async function getShift(businessDay: string): Promise<Shift> {
+  return (await readShift(businessDay)) ?? EMPTY_SHIFT;
 }
 
-export function getShift(businessDay: string): Shift {
-  return read<ShiftsByDay>(KEY, {})[businessDay] ?? EMPTY_SHIFT;
-}
-
-export function setShift(businessDay: string, shift: Shift): void {
-  const all = read<ShiftsByDay>(KEY, {});
-  all[businessDay] = shift;
-  window.localStorage.setItem(KEY, JSON.stringify(all));
-  window.localStorage.setItem(LAST_KEY, JSON.stringify(shift));
+export async function setShift(
+  businessDay: string,
+  shift: Shift,
+): Promise<void> {
+  return writeShift(businessDay, shift);
 }
 
 /** Прошлая смена — чтобы не собирать состав заново каждый вечер. */
-export function getLastShift(): Shift {
-  return read<Shift>(LAST_KEY, EMPTY_SHIFT);
+export async function getLastShift(): Promise<Shift> {
+  return (await readLastShift()) ?? EMPTY_SHIFT;
 }
 
-/** Смена собрана, можно вводить. */
+/** Смена собрана, можно вводить. Проверка чистая, база для неё не нужна. */
 export function isReady(shift: Shift): boolean {
   return shift.crew.length > 0 && shift.operator !== null;
 }

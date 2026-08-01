@@ -1,0 +1,17 @@
+# Настройки публикации на Amvera.
+#
+# Собираем через Dockerfile, а не встроенным окружением Node: приложение
+# лежит в подпапке mini-app, а Amvera собирает из корня репозитория.
+# Dockerfile это разруливает, см. комментарии в нём.
+
+meta:
+  environment: docker
+  toolchain:
+    name: docker
+
+build:
+  dockerfile: Dockerfile
+
+run:
+  # Next.js слушает 3000; тот же порт открыт в Dockerfile.
+  containerPort: 3000

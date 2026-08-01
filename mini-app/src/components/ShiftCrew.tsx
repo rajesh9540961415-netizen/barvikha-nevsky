@@ -17,7 +17,8 @@ type Props = {
   initial: Shift;
   manual: Employee[];
   onManualChange: (people: Employee[]) => void;
-  onDone: (shift: Shift) => void;
+  /** Ждёт ответа хранилища: состав смены нужен и сменщику, а не только тут. */
+  onDone: (shift: Shift) => Promise<void>;
   onCancel?: () => void;
 };
 
@@ -32,9 +33,10 @@ export default function ShiftCrew({
   const [shift, setShift] = useState<Shift>(initial);
   const [adding, setAdding] = useState(false);
   const [name, setName] = useState("");
+  const [busy, setBusy] = useState(false);
 
   const everyone = [...FROM_QUICK_RESTO, ...manual];
-  const ready = shift.crew.length > 0 && shift.operator !== null;
+  const ready = shift.crew.length > 0 && shift.operator !== null && !busy;
 
   function toggleCrew(id: number) {
     setShift((s) => ({
@@ -49,9 +51,9 @@ export default function ShiftCrew({
     setShift((s) => ({ ...s, [role]: s[role] === id ? null : id }));
   }
 
-  function add() {
+  async function add() {
     const before = manual.map((p) => p.id);
-    const next = addManualPerson(name);
+    const next = await addManualPerson(name);
     onManualChange(next);
     const fresh = next.find((p) => !before.includes(p.id));
     if (fresh) setShift((s) => ({ ...s, crew: [...s.crew, fresh.id] }));
@@ -59,8 +61,8 @@ export default function ShiftCrew({
     setAdding(false);
   }
 
-  function drop(person: Employee) {
-    onManualChange(removeManualPerson(person.id));
+  async function drop(person: Employee) {
+    onManualChange(await removeManualPerson(person.id));
     setShift((s) => ({
       crew: s.crew.filter((x) => x !== person.id),
       operator: s.operator === person.id ? null : s.operator,
@@ -180,14 +182,23 @@ export default function ShiftCrew({
       <div className="mt-auto border-t border-line px-4 py-3">
         <button
           disabled={!ready}
-          onClick={() => onDone(shift)}
+          onClick={async () => {
+            setBusy(true);
+            try {
+              await onDone(shift);
+            } finally {
+              setBusy(false);
+            }
+          }}
           className="w-full rounded-xl bg-sand py-4 text-lg text-ink disabled:bg-surface disabled:text-fg-muted"
         >
-          {shift.crew.length === 0
-            ? "Отметьте официантов"
-            : shift.operator === null
-              ? "Укажите, кто вносит записи"
-              : `Начать смену · ${shift.crew.length}`}
+          {busy
+            ? "Сохраняю…"
+            : shift.crew.length === 0
+              ? "Отметьте официантов"
+              : shift.operator === null
+                ? "Укажите, кто вносит записи"
+                : `Начать смену · ${shift.crew.length}`}
         </button>
         {ready && (!shift.admin || !shift.cashier) && (
           <p className="pt-2 text-center text-xs text-fg-muted">

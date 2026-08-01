@@ -1,42 +1,26 @@
+import { deleteEntry, insertEntry, listEntries } from "./db/actions";
 import type { Entry } from "./types";
 
 /**
  * Хранилище записей.
  *
- * Пока пишем в память браузера (localStorage) — этого хватает, чтобы
- * проверить работу на месте. Когда подключим Supabase, меняется
- * только этот файл: экраны его не увидят.
+ * Сами запросы к базе живут в db/actions.ts и выполняются на сервере.
+ * Здесь — только то, что видят экраны. Форма функций не менялась с тех пор,
+ * когда записи лежали в памяти браузера, поэтому экраны переезда не заметили.
+ *
+ * Ошибку наружу не глотаем: если запись не сохранилась, экран обязан
+ * об этом сказать. Молча потерянные чаевые — ровно то, от чего уходим.
  */
 
-// Версия в ключе: при изменении состава полей старые записи не подхватываются
-// и не ломают экран. v2 — добавились официант и способ оплаты.
-const KEY = "chaevye.entries.v2";
-
-function readAll(): Entry[] {
-  if (typeof window === "undefined") return [];
-  try {
-    const raw = window.localStorage.getItem(KEY);
-    return raw ? (JSON.parse(raw) as Entry[]) : [];
-  } catch {
-    return [];
-  }
-}
-
-function writeAll(entries: Entry[]): void {
-  window.localStorage.setItem(KEY, JSON.stringify(entries));
-}
-
 /** Записи за один бизнес-день, свежие сверху. */
-export function listByDay(businessDay: string): Entry[] {
-  return readAll()
-    .filter((e) => e.businessDay === businessDay)
-    .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+export async function listByDay(businessDay: string): Promise<Entry[]> {
+  return listEntries(businessDay);
 }
 
-export function save(entry: Entry): void {
-  writeAll([...readAll(), entry]);
+export async function save(entry: Entry): Promise<void> {
+  return insertEntry(entry);
 }
 
-export function remove(id: string): void {
-  writeAll(readAll().filter((e) => e.id !== id));
+export async function remove(id: string): Promise<void> {
+  return deleteEntry(id);
 }

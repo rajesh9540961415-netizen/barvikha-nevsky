@@ -12,7 +12,11 @@ type Props = {
   /** Кого предложить: обычно тот, кто уже обслуживал этот стол сегодня. */
   suggestedWaiterId: number | null;
   onCancel: () => void;
-  onConfirm: (amount: number, waiter: Employee, kind: Kind) => void;
+  /**
+   * Ждёт ответа хранилища. Пока ждём — кнопки заперты, чтобы двойной тап
+   * по «Наличные» не записал одни и те же чаевые дважды.
+   */
+  onConfirm: (amount: number, waiter: Employee, kind: Kind) => Promise<void>;
 };
 
 const KEYS = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "00", "0", "⌫"];
@@ -29,15 +33,18 @@ export default function AmountPad({
   onConfirm,
 }: Props) {
   const [digits, setDigits] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [failed, setFailed] = useState(false);
   const [waiterId, setWaiterId] = useState<number | null>(
     suggestedWaiterId ?? (crew.length === 1 ? crew[0].id : null),
   );
 
   const amount = Number(digits || "0");
   const waiter = crew.find((w) => w.id === waiterId) ?? null;
-  const ready = amount > 0 && waiter !== null;
+  const ready = amount > 0 && waiter !== null && !saving;
 
   function press(key: string) {
+    setFailed(false);
     if (key === "⌫") {
       setDigits((d) => d.slice(0, -1));
       return;
@@ -46,9 +53,20 @@ export default function AmountPad({
     if (Number(next || "0") <= MAX_AMOUNT) setDigits(next);
   }
 
-  function confirm(kind: Kind) {
+  async function confirm(kind: Kind) {
     if (!ready || !waiter) return;
-    onConfirm(amount, waiter, kind);
+    setSaving(true);
+    setFailed(false);
+    try {
+      await onConfirm(amount, waiter, kind);
+      // При успехе экран закрывается сверху.
+    } catch {
+      // При ошибке остаёмся с набранной суммой и выбранным официантом —
+      // повторить можно одним тапом.
+      setFailed(true);
+    } finally {
+      setSaving(false);
+    }
   }
 
   return (
@@ -112,7 +130,17 @@ export default function AmountPad({
       </div>
 
       <div className="px-4 pb-6 pt-3">
-        <div className="mb-1.5 text-xs text-fg-muted">чаевые</div>
+        {/* Строка состояния прямо над кнопками: ошибку видно, а кнопки
+            остаются открытыми — повторить можно сразу. */}
+        <div
+          className={`mb-1.5 text-xs ${failed ? "text-alert" : "text-fg-muted"}`}
+        >
+          {saving
+            ? "сохраняю…"
+            : failed
+              ? "не сохранилось — проверьте связь и повторите"
+              : "чаевые"}
+        </div>
         <div className="grid grid-cols-2 gap-2">
           <button
             disabled={!ready}
