@@ -15,21 +15,29 @@
 ```
 Барвиха Невский/
 ├── CLAUDE.md             ← этот файл, навигация
-├── .gitignore            ← исключает .business/ и документы из git
+├── .gitignore            ← исключает .business/, документы и отчёты из git
+├── .env                  ← доступы к Quick Resto (не в git)
 ├── .business/            ← скрытая папка, бизнес-контекст (не в git)
 │   ├── INDEX.md          ← оглавление, входная точка, статус наполнения
 │   ├── company/          ← about, team, values, legal
 │   ├── products/         ← overview, pricing
 │   ├── audience/         ← avatar, segments, objections, journey
 │   ├── goals/            ← annual, quarterly, monthly, kpi
-│   ├── economics/        ← unit-economics, revenue, costs, forecast
+│   ├── economics/        ← unit-economics, revenue, costs, forecast, чаевые
 │   ├── marketing/        ← channels, funnel, competitors, content
 │   ├── assets/           ← brand-guidelines, testimonials
 │   ├── execution/        ← операционка: план недели, бэклог
 │   └── история/          ← рефлексии по итогам сессий
 ├── plans/                ← технические планы (один план = одна функция)
 │   └── README.md         ← правила ведения планов
-└── (код проекта появится позже - см. plans/)
+├── mini-app/             ← приложение для ввода чаевых (Next.js)
+├── scripts/              ← Quick Resto API и генерация отчётов
+│   ├── qr_check.py       ← проверка связи с Quick Resto
+│   ├── qr_tables.py      ← схема залов и столов → data/tables.json
+│   ├── qr_employees.py   ← сотрудники → data/employees.json
+│   ├── report_new.py     ← создать отчёт на месяц
+│   └── report_fill.py    ← заполнить отчёт выгрузкой из приложения
+└── data/                 ← справочники из Quick Resto
 ```
 
 ### Где что искать
@@ -46,6 +54,9 @@
 | Операционка: план недели, бэклог задач | `.business/execution/` |
 | Что делали в прошлых сессиях | `.business/история/` |
 | Технические планы реализации | `plans/` |
+| **Как устроены чаевые: правила деления, пороги, доли** | `.business/economics/tips.md` |
+| **Эффект от чаевых на терминале, пресеты** | `.business/economics/tips-terminal-2026.md` |
+| **Что не решено по учёту чаевых** | `plans/2026-07-31-uchyot-chaevykh.md`, раздел «Открытые вопросы» |
 
 ## Ключевые принципы проекта
 
@@ -55,13 +66,42 @@
 
 ## Стек
 
-- **Приложение:** Next.js
-- **Хостинг:** Vercel
-- **База данных:** Supabase
-- **Мобильный интерфейс:** Telegram Mini App
+- **Приложение:** Next.js 16 + React 19 + Tailwind 4 + TypeScript, папка `mini-app/`
+- **Хостинг:** Vercel (ещё не подключён)
+- **База данных:** Supabase (ещё не подключена — записи пока в памяти браузера)
+- **Мобильный интерфейс:** Telegram Mini App (ещё не подключён)
 - **Данные по чекам:** Quick Resto API
 
 Определён 31.07.2026 в рамках плана учёта чаевых (см. `plans/`).
+
+## Git и GitHub
+
+Проект под git с 01.08.2026.
+
+- **Репозиторий:** приватный, `github.com/borzovavv-dot/barvikha-nevsky`
+- **Доступ:** SSH-ключ `~/.ssh/id_ed25519`, пароль при push не спрашивается
+- **Имя и почта для git заданы только внутри проекта**, глобальные настройки не трогали
+
+Сохранить изменения:
+
+```bash
+cd "/Users/user/Documents/Невский" && git add -A && git commit -m "что поменяли" && git push
+```
+
+**В репозиторий не уходят:** `.env` с доступами, `.business/`, учредительные документы, папка «Питер. Просмотры», заполненные отчёты `Чаевые-дубль-*.xlsx` и выгрузки `смена-*.json` — везде фамилии и суммы.
+
+**В репозитории есть фамилии 17 сотрудников** — в `data/employees.json`, из него приложение рисует состав смены. Репозиторий приватный. Если понадобится убрать личное — заменить фамилии на номера, расшифровку оставить локально.
+
+## Доступы
+
+Лежат в `.env` в корне проекта, в git не уходят.
+
+| Что | Где |
+|---|---|
+| Quick Resto API | `.env` → `QR_URL`, `QR_LOGIN`, `QR_PASSWORD`. Отдельные от веб-входа, задаются в бэк-офисе: Предприятие → Настройки → Общие настройки |
+| Сбер Чаевые | `lk.sbtips.ru`, вход по СМС — только вручную владельцем |
+
+⚠️ Базовый адрес Quick Resto API — `<адрес>/platform/online`, без этого куска любой запрос даёт `401`.
 
 ## Папка `.business/`
 
