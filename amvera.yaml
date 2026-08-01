@@ -13,5 +13,6 @@ build:
   dockerfile: Dockerfile
 
 run:
-  # Next.js слушает 3000; тот же порт открыт в Dockerfile.
-  containerPort: 3000
+  # Панель Amvera рядом с внутренним именем приложения пишет «должно слушать
+  # порт 80». Тот же порт задан в Dockerfile переменной PORT.
+  containerPort: 80
