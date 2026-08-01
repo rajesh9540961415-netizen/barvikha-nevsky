@@ -18,8 +18,12 @@ export function db() {
 
   const url = process.env.DATABASE_URL;
   if (!url) {
+    // Мест два, и подсказка должна называть оба: на сервере искать файл
+    // бессмысленно, а на компьютере — панель Amvera.
     throw new Error(
-      "Не задан DATABASE_URL. Строка подключения к базе живёт в mini-app/.env.local",
+      "Не задан DATABASE_URL. На сервере строка подключения задаётся " +
+        "в переменных приложения в панели Amvera (имя переменной — ровно " +
+        "DATABASE_URL), на этом компьютере — в файле mini-app/.env.local",
     );
   }
 
