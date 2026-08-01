@@ -23,7 +23,7 @@ export default function ShiftSummary({
   everyone,
   onClose,
 }: Props) {
-  const s = splitShift(entries, crew);
+  const s = splitShift(entries, crew, day);
   const paying = s.waiters.filter((w) => w.aboveThreshold).length;
 
   return (
@@ -76,7 +76,9 @@ export default function ShiftSummary({
           value={s.cashierTotal}
           note={
             s.crewSize > 0
-              ? `по ${formatMoney(s.cashierShare)} · ${paying} из ${s.crewSize}`
+              ? // Сумма кассира зависит от дня недели, поэтому показываем
+                // её целиком: видно, из чего сложилась доля.
+                `${formatMoney(s.cashierPool)} ÷ ${s.crewSize} = по ${formatMoney(s.cashierShare)} · платят ${paying}`
               : undefined
           }
         />

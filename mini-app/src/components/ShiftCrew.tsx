@@ -1,7 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { formatBusinessDay } from "@/lib/businessDay";
+import { formatBusinessDay, formatMoney } from "@/lib/businessDay";
+import { cashierPool } from "@/lib/split";
 import type { Shift } from "@/lib/crew";
 import {
   addManualPerson,
@@ -173,7 +174,7 @@ export default function ShiftCrew({
         onPick={(id) => pick("admin", id)}
       />
       <RolePicker
-        title="кассир смены — ему уходит доля от 750 ₽"
+        title={`кассир смены — ему уходит доля от ${formatMoney(cashierPool(day))}`}
         people={everyone}
         selected={shift.cashier}
         onPick={(id) => pick("cashier", id)}

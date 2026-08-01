@@ -41,7 +41,7 @@ export function buildExport(
   shift: Shift,
   everyone: Employee[],
 ): ShiftExport {
-  const s = splitShift(entries, crew);
+  const s = splitShift(entries, crew, day);
   const nameOf = (id: number | null) =>
     everyone.find((p) => p.id === id)?.name ?? null;
 
