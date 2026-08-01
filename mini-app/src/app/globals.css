@@ -1,0 +1,29 @@
+@import "tailwindcss";
+
+@theme {
+  --color-ink: #0c0c0e;
+  --color-surface: #17171b;
+  --color-surface-2: #1f1f25;
+  --color-line: #2c2c34;
+  --color-sand: #c9a96b;
+  --color-sand-dim: #6b5c3c;
+  --color-fg: #f4f3f1;
+  --color-fg-muted: #8b8b93;
+}
+
+html,
+body {
+  background: var(--color-ink);
+  color: var(--color-fg);
+  font-family: var(--font-geist-sans), system-ui, sans-serif;
+  -webkit-tap-highlight-color: transparent;
+}
+
+body {
+  overscroll-behavior: none;
+}
+
+/* Быстрые тапы по крупным кнопкам не должны выделять текст. */
+button {
+  user-select: none;
+}
