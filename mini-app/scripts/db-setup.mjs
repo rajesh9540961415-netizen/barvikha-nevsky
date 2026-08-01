@@ -25,7 +25,14 @@ if (!url) {
 const shown = url.replace(/\/\/[^@]*@/, "//…@");
 console.log(`Подключаюсь: ${shown}`);
 
-const sql = postgres(url, { ssl: "require", connect_timeout: 15 });
+const sql = postgres(url, {
+  ssl: "require",
+  connect_timeout: 15,
+  // При повторном запуске PostgreSQL сообщает «таблица уже существует».
+  // Это ожидаемо — скрипт для того и написан, чтобы его можно было
+  // запускать сколько угодно раз. Но выглядело бы как ошибка.
+  onnotice: () => {},
+});
 
 try {
   const [{ version }] = await sql`select version()`;
