@@ -67,7 +67,15 @@
 ## Стек
 
 - **Приложение:** Next.js 16 + React 19 + Tailwind 4 + TypeScript, папка `mini-app/`
-- **Хостинг:** Amvera Cloud, регион Москва. **Опубликовано 01.08.2026: https://chaevye-borzovavv.amvera.io** Сборка из `Dockerfile` + `amvera.yaml` в корне. Amvera забирает код с GitHub сама, но **только из ветки `master`** — после `git push origin main` не забыть `git branch -f master main && git push origin master`. Состояние базы видно на `/api/health`
+- **Хостинг:** Amvera Cloud, регион Москва. **Опубликовано 01.08.2026: https://chaevye-borzovavv.amvera.io** Сборка из `Dockerfile` + `amvera.yaml` в корне. Состояние базы видно на `/api/health`
+
+⚠️ **Как выкладывать.** Amvera собирает только из ветки `master`. Подключение к GitHub настроено, но **срабатывает не всегда** — 02.08.2026 одна выкладка не доехала, в бою осталась предыдущая версия. Поэтому отправлять надо напрямую и потом проверять:
+
+```bash
+cd "/Users/user/Documents/Невский" && git branch -f master main && git push origin main && git push origin master && git push amvera master
+```
+
+Затем сверить, что в бою нужный коммит: `git ls-remote --heads amvera` должно совпасть с `git log --oneline -1 master`.
 - **База данных:** PostgreSQL 17 на Amvera, проект `chaevye1`, регион Москва — **подключена 01.08.2026**. Доступ в `mini-app/.env.local`, в git не уходит. Схема и настройка: `mini-app/scripts/`, команда `npm run db:setup`
 
 ⚠️ **Боевые и тестовые данные разделены схемами одной базы.** Права завести вторую базу у пользователя нет, поэтому: боевые данные — в схеме `public`, проверки — в схеме `test`. Переключает переменная `DATABASE_SCHEMA` в `mini-app/.env.local` (там стоит `test`). На сервере Amvera она не задана, поэтому в бою всегда `public`. **Никогда не проверять изменения на боевой схеме** — там настоящие деньги смены.
