@@ -25,9 +25,15 @@ if (!url) {
 const shown = url.replace(/\/\/[^@]*@/, "//…@");
 console.log(`Подключаюсь: ${shown}`);
 
+// Тестовая схема: та же база, но отдельный набор таблиц. Боевые данные
+// лежат в public и этим скриптом не затрагиваются.
+const schema = process.env.DATABASE_SCHEMA;
+if (schema) console.log(`Схема: ${schema} (тестовая, не боевая)`);
+
 const sql = postgres(url, {
   ssl: "require",
   connect_timeout: 15,
+  ...(schema ? { connection: { search_path: schema } } : {}),
   // При повторном запуске PostgreSQL сообщает «таблица уже существует».
   // Это ожидаемо — скрипт для того и написан, чтобы его можно было
   // запускать сколько угодно раз. Но выглядело бы как ошибка.
@@ -38,16 +44,23 @@ try {
   const [{ version }] = await sql`select version()`;
   console.log(`✓ Связь есть: ${version.split(",")[0]}`);
 
+  if (schema) {
+    await sql.unsafe(`create schema if not exists "${schema}"`);
+    await sql.unsafe(`set search_path to "${schema}"`);
+    console.log(`✓ Схема ${schema} на месте`);
+  }
+
   await sql.unsafe(readFileSync(join(here, "schema.sql"), "utf8"));
   console.log("✓ Таблицы на месте");
 
+  const where = schema ?? "public";
   const tables = await sql`
     select table_name, (
       select count(*) from information_schema.columns c
-      where c.table_name = t.table_name
+      where c.table_name = t.table_name and c.table_schema = ${where}
     ) as columns
     from information_schema.tables t
-    where table_schema = 'public'
+    where table_schema = ${where}
       and table_name in ('entries', 'shifts', 'manual_people')
     order by table_name
   `;

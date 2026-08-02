@@ -69,6 +69,8 @@
 - **Приложение:** Next.js 16 + React 19 + Tailwind 4 + TypeScript, папка `mini-app/`
 - **Хостинг:** Amvera Cloud, регион Москва. **Опубликовано 01.08.2026: https://chaevye-borzovavv.amvera.io** Сборка из `Dockerfile` + `amvera.yaml` в корне. Amvera забирает код с GitHub сама, но **только из ветки `master`** — после `git push origin main` не забыть `git branch -f master main && git push origin master`. Состояние базы видно на `/api/health`
 - **База данных:** PostgreSQL 17 на Amvera, проект `chaevye1`, регион Москва — **подключена 01.08.2026**. Доступ в `mini-app/.env.local`, в git не уходит. Схема и настройка: `mini-app/scripts/`, команда `npm run db:setup`
+
+⚠️ **Боевые и тестовые данные разделены схемами одной базы.** Права завести вторую базу у пользователя нет, поэтому: боевые данные — в схеме `public`, проверки — в схеме `test`. Переключает переменная `DATABASE_SCHEMA` в `mini-app/.env.local` (там стоит `test`). На сервере Amvera она не задана, поэтому в бою всегда `public`. **Никогда не проверять изменения на боевой схеме** — там настоящие деньги смены.
 - **Мобильный интерфейс:** Telegram Mini App (ещё не подключён)
 - **Данные по чекам:** Quick Resto API
 
