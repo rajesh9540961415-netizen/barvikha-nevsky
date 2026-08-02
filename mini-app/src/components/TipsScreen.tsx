@@ -7,6 +7,7 @@ import ShiftSummary from "@/components/ShiftSummary";
 import TablePicker from "@/components/TablePicker";
 import scheme from "@/data/tables.json";
 import { businessDayKey, formatBusinessDay, formatMoney } from "@/lib/businessDay";
+import { buildExport, downloadExport } from "@/lib/exportShift";
 import type { Shift } from "@/lib/crew";
 import { EMPTY_SHIFT, getLastShift, getShift, isReady, setShift } from "@/lib/crew";
 import { getManualPeople, getQuickRestoPeople } from "@/lib/people";
@@ -22,9 +23,36 @@ const KIND_LABEL: Record<Kind, string> = {
   service: "сервисный сбор",
 };
 
-type Picked = { hall: Hall; table: Table };
+/**
+ * Выбранный стол вместе со свежей записью по нему, если такая есть.
+ *
+ * Свежесть считается в момент выбора стола, а не при отрисовке: время —
+ * величина изменчивая, и вычислять её во время рендера нельзя, иначе
+ * результат будет прыгать при каждой перерисовке.
+ */
+type Picked = { hall: Hall; table: Table; recent: Entry | null };
 type Toast = { text: string; bad: boolean };
 type Loading = "loading" | "ready" | "failed";
+
+/**
+ * Как часто перечитывать записи, пока приложение открыто.
+ *
+ * В смене работают двое — администратор и кассир, — и каждый видит только
+ * то, что загрузил при открытии. Без обновления у них расходятся и точки
+ * на столах, и итог внизу. 25 секунд — чтобы чужая запись появлялась
+ * быстрее, чем успеешь дойти до следующего стола.
+ */
+const REFRESH_MS = 25_000;
+
+/**
+ * В пределах этого времени повторный ввод по тому же столу считается
+ * подозрительным и вызывает вопрос.
+ *
+ * 15 минут: вчерашние задвоения шли с разницей в 10–15 секунд, а вторая
+ * посадка за тот же стол случается заметно позже. Такое окно ловит ошибку
+ * и не пристаёт с вопросами весь вечер.
+ */
+const RECENT_MS = 15 * 60_000;
 
 export default function TipsScreen() {
   const [day] = useState(businessDayKey);
@@ -70,6 +98,40 @@ export default function TipsScreen() {
       alive = false;
     };
   }, [day, attempt]);
+
+  // Фоновое обновление: подтягивает записи, внесённые со второго телефона.
+  // Экрана загрузки не показывает и об ошибках молчит — это не действие
+  // пользователя, а служебная работа. Если связи нет, следующая попытка
+  // случится через REFRESH_MS.
+  useEffect(() => {
+    if (loading !== "ready") return;
+    let alive = true;
+
+    const pull = async () => {
+      try {
+        const fresh = await listByDay(day);
+        if (alive) setEntries(fresh);
+      } catch {
+        // тихо: фоновое обновление не должно пугать сообщениями
+      }
+    };
+
+    const onVisible = () => {
+      if (document.visibilityState === "visible") pull();
+    };
+
+    const timer = setInterval(pull, REFRESH_MS);
+    // Свернули приложение, поговорили с гостем, вернулись — список свежий.
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("online", pull);
+
+    return () => {
+      alive = false;
+      clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("online", pull);
+    };
+  }, [day, loading]);
 
   const everyone = useMemo(
     () => [...getQuickRestoPeople(), ...manual],
@@ -140,6 +202,39 @@ export default function TipsScreen() {
     // Экран суммы закрываем только после успеха: иначе на ошибке
     // введённое пропало бы и набирать пришлось бы заново.
     setPicked(null);
+  }
+
+  /**
+   * Итоги открываем только на свежих данных.
+   *
+   * Именно отсюда выгружается отчёт, и собраться он должен из всех записей
+   * смены, а не из тех, что этот телефон успел загрузить.
+   */
+  async function openSummary() {
+    try {
+      setEntries(await listByDay(day));
+    } catch {
+      setToast({ text: "Не удалось обновить — цифры могут быть неполными", bad: true });
+    }
+    setShowSummary(true);
+  }
+
+  /**
+   * Выгрузка отчёта. Перечитываем базу непосредственно перед сборкой:
+   * неполный отчёт — самая тихая из возможных ошибок, её никто не заметит.
+   * Поэтому при сбое связи отчёт не собираем вовсе.
+   */
+  async function exportShift() {
+    try {
+      const fresh = await listByDay(day);
+      setEntries(fresh);
+      downloadExport(buildExport(day, fresh, crew, shift, everyone));
+    } catch {
+      setToast({
+        text: "Отчёт не собран: нет связи, данные могли быть неполными",
+        bad: true,
+      });
+    }
   }
 
   async function undoLast() {
@@ -215,9 +310,8 @@ export default function TipsScreen() {
           day={day}
           entries={entries}
           crew={crew}
-          shift={shift}
-          everyone={everyone}
           onClose={() => setShowSummary(false)}
+          onExport={exportShift}
           onHistory={() => {
             setShowSummary(false);
             setShowHistory(true);
@@ -235,6 +329,7 @@ export default function TipsScreen() {
           table={picked.table}
           crew={crew}
           suggestedWaiterId={previous?.waiterId ?? null}
+          recent={picked.recent}
           onCancel={() => setPicked(null)}
           onConfirm={addEntry}
         />
@@ -262,14 +357,24 @@ export default function TipsScreen() {
           halls={halls}
           activeHallId={hallId}
           onHallChange={setHallId}
-          onPick={(hall, table) => setPicked({ hall, table })}
+          onPick={(hall, table) => {
+            // entries отсортированы свежими вперёд, поэтому find даёт последнюю.
+            // Переспрашиваем только про свежую: за вечер стол сажают не раз,
+            // и вторые чаевые через два часа — обычное дело, не ошибка.
+            const last = entries.find((e) => e.tableId === table.id);
+            const recent =
+              last && Date.now() - new Date(last.createdAt).getTime() < RECENT_MS
+                ? last
+                : null;
+            setPicked({ hall, table, recent });
+          }}
           usedTableIds={usedTableIds}
         />
 
         <div className="mt-auto border-t border-line px-4 py-3">
           <div className="flex items-center justify-between gap-2">
             <button
-              onClick={() => setShowSummary(true)}
+              onClick={openSummary}
               className="-m-2 flex-1 rounded-lg p-2 text-left active:bg-surface"
             >
               <div className="text-lg tabular-nums">{formatMoney(total)}</div>

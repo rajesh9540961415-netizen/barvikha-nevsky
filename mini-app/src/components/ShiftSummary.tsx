@@ -1,8 +1,6 @@
 "use client";
 
 import { formatBusinessDay, formatMoney } from "@/lib/businessDay";
-import type { Shift } from "@/lib/crew";
-import { buildExport, downloadExport } from "@/lib/exportShift";
 import { THRESHOLD, splitShift } from "@/lib/split";
 import type { Employee, Entry } from "@/lib/types";
 
@@ -10,20 +8,22 @@ type Props = {
   day: string;
   entries: Entry[];
   crew: Employee[];
-  shift: Shift;
-  everyone: Employee[];
   onClose: () => void;
   onHistory: () => void;
+  /**
+   * Выгрузка живёт наверху намеренно: там перед сборкой перечитывается база.
+   * Отчёт, собранный из половины записей, — самая тихая из ошибок.
+   */
+  onExport: () => void;
 };
 
 export default function ShiftSummary({
   day,
   entries,
   crew,
-  shift,
-  everyone,
   onClose,
   onHistory,
+  onExport,
 }: Props) {
   const s = splitShift(entries, crew, day);
   const paying = s.waiters.filter((w) => w.aboveThreshold).length;
@@ -96,9 +96,7 @@ export default function ShiftSummary({
         </button>
         <button
           disabled={entries.length === 0}
-          onClick={() =>
-            downloadExport(buildExport(day, entries, crew, shift, everyone))
-          }
+          onClick={onExport}
           className="w-full rounded-xl border border-sand py-3.5 text-base text-sand disabled:border-line disabled:text-fg-muted"
         >
           Выгрузить смену для отчёта

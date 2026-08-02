@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { formatMoney } from "@/lib/businessDay";
-import type { Employee, Hall, Kind, Table } from "@/lib/types";
+import type { Employee, Entry, Hall, Kind, Table } from "@/lib/types";
 
 type Props = {
   hall: Hall;
@@ -11,6 +11,14 @@ type Props = {
   crew: Employee[];
   /** Кого предложить: обычно тот, кто уже обслуживал этот стол сегодня. */
   suggestedWaiterId: number | null;
+  /**
+   * Свежая запись по этому же столу, если она есть.
+   *
+   * Нужна, чтобы переспросить перед вводом. В смену 01.08.2026 по каждому
+   * столу Невского зала чаевые внесли дважды — 33 раза подряд. Такой вопрос
+   * поймал бы это на первом же столе.
+   */
+  recent: Entry | null;
   onCancel: () => void;
   /**
    * Ждёт ответа хранилища. Пока ждём — кнопки заперты, чтобы двойной тап
@@ -21,6 +29,15 @@ type Props = {
 
 const KEYS = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "00", "0", "⌫"];
 
+/** «2 минуты назад» — чтобы понять, свежая ли это запись или из начала смены. */
+function minutesAgo(iso: string): string {
+  const mins = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 60000));
+  if (mins < 1) return "только что";
+  if (mins === 1) return "минуту назад";
+  if (mins < 5) return `${mins} минуты назад`;
+  return `${mins} минут назад`;
+}
+
 /** Больше вводить и не нужно: защита от случайного лишнего нуля. */
 const MAX_AMOUNT = 200_000;
 
@@ -29,12 +46,17 @@ export default function AmountPad({
   table,
   crew,
   suggestedWaiterId,
+  recent,
   onCancel,
   onConfirm,
 }: Props) {
   const [digits, setDigits] = useState("");
   const [saving, setSaving] = useState(false);
   const [failed, setFailed] = useState(false);
+  // Вопрос о повторе: способ оплаты, который ждёт подтверждения, и готовая
+  // подпись «сколько минут назад». Подпись считается здесь, а не при
+  // отрисовке: время меняется, и в рендере его вычислять нельзя.
+  const [asking, setAsking] = useState<{ kind: Kind; ago: string } | null>(null);
   const [waiterId, setWaiterId] = useState<number | null>(
     suggestedWaiterId ?? (crew.length === 1 ? crew[0].id : null),
   );
@@ -55,6 +77,12 @@ export default function AmountPad({
 
   async function confirm(kind: Kind) {
     if (!ready || !waiter) return;
+    // По этому столу недавно уже вносили — переспрашиваем один раз.
+    if (recent && asking === null) {
+      setAsking({ kind, ago: minutesAgo(recent.createdAt) });
+      return;
+    }
+    setAsking(null);
     setSaving(true);
     setFailed(false);
     try {
@@ -130,6 +158,32 @@ export default function AmountPad({
       </div>
 
       <div className="px-4 pb-6 pt-3">
+        {asking !== null && recent && (
+          <div className="mb-3 rounded-xl border border-alert bg-surface p-3">
+            <div className="text-sm text-fg">
+              По столу {table.title} уже вносили: {formatMoney(recent.amount)} ·{" "}
+              {recent.waiterName}
+            </div>
+            <div className="mt-0.5 text-xs text-fg-muted">
+              {asking.ago} · внёс {recent.operatorName}
+            </div>
+            <div className="mt-2.5 grid grid-cols-2 gap-2">
+              <button
+                onClick={() => setAsking(null)}
+                className="rounded-lg border border-line py-2.5 text-sm text-fg-muted active:bg-surface-2"
+              >
+                Не добавлять
+              </button>
+              <button
+                onClick={() => confirm(asking.kind)}
+                className="rounded-lg bg-alert py-2.5 text-sm text-ink"
+              >
+                Всё равно добавить
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* Строка состояния прямо над кнопками: ошибку видно, а кнопки
             остаются открытыми — повторить можно сразу. */}
         <div
