@@ -19,6 +19,8 @@ import { db } from "./sql";
 type EntryRow = {
   id: string;
   business_day: string;
+  deleted_at: Date | null;
+  deleted_by_name: string | null;
   hall_id: number;
   hall_title: string;
   table_id: number;
@@ -49,10 +51,30 @@ function toEntry(r: EntryRow): Entry {
     operatorId: r.operator_id,
     operatorName: r.operator_name,
     createdAt: r.created_at.toISOString(),
+    deletedAt: r.deleted_at ? r.deleted_at.toISOString() : null,
+    deletedByName: r.deleted_by_name,
   };
 }
 
+/** Живые записи за смену: отменённые не в счёт. */
 export async function listEntries(businessDay: string): Promise<Entry[]> {
+  const sql = db();
+  const rows = await sql<EntryRow[]>`
+    select * from entries
+    where business_day = ${businessDay} and deleted_at is null
+    order by created_at desc
+  `;
+  return rows.map(toEntry);
+}
+
+/**
+ * История за смену: всё, включая отменённое.
+ *
+ * Отдельно от listEntries намеренно: обычные экраны и отчёт про отменённые
+ * знать не должны, иначе они попадут в суммы. История — единственное место,
+ * где их видно.
+ */
+export async function listHistory(businessDay: string): Promise<Entry[]> {
   const sql = db();
   const rows = await sql<EntryRow[]>`
     select * from entries
@@ -76,9 +98,25 @@ export async function insertEntry(e: Entry): Promise<void> {
   `;
 }
 
-export async function deleteEntry(id: string): Promise<void> {
+/**
+ * Отменяет запись, не стирая её.
+ *
+ * Повторная отмена уже отменённой ничего не меняет — условие
+ * «deleted_at is null» защищает от затирания времени первой отмены.
+ */
+export async function cancelEntry(
+  id: string,
+  operatorId: number,
+  operatorName: string,
+): Promise<void> {
   const sql = db();
-  await sql`delete from entries where id = ${id}`;
+  await sql`
+    update entries
+       set deleted_at = now(),
+           deleted_by_id = ${operatorId},
+           deleted_by_name = ${operatorName}
+     where id = ${id} and deleted_at is null
+  `;
 }
 
 type ShiftRow = {

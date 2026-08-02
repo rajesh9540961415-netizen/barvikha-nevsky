@@ -13,6 +13,7 @@ type Props = {
   shift: Shift;
   everyone: Employee[];
   onClose: () => void;
+  onHistory: () => void;
 };
 
 export default function ShiftSummary({
@@ -22,6 +23,7 @@ export default function ShiftSummary({
   shift,
   everyone,
   onClose,
+  onHistory,
 }: Props) {
   const s = splitShift(entries, crew, day);
   const paying = s.waiters.filter((w) => w.aboveThreshold).length;
@@ -86,6 +88,12 @@ export default function ShiftSummary({
       </div>
 
       <div className="px-4 pt-4">
+        <button
+          onClick={onHistory}
+          className="mb-2 w-full rounded-xl border border-line bg-surface py-3.5 text-base text-fg active:bg-surface-2"
+        >
+          История записей ›
+        </button>
         <button
           disabled={entries.length === 0}
           onClick={() =>

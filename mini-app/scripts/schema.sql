@@ -29,6 +29,22 @@ create table if not exists entries (
 
 create index if not exists entries_business_day_idx on entries (business_day);
 
+-- Отмена не стирает запись, а помечает её.
+--
+-- Раньше «Отменить» удаляло строку бесследно, и проверить себя было нельзя:
+-- если администратор ошибся, отменил и внёс заново, в базе оставался только
+-- последний вариант. Для самопроверки важно видеть и то, что убрали.
+--
+-- Отменённые не попадают ни в списки, ни в суммы, ни в отчёт — только
+-- в историю. Пишем и кто отменил: в смене работают двое.
+alter table entries add column if not exists deleted_at       timestamptz;
+alter table entries add column if not exists deleted_by_id    integer;
+alter table entries add column if not exists deleted_by_name  text;
+
+-- Обычные списки читают только живые записи, поэтому индекс только по ним.
+create index if not exists entries_day_alive_idx
+  on entries (business_day) where deleted_at is null;
+
 -- Состав смены и роли: одна строка на бизнес-день.
 create table if not exists shifts (
   business_day text        primary key,

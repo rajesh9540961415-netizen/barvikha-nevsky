@@ -10,7 +10,8 @@ import { businessDayKey, formatBusinessDay, formatMoney } from "@/lib/businessDa
 import type { Shift } from "@/lib/crew";
 import { EMPTY_SHIFT, getLastShift, getShift, isReady, setShift } from "@/lib/crew";
 import { getManualPeople, getQuickRestoPeople } from "@/lib/people";
-import { listByDay, remove, save } from "@/lib/storage";
+import ShiftHistory from "@/components/ShiftHistory";
+import { cancel, listByDay, save } from "@/lib/storage";
 import type { Employee, Entry, Hall, Kind, Scheme, Table } from "@/lib/types";
 
 const { halls } = scheme as Scheme;
@@ -37,6 +38,7 @@ export default function TipsScreen() {
   const [picked, setPicked] = useState<Picked | null>(null);
   const [editingCrew, setEditingCrew] = useState(false);
   const [showSummary, setShowSummary] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
   const [toast, setToast] = useState<Toast | null>(null);
 
   // Всё, что лежит в хранилище, спрашиваем одним заходом при открытии.
@@ -142,9 +144,11 @@ export default function TipsScreen() {
 
   async function undoLast() {
     const last = entries[0];
-    if (!last) return;
+    if (!last || !operator) return;
     try {
-      await remove(last.id);
+      // Запись не стирается, а помечается отменённой — след остаётся
+      // в истории. Кто отменил, тоже пишем: в смене работают двое.
+      await cancel(last.id, operator.id, operator.name);
       setEntries(await listByDay(day));
       setToast({
         text: `Отменено: ${last.tableTitle} · ${formatMoney(last.amount)}`,
@@ -201,6 +205,10 @@ export default function TipsScreen() {
       );
     }
 
+    if (showHistory) {
+      return <ShiftHistory day={day} onClose={() => setShowHistory(false)} />;
+    }
+
     if (showSummary) {
       return (
         <ShiftSummary
@@ -210,6 +218,10 @@ export default function TipsScreen() {
           shift={shift}
           everyone={everyone}
           onClose={() => setShowSummary(false)}
+          onHistory={() => {
+            setShowSummary(false);
+            setShowHistory(true);
+          }}
         />
       );
     }
