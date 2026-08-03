@@ -31,7 +31,20 @@ export function formatBusinessDay(key: string): string {
   return `${Number(day)} ${MONTHS[Number(month) - 1]}`;
 }
 
-/** «1 500 ₽» — неразрывные пробелы, чтобы сумма не рвалась по строкам. */
+/**
+ * «1 500 ₽» — неразрывные пробелы, чтобы сумма не рвалась по строкам.
+ *
+ * Копейки показываем, только когда они есть: гости оставляют круглые суммы,
+ * и «1 500,00 ₽» на каждом экране было бы шумом. Но когда чаевые делят между
+ * официантами, копейка появляется — и прятать её нельзя, это деньги: доля
+ * «1 250,5» должна читаться как 1 250,50, иначе две такие доли на экране
+ * не сойдутся с тем, что ввели.
+ */
 export function formatMoney(amount: number): string {
-  return `${amount.toLocaleString("ru-RU").replace(/\s/g, " ")} ₽`;
+  const withKopecks = Math.round(amount * 100) % 100 !== 0;
+  const text = amount.toLocaleString("ru-RU", {
+    minimumFractionDigits: withKopecks ? 2 : 0,
+    maximumFractionDigits: 2,
+  });
+  return `${text.replace(/\s/g, " ")} ₽`;
 }

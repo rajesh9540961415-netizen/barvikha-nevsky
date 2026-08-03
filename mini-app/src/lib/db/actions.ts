@@ -1,6 +1,6 @@
 "use server";
 
-import type { Employee, Entry, Kind, Shift } from "../types";
+import type { Employee, Entry, Kind, QrTip, Shift } from "../types";
 import { db } from "./sql";
 
 /**
@@ -21,10 +21,10 @@ type EntryRow = {
   business_day: string;
   deleted_at: Date | null;
   deleted_by_name: string | null;
-  hall_id: number;
-  hall_title: string;
-  table_id: number;
-  table_title: string;
+  hall_id: number | null;
+  hall_title: string | null;
+  table_id: number | null;
+  table_title: string | null;
   waiter_id: number;
   waiter_name: string;
   amount: string;
@@ -32,6 +32,9 @@ type EntryRow = {
   operator_id: number;
   operator_name: string;
   created_at: Date;
+  split_group: string | null;
+  gross: string | null;
+  commission_rate: string;
 };
 
 function toEntry(r: EntryRow): Entry {
@@ -47,12 +50,17 @@ function toEntry(r: EntryRow): Entry {
     // Деньги в базе хранятся как numeric и приезжают строкой — иначе
     // копейки округлялись бы на ровном месте.
     amount: Number(r.amount),
+    // У записей, сделанных до появления комиссии, поля нет: тогда до официанта
+    // доходило ровно то, что оставил гость.
+    gross: r.gross === null ? Number(r.amount) : Number(r.gross),
+    commissionRate: Number(r.commission_rate),
     kind: r.kind as Kind,
     operatorId: r.operator_id,
     operatorName: r.operator_name,
     createdAt: r.created_at.toISOString(),
     deletedAt: r.deleted_at ? r.deleted_at.toISOString() : null,
     deletedByName: r.deleted_by_name,
+    splitGroup: r.split_group,
   };
 }
 
@@ -84,22 +92,42 @@ export async function listHistory(businessDay: string): Promise<Entry[]> {
   return rows.map(toEntry);
 }
 
-export async function insertEntry(e: Entry): Promise<void> {
+/**
+ * Кладёт запись в базу.
+ *
+ * Строк может быть несколько: одни чаевые, поделённые между официантами,
+ * ложатся по строке на каждого. Всё одной транзакцией — если сохранится
+ * половина группы, чаевые окажутся поделены на одного, и итог смены
+ * разойдётся с тем, что оставил гость.
+ */
+export async function insertEntries(entries: Entry[]): Promise<void> {
+  if (entries.length === 0) return;
   const sql = db();
-  await sql`
-    insert into entries (
-      id, business_day, hall_id, hall_title, table_id, table_title,
-      waiter_id, waiter_name, amount, kind, operator_id, operator_name, created_at
-    ) values (
-      ${e.id}, ${e.businessDay}, ${e.hallId}, ${e.hallTitle},
-      ${e.tableId}, ${e.tableTitle}, ${e.waiterId}, ${e.waiterName},
-      ${e.amount}, ${e.kind}, ${e.operatorId}, ${e.operatorName}, ${e.createdAt}
-    )
-  `;
+  await sql.begin(async (tx) => {
+    for (const e of entries) {
+      await tx`
+        insert into entries (
+          id, business_day, hall_id, hall_title, table_id, table_title,
+          waiter_id, waiter_name, amount, kind, operator_id, operator_name,
+          created_at, split_group, gross, commission_rate
+        ) values (
+          ${e.id}, ${e.businessDay}, ${e.hallId}, ${e.hallTitle},
+          ${e.tableId}, ${e.tableTitle}, ${e.waiterId}, ${e.waiterName},
+          ${e.amount}, ${e.kind}, ${e.operatorId}, ${e.operatorName},
+          ${e.createdAt}, ${e.splitGroup ?? null}, ${e.gross},
+          ${e.commissionRate}
+        )
+      `;
+    }
+  });
 }
 
 /**
  * Отменяет запись, не стирая её.
+ *
+ * Если запись — часть поделённых чаевых, отменяется вся группа. Половина
+ * чаевых без пары не значит ничего: она осталась бы висеть на одном официанте
+ * и завысила бы его заработок ровно на ту долю, которую убрали у второго.
  *
  * Повторная отмена уже отменённой ничего не меняет — условие
  * «deleted_at is null» защищает от затирания времени первой отмены.
@@ -115,8 +143,95 @@ export async function cancelEntry(
        set deleted_at = now(),
            deleted_by_id = ${operatorId},
            deleted_by_name = ${operatorName}
-     where id = ${id} and deleted_at is null
+     where deleted_at is null
+       and (
+         id = ${id}
+         -- У обычной записи метки нет, и подзапрос вернёт пусто: сравнение
+         -- с пустотой не сработает, отменится ровно одна строка по id.
+         or split_group = (
+              select split_group from entries
+               where id = ${id} and split_group is not null
+            )
+       )
   `;
+}
+
+type QrTipRow = {
+  message_id: string;
+  received_at: Date;
+  business_day: string;
+  amount: string;
+  team: string;
+};
+
+/**
+ * Поступления по QR за смену, которые ещё не разнесли по людям.
+ *
+ * Пока поступление здесь, деньги ничьи: в заработок официантов они не входят,
+ * в итоги смены не попадают. Разносит их кассир.
+ */
+export async function listPendingQrTips(businessDay: string): Promise<QrTip[]> {
+  const sql = db();
+  const rows = await sql<QrTipRow[]>`
+    select message_id, received_at, business_day, amount, team
+      from qr_tips
+     where business_day = ${businessDay} and distributed_at is null
+     order by received_at
+  `;
+  return rows.map((r) => ({
+    // bigint приезжает строкой: в JavaScript обычное число не вместило бы
+    // все возможные идентификаторы Telegram без потери точности.
+    messageId: Number(r.message_id),
+    receivedAt: r.received_at.toISOString(),
+    businessDay: r.business_day,
+    amount: Number(r.amount),
+    team: r.team,
+  }));
+}
+
+/**
+ * Разносит поступление по QR на официантов.
+ *
+ * Всё одной транзакцией: записи официантам и отметка «разнесено» должны
+ * появиться вместе. Иначе поступление либо разнесётся дважды, либо деньги
+ * лягут людям, а в списке ожидающих останется висеть.
+ *
+ * Условие «distributed_at is null» — защита от двух кассиров, нажавших
+ * одновременно: второй ничего не обновит и получит отказ.
+ */
+export async function distributeQrTip(
+  messageId: number,
+  entries: Entry[],
+  operatorName: string,
+): Promise<void> {
+  if (entries.length === 0) return;
+  const sql = db();
+  await sql.begin(async (tx) => {
+    const marked = await tx`
+      update qr_tips
+         set distributed_at = now(), distributed_by = ${operatorName}
+       where message_id = ${messageId} and distributed_at is null
+       returning message_id
+    `;
+    if (marked.length === 0) {
+      throw new Error("Это поступление уже разнесли");
+    }
+    for (const e of entries) {
+      await tx`
+        insert into entries (
+          id, business_day, hall_id, hall_title, table_id, table_title,
+          waiter_id, waiter_name, amount, kind, operator_id, operator_name,
+          created_at, split_group, gross, commission_rate
+        ) values (
+          ${e.id}, ${e.businessDay}, ${e.hallId}, ${e.hallTitle},
+          ${e.tableId}, ${e.tableTitle}, ${e.waiterId}, ${e.waiterName},
+          ${e.amount}, ${e.kind}, ${e.operatorId}, ${e.operatorName},
+          ${e.createdAt}, ${e.splitGroup ?? null}, ${e.gross},
+          ${e.commissionRate}
+        )
+      `;
+    }
+  });
 }
 
 type ShiftRow = {

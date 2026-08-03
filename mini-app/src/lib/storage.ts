@@ -1,5 +1,12 @@
-import { cancelEntry, insertEntry, listEntries, listHistory } from "./db/actions";
-import type { Entry } from "./types";
+import {
+  cancelEntry,
+  distributeQrTip,
+  insertEntries,
+  listEntries,
+  listHistory,
+  listPendingQrTips,
+} from "./db/actions";
+import type { Entry, QrTip } from "./types";
 
 /**
  * Хранилище записей.
@@ -22,8 +29,34 @@ export async function historyByDay(businessDay: string): Promise<Entry[]> {
   return listHistory(businessDay);
 }
 
-export async function save(entry: Entry): Promise<void> {
-  return insertEntry(entry);
+/**
+ * Сохраняет запись.
+ *
+ * Строк на вход может прийти несколько: если одни чаевые делят между
+ * официантами, на каждого пишется своя доля. Либо сохранятся все, либо
+ * ни одной — половина группы хуже, чем ничего.
+ */
+export async function save(entries: Entry[]): Promise<void> {
+  return insertEntries(entries);
+}
+
+/**
+ * Поступления по QR за смену, которые ещё ждут распределения.
+ *
+ * Пока поступление не разнесли, деньги ничьи: в заработок они не входят
+ * и в итогах смены их нет.
+ */
+export async function pendingQrTips(businessDay: string): Promise<QrTip[]> {
+  return listPendingQrTips(businessDay);
+}
+
+/** Разносит поступление по QR на официантов — записи и отметка вместе. */
+export async function distributeQr(
+  messageId: number,
+  entries: Entry[],
+  operatorName: string,
+): Promise<void> {
+  return distributeQrTip(messageId, entries, operatorName);
 }
 
 /**
@@ -31,6 +64,7 @@ export async function save(entry: Entry): Promise<void> {
  *
  * Строку не удаляем, а помечаем отменённой: иначе проверить себя нельзя.
  * Ошибся, отменил, внёс заново — в базе должен остаться след обоих шагов.
+ * Поделённые чаевые отменяются группой целиком.
  */
 export async function cancel(
   id: string,

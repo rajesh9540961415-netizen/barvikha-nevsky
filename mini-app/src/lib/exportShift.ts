@@ -20,7 +20,17 @@ export type ShiftExport = {
     name: string;
     cash: number;
     terminal: number;
+    /**
+     * Разнесённые поступления с персонального QR.
+     *
+     * В отчёте отдельного блока под них пока нет — решение по формату
+     * за владельцем. Но в выгрузке они есть, чтобы данные не потерялись:
+     * дописать блок в скрипт проще, чем восстанавливать цифры задним числом.
+     */
+    qr: number;
     service: number;
+    /** Удержано за питание — вычитается из выплаты, а не из заработка. */
+    staff: number;
     net: number;
   }[];
   admin: { name: string | null; amount: number };
@@ -28,7 +38,9 @@ export type ShiftExport = {
   totals: {
     cash: number;
     terminal: number;
+    qr: number;
     service: number;
+    staff: number;
     earned: number;
     payout: number;
   };
@@ -53,7 +65,9 @@ export function buildExport(
       name: crew.find((p) => p.id === w.waiterId)?.name ?? w.waiterName,
       cash: w.cash,
       terminal: w.terminal,
+      qr: w.qr,
       service: w.service,
+      staff: w.staff,
       net: w.net,
     })),
     admin: { name: nameOf(shift.admin), amount: s.adminTotal },
@@ -61,9 +75,15 @@ export function buildExport(
     totals: {
       cash: s.totalCash,
       terminal: s.totalTerminal,
+      qr: s.totalQr,
       service: s.totalService,
+      staff: s.totalStaff,
       earned: s.totalEarned,
-      payout: s.waitersNet + s.adminTotal + s.cashierTotal,
+      // Питание входит в сумму как ещё один получатель: деньги остались
+      // в заведении в оплату еды. Иначе строка «Расхождение» в отчёте
+      // показала бы ровно размер вычета и краснела бы каждую смену.
+      payout:
+        s.waitersNet + s.adminTotal + s.cashierTotal + s.totalStaff,
     },
   };
 }

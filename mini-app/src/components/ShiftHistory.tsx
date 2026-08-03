@@ -20,6 +20,8 @@ const KIND_LABEL: Record<Kind, string> = {
   cash: "наличные",
   terminal: "терминал",
   service: "сбор",
+  qr: "QR",
+  staff: "питание",
 };
 
 type Loading = "loading" | "ready" | "failed";
@@ -79,9 +81,46 @@ export default function ShiftHistory({ day, onClose }: Props) {
     [rows, waiter],
   );
 
-  const alive = visible.filter((r) => !r.deletedAt);
-  const cancelled = visible.length - alive.length;
-  const total = alive.reduce((sum, r) => sum + r.amount, 0);
+  /**
+   * Строки, собранные обратно в события.
+   *
+   * Поделённые чаевые лежат в базе отдельными строками — по одной на официанта.
+   * Показывать их порознь нельзя: вышла бы ровно та картина, из-за которой
+   * полсмены 1 августа выглядело задвоением — два одинаковых ввода по одному
+   * столу подряд. Здесь они снова становятся одной строкой истории.
+   *
+   * При отборе по официанту от группы остаётся одна строка: тогда видна только
+   * его доля, и подпись честно говорит, что это доля.
+   */
+  const events = useMemo(() => {
+    const list: Entry[][] = [];
+    const byGroup = new Map<string, Entry[]>();
+    for (const r of visible) {
+      if (!r.splitGroup) {
+        list.push([r]);
+        continue;
+      }
+      const found = byGroup.get(r.splitGroup);
+      if (found) {
+        found.push(r);
+        continue;
+      }
+      const created = [r];
+      byGroup.set(r.splitGroup, created);
+      list.push(created);
+    }
+    return list;
+  }, [visible]);
+
+  // Считаем события, а не строки: поделённые чаевые — это одна запись
+  // за вечер, а не две, и в шапке должно стоять то же число, которое
+  // администратор видит на главном экране.
+  const alive = events.filter((ev) => !ev[0].deletedAt);
+  const cancelled = events.length - alive.length;
+  const total = alive.reduce(
+    (sum, ev) => sum + ev.reduce((acc, r) => acc + r.amount, 0),
+    0,
+  );
 
   function goto(delta: number) {
     setWaiter(null);
@@ -160,42 +199,76 @@ export default function ShiftHistory({ day, onClose }: Props) {
         </div>
       )}
 
-      {loading === "ready" && visible.length === 0 && (
+      {loading === "ready" && events.length === 0 && (
         <p className="p-8 text-center text-sm text-fg-muted">
           За этот день записей нет.
         </p>
       )}
 
-      {loading === "ready" && visible.length > 0 && (
+      {loading === "ready" && events.length > 0 && (
         <ul className="divide-y divide-line pb-8">
-          {visible.map((r) => (
-            <li key={r.id} className="px-4 py-2.5">
-              <div className="flex items-baseline justify-between gap-3">
-                <span
-                  className={`text-sm ${r.deletedAt ? "text-fg-muted line-through" : "text-fg"}`}
-                >
-                  {r.hallTitle} · {r.tableTitle} · {r.waiterName}
-                </span>
-                <span
-                  className={`shrink-0 tabular-nums ${
-                    r.deletedAt ? "text-fg-muted line-through" : "text-fg"
-                  }`}
-                >
-                  {formatMoney(r.amount)}
-                </span>
-              </div>
-              <div className="text-xs text-fg-muted">
-                {clock(r.createdAt)} · {KIND_LABEL[r.kind]} · внёс{" "}
-                {r.operatorName}
-              </div>
-              {r.deletedAt && (
-                <div className="text-xs text-alert">
-                  отменено в {clock(r.deletedAt)}
-                  {r.deletedByName ? ` · ${r.deletedByName}` : ""}
+          {events.map((ev) => {
+            const head = ev[0];
+            const sum = ev.reduce((acc, r) => acc + r.amount, 0);
+            // Что оставил гость — до комиссии Сбера. Совпадает с суммой везде,
+            // кроме терминала.
+            const grossSum = ev.reduce((acc, r) => acc + (r.gross ?? r.amount), 0);
+            const fee = Math.round((head.commissionRate ?? 0) * 100);
+            const split = ev.length > 1;
+            const gone = Boolean(head.deletedAt);
+            return (
+              <li key={head.splitGroup ?? head.id} className="px-4 py-2.5">
+                <div className="flex items-baseline justify-between gap-3">
+                  <span
+                    className={`text-sm ${gone ? "text-fg-muted line-through" : "text-fg"}`}
+                  >
+                    {/* У чаевых по QR ни зала, ни стола нет: гость платил
+                        по чеку. Пишем откуда пришло, чтобы строка не
+                        начиналась с пустоты. */}
+                    {head.tableTitle
+                      ? `${head.hallTitle} · ${head.tableTitle}`
+                      : "по QR"}{" "}
+                    · {ev.map((r) => r.waiterName).join(" + ")}
+                  </span>
+                  <span
+                    className={`shrink-0 tabular-nums ${
+                      gone ? "text-fg-muted line-through" : "text-fg"
+                    }`}
+                  >
+                    {formatMoney(sum)}
+                  </span>
                 </div>
-              )}
-            </li>
-          ))}
+                <div className="text-xs text-fg-muted">
+                  {clock(head.createdAt)} · {KIND_LABEL[head.kind]} · внёс{" "}
+                  {head.operatorName}
+                  {/* Одна строка из группы попадает сюда только при отборе
+                      по официанту — говорим прямо, что это часть суммы. */}
+                  {!split && head.splitGroup ? " · доля из поделённых" : ""}
+                </div>
+                {/* Комиссию называем отдельной строкой: в сумме записи её уже
+                    нет, и без пояснения цифра не сходится с терминалом. */}
+                {grossSum !== sum && (
+                  <div className="text-xs text-fg-muted">
+                    гость оставил {formatMoney(grossSum)} · комиссия {fee} %
+                  </div>
+                )}
+                {split && (
+                  <div className="text-xs text-fg-muted">
+                    поровну:{" "}
+                    {ev
+                      .map((r) => `${r.waiterName} — ${formatMoney(r.amount)}`)
+                      .join(" · ")}
+                  </div>
+                )}
+                {head.deletedAt && (
+                  <div className="text-xs text-alert">
+                    отменено в {clock(head.deletedAt)}
+                    {head.deletedByName ? ` · ${head.deletedByName}` : ""}
+                  </div>
+                )}
+              </li>
+            );
+          })}
         </ul>
       )}
     </div>

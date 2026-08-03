@@ -53,16 +53,23 @@ export default function ShiftSummary({
           <div className="text-3xl tabular-nums">
             {formatMoney(s.totalEarned)}
           </div>
+          {/* Комиссия названа прямо: иначе итог меньше введённого, и непонятно,
+              куда делись деньги. */}
+          {s.totalCommission > 0 && (
+            <div className="mt-0.5 text-xs text-fg-muted">
+              гости оставили {formatMoney(s.totalGross)} · комиссия −
+              {formatMoney(s.totalCommission)}
+            </div>
+          )}
 
           <div className="mt-3 flex justify-between border-t border-line pt-2.5 text-sm">
             <span className="text-fg-muted">чаевые</span>
-            <span className="tabular-nums">
-              {formatMoney(s.totalCash + s.totalTerminal)}
-            </span>
+            <span className="tabular-nums">{formatMoney(s.totalTips)}</span>
           </div>
           <div className="text-xs text-fg-muted">
             наличные {formatMoney(s.totalCash)} · терминал{" "}
             {formatMoney(s.totalTerminal)}
+            {s.totalQr > 0 && ` · QR ${formatMoney(s.totalQr)}`}
           </div>
           <div className="mt-2 flex justify-between text-sm">
             <span className="text-fg-muted">сервисный сбор</span>
@@ -84,6 +91,16 @@ export default function ShiftSummary({
               : undefined
           }
         />
+        {/* Питание — единственная строка, которая уменьшает выплату, а не
+            распределяет её. Показываем отдельно, иначе «на руки» окажется
+            меньше без объяснения. */}
+        {s.totalStaff > 0 && (
+          <Row
+            label="Удержано за питание"
+            value={-s.totalStaff}
+            note="вычитается из выплаты, на порог не влияет"
+          />
+        )}
         <Row label="Официантам на руки" value={s.waitersNet} strong />
       </div>
 
@@ -119,6 +136,8 @@ export default function ShiftSummary({
             </div>
             <div className="text-xs text-fg-muted">
               наличные {formatMoney(w.cash)} · терминал {formatMoney(w.terminal)}
+              {w.qr > 0 && ` · QR ${formatMoney(w.qr)}`}
+              {w.commission > 0 && ` · комиссия −${formatMoney(w.commission)}`}
             </div>
             <div className="mt-1 flex justify-between text-sm">
               <span className="text-fg-muted">сервисный сбор</span>
@@ -138,16 +157,23 @@ export default function ShiftSummary({
                     <span>только сбор — не делится</span>
                   </div>
                 )}
-                <div className="mt-1.5 flex justify-between">
-                  <span className="text-fg-muted">на руки</span>
-                  <span className="tabular-nums text-sand">
-                    {formatMoney(w.net)}
-                  </span>
-                </div>
+                {w.staff > 0 && <Line label="питание" value={-w.staff} />}
+                <Payout value={w.net} />
               </div>
             ) : (
-              <div className="mt-2.5 border-t border-line pt-2.5 text-xs text-fg-muted">
-                меньше {formatMoney(THRESHOLD)} — не делится
+              <div className="mt-2.5 border-t border-line pt-2.5 text-sm">
+                <div className="text-xs text-fg-muted">
+                  меньше {formatMoney(THRESHOLD)} — не делится
+                </div>
+                {/* Питание вычитается и здесь: оно не зависит от того,
+                    перешагнул человек порог или нет. Без этой строки
+                    вычет исчез бы с экрана, но остался в деньгах. */}
+                {w.staff > 0 && (
+                  <div className="mt-1.5">
+                    <Line label="питание" value={-w.staff} />
+                    <Payout value={w.net} />
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -175,6 +201,21 @@ function Row({
         {note && <div className="text-xs text-fg-muted">{note}</div>}
       </div>
       <span className={`tabular-nums ${strong ? "text-lg" : ""}`}>
+        {formatMoney(value)}
+      </span>
+    </div>
+  );
+}
+
+/**
+ * Итог по человеку. Минус подсвечивается: значит он проел больше, чем
+ * заработал, и это убыток смены, а не описка.
+ */
+function Payout({ value }: { value: number }) {
+  return (
+    <div className="mt-1.5 flex justify-between">
+      <span className="text-fg-muted">на руки</span>
+      <span className={`tabular-nums ${value < 0 ? "text-alert" : "text-sand"}`}>
         {formatMoney(value)}
       </span>
     </div>
