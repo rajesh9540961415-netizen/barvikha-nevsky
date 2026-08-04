@@ -1,4 +1,5 @@
-import { readLastShift, readShift, writeShift } from "./db/actions";
+import { readLastShift, readShift } from "./db/actions";
+import { enqueueAndSend } from "./offline";
 import type { Shift } from "./types";
 
 /**
@@ -34,11 +35,19 @@ export async function getShift(businessDay: string): Promise<Shift> {
   return (await readShift(businessDay)) ?? EMPTY_SHIFT;
 }
 
+/**
+ * Сохраняет состав смены. Тоже через очередь отправки.
+ *
+ * Смена собирается в начале вечера, и если сети в этот момент нет, без
+ * очереди администратор не смог бы даже начать: без состава экран ввода
+ * не открывается. Состав хранится строкой на бизнес-день и переписывается
+ * целиком, поэтому повторная отправка того же состава ничего не портит.
+ */
 export async function setShift(
   businessDay: string,
   shift: Shift,
 ): Promise<void> {
-  return writeShift(businessDay, shift);
+  return enqueueAndSend({ type: "shift", businessDay, shift });
 }
 
 /** Прошлая смена — чтобы не собирать состав заново каждый вечер. */

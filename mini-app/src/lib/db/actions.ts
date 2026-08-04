@@ -99,6 +99,12 @@ export async function listHistory(businessDay: string): Promise<Entry[]> {
  * ложатся по строке на каждого. Всё одной транзакцией — если сохранится
  * половина группы, чаевые окажутся поделены на одного, и итог смены
  * разойдётся с тем, что оставил гость.
+ *
+ * «Если такой записи ещё нет» — защита от повтора. Номер записи придумывает
+ * браузер до отправки, поэтому одну и ту же запись можно послать сколько
+ * угодно раз: в базе останется одна. Без этого офлайн-очередь была бы опасна
+ * ровно там, где она нужнее всего — отправили, ответ не дошёл, отправили
+ * снова, и деньги задвоились.
  */
 export async function insertEntries(entries: Entry[]): Promise<void> {
   if (entries.length === 0) return;
@@ -117,6 +123,7 @@ export async function insertEntries(entries: Entry[]): Promise<void> {
           ${e.createdAt}, ${e.splitGroup ?? null}, ${e.gross},
           ${e.commissionRate}
         )
+        on conflict (id) do nothing
       `;
     }
   });
@@ -229,6 +236,7 @@ export async function distributeQrTip(
           ${e.createdAt}, ${e.splitGroup ?? null}, ${e.gross},
           ${e.commissionRate}
         )
+        on conflict (id) do nothing
       `;
     }
   });

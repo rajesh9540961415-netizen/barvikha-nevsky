@@ -28,6 +28,25 @@ type Loading = "loading" | "ready" | "failed";
 
 type Props = {
   day: string;
+  /**
+   * Записи, которые ещё ждут отправки в базу.
+   *
+   * Их подмешиваем к прочитанному и помечаем: история — экран самопроверки,
+   * и «прошла моя запись или нет» смотрят именно здесь. Без сети это
+   * единственное место, где видно, что записалось.
+   */
+  pending: Entry[];
+  /**
+   * Что известно из базы за сегодня — на случай, если прочитать не удалось.
+   * За прошлые дни этого запаса нет: без связи их взять неоткуда.
+   */
+  cached: Entry[];
+  /**
+   * Записи, отменённые на этом телефоне, но ещё не отмеченные в базе.
+   * Показываем их зачёркнутыми — иначе отменённая запись выглядела бы живой,
+   * и её отменили бы второй раз.
+   */
+  cancelledHere: ReadonlySet<string>;
   onClose: () => void;
 };
 
@@ -45,9 +64,15 @@ function clock(iso: string): string {
   return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
 }
 
-export default function ShiftHistory({ day, onClose }: Props) {
+export default function ShiftHistory({
+  day,
+  pending,
+  cached,
+  cancelledHere,
+  onClose,
+}: Props) {
   const [shown, setShown] = useState(day);
-  const [rows, setRows] = useState<Entry[]>([]);
+  const [fromDb, setFromDb] = useState<Entry[]>([]);
   const [loading, setLoading] = useState<Loading>("loading");
   const [attempt, setAttempt] = useState(0);
   const [waiter, setWaiter] = useState<string | null>(null);
@@ -58,7 +83,7 @@ export default function ShiftHistory({ day, onClose }: Props) {
       try {
         const data = await historyByDay(shown);
         if (!alive) return;
-        setRows(data);
+        setFromDb(data);
         setLoading("ready");
       } catch {
         if (alive) setLoading("failed");
@@ -68,6 +93,31 @@ export default function ShiftHistory({ day, onClose }: Props) {
       alive = false;
     };
   }, [shown, attempt]);
+
+  /** Номера записей, которых в базе ещё нет — их помечаем в списке. */
+  const waitingIds = useMemo(
+    () => new Set(pending.map((e) => e.id)),
+    [pending],
+  );
+
+  /**
+   * Что показываем: прочитанное из базы плюс ждущее отправки.
+   *
+   * Если прочитать не удалось, за сегодня берём то, что известно главному
+   * экрану. Прошлые дни в таком случае показать нечем — там честный отказ.
+   */
+  const rows = useMemo(() => {
+    const base = loading === "failed" ? (shown === day ? cached : []) : fromDb;
+    if (shown !== day || pending.length === 0) return base;
+    const byId = new Map(base.map((r) => [r.id, r]));
+    for (const e of pending) if (!byId.has(e.id)) byId.set(e.id, e);
+    return [...byId.values()].sort((a, b) =>
+      b.createdAt.localeCompare(a.createdAt),
+    );
+  }, [loading, shown, day, cached, fromDb, pending]);
+
+  /** Показывать список, даже если чтение не удалось, но что-то есть. */
+  const offlineList = loading === "failed" && rows.length > 0;
 
   // Официанты этого дня — для фильтра. За смену набегает под сотню записей,
   // и без отбора по человеку история читается плохо.
@@ -112,10 +162,13 @@ export default function ShiftHistory({ day, onClose }: Props) {
     return list;
   }, [visible]);
 
+  /** Отменено — в базе или пока только на этом телефоне. */
+  const isGone = (e: Entry) => Boolean(e.deletedAt) || cancelledHere.has(e.id);
+
   // Считаем события, а не строки: поделённые чаевые — это одна запись
   // за вечер, а не две, и в шапке должно стоять то же число, которое
   // администратор видит на главном экране.
-  const alive = events.filter((ev) => !ev[0].deletedAt);
+  const alive = events.filter((ev) => !isGone(ev[0]));
   const cancelled = events.length - alive.length;
   const total = alive.reduce(
     (sum, ev) => sum + ev.reduce((acc, r) => acc + r.amount, 0),
@@ -184,7 +237,14 @@ export default function ShiftHistory({ day, onClose }: Props) {
         <p className="p-8 text-center text-sm text-fg-muted">Загружаю…</p>
       )}
 
-      {loading === "failed" && (
+      {offlineList && (
+        <p className="border-b border-line px-4 py-2 text-xs text-alert">
+          Связи нет — показано то, что известно этому телефону. Отменённые
+          записи и записи со второго телефона могут не отображаться.
+        </p>
+      )}
+
+      {loading === "failed" && !offlineList && (
         <div className="flex flex-col items-center gap-4 p-8 text-center">
           <p className="text-sm text-fg-muted">Не удалось загрузить историю.</p>
           <button
@@ -205,7 +265,7 @@ export default function ShiftHistory({ day, onClose }: Props) {
         </p>
       )}
 
-      {loading === "ready" && events.length > 0 && (
+      {(loading === "ready" || offlineList) && events.length > 0 && (
         <ul className="divide-y divide-line pb-8">
           {events.map((ev) => {
             const head = ev[0];
@@ -215,7 +275,7 @@ export default function ShiftHistory({ day, onClose }: Props) {
             const grossSum = ev.reduce((acc, r) => acc + (r.gross ?? r.amount), 0);
             const fee = Math.round((head.commissionRate ?? 0) * 100);
             const split = ev.length > 1;
-            const gone = Boolean(head.deletedAt);
+            const gone = isGone(head);
             return (
               <li key={head.splitGroup ?? head.id} className="px-4 py-2.5">
                 <div className="flex items-baseline justify-between gap-3">
@@ -245,6 +305,14 @@ export default function ShiftHistory({ day, onClose }: Props) {
                       по официанту — говорим прямо, что это часть суммы. */}
                   {!split && head.splitGroup ? " · доля из поделённых" : ""}
                 </div>
+                {/* Запись сделана, но до базы ещё не доехала. Здесь это
+                    видно поимённо — на главном экране только счётчик. */}
+                {waitingIds.has(head.id) && !gone && (
+                  <div className="text-xs text-alert">ждёт отправки</div>
+                )}
+                {cancelledHere.has(head.id) && !head.deletedAt && (
+                  <div className="text-xs text-alert">отмена ждёт отправки</div>
+                )}
                 {/* Комиссию называем отдельной строкой: в сумме записи её уже
                     нет, и без пояснения цифра не сходится с терминалом. */}
                 {grossSum !== sum && (

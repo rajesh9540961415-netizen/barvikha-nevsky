@@ -8,6 +8,15 @@ type Props = {
   day: string;
   entries: Entry[];
   crew: Employee[];
+  /**
+   * Что ещё не доехало до базы, словами: «2 записи и 1 отмена». Пусто —
+   * значит всё в базе.
+   *
+   * В цифры это уже входит — деньги есть деньги. Но знать, что часть смены
+   * пока живёт только на этом телефоне, надо: со второго телефона этих сумм
+   * не видно, и итоги там будут другими.
+   */
+  waiting: string;
   onClose: () => void;
   onHistory: () => void;
   /**
@@ -21,6 +30,7 @@ export default function ShiftSummary({
   day,
   entries,
   crew,
+  waiting,
   onClose,
   onHistory,
   onExport,
@@ -46,6 +56,15 @@ export default function ShiftSummary({
           </div>
         </div>
       </header>
+
+      {waiting && (
+        <div className="mx-4 mt-4 rounded-xl border border-alert bg-alert/10 px-3 py-2">
+          <div className="text-sm text-fg">Не всё ушло в базу: {waiting}</div>
+          <div className="text-xs text-fg-muted">
+            в цифрах ниже это учтено, но со второго телефона их пока не видно
+          </div>
+        </div>
+      )}
 
       <div className="px-4 pt-4">
         <div className="rounded-xl bg-surface p-4">

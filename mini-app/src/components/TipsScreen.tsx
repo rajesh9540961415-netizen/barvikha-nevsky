@@ -1,6 +1,12 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import AmountPad from "@/components/AmountPad";
 import type { RecentEntry } from "@/components/AmountPad";
 import ShiftCrew from "@/components/ShiftCrew";
@@ -16,6 +22,17 @@ import ShiftHistory from "@/components/ShiftHistory";
 import QrTipScreen from "@/components/QrTipScreen";
 import StaffScreen from "@/components/StaffScreen";
 import { COMMISSION_RATE, netAmount, shares, splitShift } from "@/lib/split";
+import {
+  flushQueue,
+  mergeEntries,
+  pendingEntries,
+  pendingSummary,
+  queueState,
+  queueStateOnServer,
+  subscribeQueue,
+} from "@/lib/offline";
+import { readSnapshot, saveSnapshot } from "@/lib/snapshot";
+import PendingBar from "@/components/PendingBar";
 import {
   cancel,
   distributeQr,
@@ -65,6 +82,17 @@ type Loading = "loading" | "ready" | "failed";
 const REFRESH_MS = 25_000;
 
 /**
+ * Как часто пробовать дослать то, что ждёт отправки.
+ *
+ * Браузер сообщает о появлении сети сам, но верить только ему нельзя:
+ * «сеть появилась» он говорит и когда телефон подключился к точке доступа,
+ * из которой в интернет ещё не выйти. Поэтому кроме события есть таймер.
+ * Десять секунд — деньги не должны ждать дольше, а стоит пустая попытка
+ * при выключенной сети ровно ничего.
+ */
+const FLUSH_MS = 10_000;
+
+/**
  * В пределах этого времени повторный ввод по тому же столу считается
  * подозрительным и вызывает вопрос.
  *
@@ -81,7 +109,28 @@ export default function TipsScreen() {
   const [shift, setShiftState] = useState<Shift>(EMPTY_SHIFT);
   const [lastShift, setLastShift] = useState<Shift>(EMPTY_SHIFT);
   const [manual, setManual] = useState<Employee[]>([]);
-  const [entries, setEntries] = useState<Entry[]>([]);
+  // Записи, про которые известно от базы. То, что ещё не доехало, лежит
+  // в очереди отправки и подмешивается ниже — на экране это одно и то же.
+  const [fromDb, setFromDb] = useState<Entry[]>([]);
+  /**
+   * Когда сняли снимок, на котором сейчас держится экран.
+   *
+   * Пусто — значит данные только что из базы. Заполнено — значит связи нет
+   * и показано то, что было известно на телефоне. Скрывать такое нельзя:
+   * второй администратор мог за это время что-то внести.
+   */
+  const [staleSince, setStaleSince] = useState<string | null>(null);
+  /**
+   * Записи, отменённые на этом телефоне.
+   *
+   * Пока отмена в очереди, её видно оттуда. Но как только очередь её отдаст,
+   * а перечитать базу не выйдет, запись вернулась бы на экран — уже отменённая
+   * в базе, но живая на глаз. Этот список держит её скрытой до конца сеанса;
+   * после перезагрузки правду скажет база.
+   */
+  const [cancelledHere, setCancelledHere] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
   // Поступления по QR, которые пришли, но ещё не разнесены по людям.
   const [qrTips, setQrTips] = useState<QrTip[]>([]);
   const [openQr, setOpenQr] = useState<QrTip | null>(null);
@@ -92,6 +141,51 @@ export default function TipsScreen() {
   const [showStaff, setShowStaff] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const [toast, setToast] = useState<Toast | null>(null);
+
+  // Очередь отправки: всё, что сделано, но ещё не доехало до базы.
+  // Живёт вне экрана, в памяти телефона, поэтому подписываемся на неё,
+  // а не храним в состоянии.
+  const queue = useSyncExternalStore(
+    subscribeQueue,
+    queueState,
+    queueStateOnServer,
+  );
+
+  // Есть ли сеть по мнению браузера. Мнение это неточное: «сети нет» —
+  // правда почти всегда, «сеть есть» — далеко не всегда. Поэтому надпись
+  // на экране опирается ещё и на то, чем закончилась последняя отправка.
+  const [online, setOnline] = useState(true);
+  useEffect(() => {
+    const update = () => setOnline(navigator.onLine);
+    update();
+    window.addEventListener("online", update);
+    window.addEventListener("offline", update);
+    return () => {
+      window.removeEventListener("online", update);
+      window.removeEventListener("offline", update);
+    };
+  }, []);
+
+  /**
+   * Перечитывает базу. Возвращает свежие записи или null, если не вышло.
+   *
+   * Заодно подтягиваем поступления по QR: они приходят сами, без чьего-либо
+   * нажатия, и кассир должен увидеть их, ничего не запрашивая.
+   */
+  const refresh = useCallback(async (): Promise<Entry[] | null> => {
+    try {
+      const [fresh, qr] = await Promise.all([
+        listByDay(day),
+        pendingQrTips(day),
+      ]);
+      setFromDb(fresh);
+      setQrTips(qr);
+      setStaleSince(null);
+      return fresh;
+    } catch {
+      return null;
+    }
+  }, [day]);
 
   // Всё, что лежит в хранилище, спрашиваем одним заходом при открытии.
   // attempt меняется при нажатии «Повторить» — этим и перезапускается загрузка.
@@ -109,14 +203,33 @@ export default function TipsScreen() {
         if (!alive) return;
         setShiftState(today);
         setManual(people);
-        setEntries(records);
+        setFromDb(records);
         setLastShift(last);
         setQrTips(qr);
+        setStaleSince(null);
         setLoading("ready");
       } catch {
+        if (!alive) return;
+        // Связи нет. Поднимаемся на снимке прошлого удачного чтения:
+        // без него администратор упёрся бы в отказ и не смог бы внести
+        // ни одной записи — то есть ровно то, от чего уходим.
+        const saved = readSnapshot(day);
+        if (saved) {
+          setShiftState(saved.shift);
+          setManual(saved.manual);
+          setFromDb(saved.entries);
+          setLastShift(saved.lastShift);
+          // Поступления по QR приходят с сервера и устареть могут сильно —
+          // показывать их с телефона не будем, разносить всё равно не выйдет.
+          setQrTips([]);
+          setStaleSince(saved.savedAt);
+          setLoading("ready");
+          return;
+        }
+        // Снимка нет — за этот день на телефоне ничего не известно.
         // Пустой экран вместо ошибки выглядел бы как «за смену ничего нет»,
         // и администратор начал бы вводить всё заново поверх уже записанного.
-        if (alive) setLoading("failed");
+        setLoading("failed");
       }
     })();
     // Ответ, пришедший после закрытия экрана, игнорируем.
@@ -125,46 +238,76 @@ export default function TipsScreen() {
     };
   }, [day, attempt]);
 
-  // Фоновое обновление: подтягивает записи, внесённые со второго телефона.
-  // Экрана загрузки не показывает и об ошибках молчит — это не действие
-  // пользователя, а служебная работа. Если связи нет, следующая попытка
-  // случится через REFRESH_MS.
+  // Фоновая работа, пока приложение открыто: подтягивать чужие записи
+  // и досылать свои. Об ошибках молчит — это не действие пользователя,
+  // а служебная работа, и следующая попытка случится сама.
   useEffect(() => {
     if (loading !== "ready") return;
-    let alive = true;
 
-    const pull = async () => {
-      try {
-        // Заодно подтягиваем поступления по QR: они приходят сами, без чьего
-        // либо нажатия, и кассир должен увидеть их, ничего не запрашивая.
-        const [fresh, qr] = await Promise.all([
-          listByDay(day),
-          pendingQrTips(day),
-        ]);
-        if (!alive) return;
-        setEntries(fresh);
-        setQrTips(qr);
-      } catch {
-        // тихо: фоновое обновление не должно пугать сообщениями
-      }
+    const push = async () => {
+      if (queueState().items.length === 0) return;
+      await flushQueue();
+      // Очередь ушла — перечитываем базу, чтобы на экране остались записи
+      // из неё, а не их копии с телефона.
+      if (queueState().items.length === 0) await refresh();
     };
 
+    const both = () => {
+      void push();
+      void refresh();
+    };
     const onVisible = () => {
-      if (document.visibilityState === "visible") pull();
+      if (document.visibilityState === "visible") both();
     };
 
-    const timer = setInterval(pull, REFRESH_MS);
+    const pullTimer = setInterval(() => void refresh(), REFRESH_MS);
+    const pushTimer = setInterval(() => void push(), FLUSH_MS);
     // Свернули приложение, поговорили с гостем, вернулись — список свежий.
     document.addEventListener("visibilitychange", onVisible);
-    window.addEventListener("online", pull);
+    window.addEventListener("online", both);
+    // Сразу при открытии: в очереди могло остаться со вчерашнего вечера.
+    void push();
 
     return () => {
-      alive = false;
-      clearInterval(timer);
+      clearInterval(pullTimer);
+      clearInterval(pushTimer);
       document.removeEventListener("visibilitychange", onVisible);
-      window.removeEventListener("online", pull);
+      window.removeEventListener("online", both);
     };
-  }, [day, loading]);
+  }, [loading, refresh]);
+
+  /**
+   * Что видно на экране: записи из базы плюс те, что ещё ждут отправки.
+   *
+   * Иначе итог смены внизу оказался бы меньше настоящего ровно на
+   * неотправленное, и администратор начал бы вводить заново поверх
+   * уже введённого.
+   */
+  const entries = useMemo(
+    () =>
+      mergeEntries(fromDb, queue.items, day).filter(
+        (e) => !cancelledHere.has(e.id),
+      ),
+    [fromDb, queue.items, day, cancelledHere],
+  );
+
+  /** Записи, которые ещё ждут отправки — их помечает история. */
+  const waitingEntries = useMemo(
+    () => pendingEntries(queue.items, day),
+    [queue.items, day],
+  );
+  /** То же словами: «2 записи и 1 отмена». */
+  const waitingSummary = useMemo(
+    () => pendingSummary(queue.items),
+    [queue.items],
+  );
+
+  // Снимок для следующего открытия без сети. Пишем при каждом изменении:
+  // так на телефоне всегда лежит самое свежее из того, что известно.
+  useEffect(() => {
+    if (loading !== "ready") return;
+    saveSnapshot({ day, shift, lastShift, manual, entries: fromDb });
+  }, [loading, day, shift, lastShift, manual, fromDb]);
 
   const everyone = useMemo(
     () => [...getQuickRestoPeople(), ...manual],
@@ -225,6 +368,8 @@ export default function TipsScreen() {
 
   async function saveShift(next: Shift) {
     try {
+      // Уходит через очередь: без сети состав всё равно сохранится на телефоне
+      // и доедет позже, а вечер можно начинать сразу.
       await setShift(day, next);
       setShiftState(next);
       setLastShift(next);
@@ -232,6 +377,21 @@ export default function TipsScreen() {
     } catch {
       setToast({ text: "Смена не сохранилась — проверьте связь", bad: true });
     }
+  }
+
+  /**
+   * Показывает записи на экране, не дожидаясь ответа базы.
+   *
+   * Нужно, чтобы запись не мигнула и не пропала: пока она в очереди,
+   * её видно из очереди, но как только очередь её отдала, а перечитать
+   * базу не вышло, она исчезла бы с экрана, хотя в базе уже лежит.
+   */
+  function showLocally(rows: Entry[]) {
+    setFromDb((prev) => {
+      const known = new Set(prev.map((e) => e.id));
+      const added = rows.filter((e) => !known.has(e.id));
+      return added.length === 0 ? prev : [...added, ...prev];
+    });
   }
 
   /**
@@ -277,7 +437,10 @@ export default function TipsScreen() {
     // кнопками. Всплывающее сообщение легло бы поверх них — поверх тех самых,
     // на которые оно просит нажать ещё раз.
     await save(rows);
-    setEntries(await listByDay(day));
+    showLocally(rows);
+    // Перечитываем базу в фоне: экран уже показывает запись, ждать нечего.
+    void refresh();
+    const waiting = queueState().items.length > 0;
     const who = split
       ? `${waiters.length === 2 ? "пополам" : "поровну"}: ${waiters.map((w) => w.short).join(", ")}`
       : waiters[0].short;
@@ -289,7 +452,11 @@ export default function TipsScreen() {
         ? formatMoney(amount)
         : `${formatMoney(amount)} → ${formatMoney(net)}`;
     setToast({
-      text: `${picked.table.title} · ${sum} · ${who} · ${KIND_LABEL[kind]}`,
+      // Когда записи ждут отправки, говорим об этом прямо в подтверждении:
+      // человек должен понимать, что запись сделана, но в базу ещё не ушла.
+      text:
+        `${picked.table.title} · ${sum} · ${who} · ${KIND_LABEL[kind]}` +
+        (waiting ? " · ждёт отправки" : ""),
       bad: false,
     });
     // Экран суммы закрываем только после успеха: иначе на ошибке
@@ -332,10 +499,12 @@ export default function TipsScreen() {
       splitGroup: group,
     }));
 
+    // Единственное действие, которое без сети не работает и в очередь
+    // не кладётся: поступление приходит с сервера, и разнести его дважды
+    // с разных телефонов нельзя. Без связи экран честно откажет.
     await distributeQr(tip.messageId, rows, operator.name);
-    const [fresh, qr] = await Promise.all([listByDay(day), pendingQrTips(day)]);
-    setEntries(fresh);
-    setQrTips(qr);
+    showLocally(rows);
+    await refresh();
     setToast({
       text: `QR ${formatMoney(tip.amount)} · ${waiters.map((w) => w.short).join(", ")}`,
       bad: false,
@@ -371,9 +540,12 @@ export default function TipsScreen() {
       splitGroup: null,
     };
     await save([entry]);
-    setEntries(await listByDay(day));
+    showLocally([entry]);
+    void refresh();
     setToast({
-      text: `Питание: −${formatMoney(amount)} · ${waiter.short}`,
+      text:
+        `Питание: −${formatMoney(amount)} · ${waiter.short}` +
+        (queueState().items.length > 0 ? " · ждёт отправки" : ""),
       bad: false,
     });
     setShowStaff(false);
@@ -386,27 +558,42 @@ export default function TipsScreen() {
    * смены, а не из тех, что этот телефон успел загрузить.
    */
   async function openSummary() {
-    try {
-      setEntries(await listByDay(day));
-    } catch {
-      setToast({ text: "Не удалось обновить — цифры могут быть неполными", bad: true });
+    const fresh = await refresh();
+    if (fresh === null) {
+      setToast({
+        text: "Не удалось обновить — цифры могут быть неполными",
+        bad: true,
+      });
     }
     setShowSummary(true);
   }
 
   /**
-   * Выгрузка отчёта. Перечитываем базу непосредственно перед сборкой:
-   * неполный отчёт — самая тихая из возможных ошибок, её никто не заметит.
-   * Поэтому при сбое связи отчёт не собираем вовсе.
+   * Выгрузка отчёта.
+   *
+   * Порядок жёсткий: сначала досылаем то, что ждёт, потом перечитываем базу,
+   * и только потом собираем. Неполный отчёт — самая тихая из возможных ошибок,
+   * её никто не заметит. Поэтому при сбое связи отчёт не собираем вовсе:
+   * без базы нельзя знать, что внесли с другого телефона.
    */
   async function exportShift() {
-    try {
-      const fresh = await listByDay(day);
-      setEntries(fresh);
-      downloadExport(buildExport(day, fresh, crew, shift, everyone));
-    } catch {
+    await flushQueue().catch(() => undefined);
+    const fresh = await refresh();
+    if (fresh === null) {
       setToast({
         text: "Отчёт не собран: нет связи, данные могли быть неполными",
+        bad: true,
+      });
+      return;
+    }
+    const waiting = queueState().items;
+    const rows = mergeEntries(fresh, waiting, day);
+    downloadExport(buildExport(day, rows, crew, shift, everyone));
+    if (waiting.length > 0) {
+      // Ждущие записи в отчёт включены — деньги есть деньги. Но в базе их
+      // ещё нет, и сказать об этом надо: иначе отчёт и база разойдутся.
+      setToast({
+        text: `Отчёт собран, но в базу ещё не ушли: ${pendingSummary(waiting)}`,
         bad: true,
       });
     }
@@ -425,10 +612,18 @@ export default function TipsScreen() {
     try {
       // Запись не стирается, а помечается отменённой — след остаётся
       // в истории. Кто отменил, тоже пишем: в смене работают двое.
+      // Без сети отмена ложится в очередь следом за самой записью
+      // и уйдёт после неё — порядок в очереди строгий.
       await cancel(last.id, operator.id, operator.name);
-      setEntries(await listByDay(day));
+      // Прячем с экрана сразу — и держим спрятанным до конца сеанса.
+      setCancelledHere((prev) => {
+        const next = new Set(prev);
+        for (const e of group) next.add(e.id);
+        return next;
+      });
+      void refresh();
       setToast({
-        text: `Отменено: ${last.tableTitle} · ${formatMoney(sum)}`,
+        text: `Отменено: ${last.tableTitle ?? "по QR"} · ${formatMoney(sum)}`,
         bad: false,
       });
     } catch {
@@ -452,6 +647,14 @@ export default function TipsScreen() {
             Не удалось загрузить смену. Записи никуда не делись — их просто
             сейчас не видно.
           </p>
+          {/* Если что-то ждёт отправки, сказать об этом важнее всего:
+              иначе человек решит, что вместе со связью потерялись и деньги. */}
+          {queue.items.length > 0 && (
+            <p className="text-sm text-alert">
+              На телефоне ждут отправки: {waitingSummary}. Они сохранены и уйдут
+              сами, как только появится связь.
+            </p>
+          )}
           <button
             onClick={() => {
               setLoading("loading");
@@ -483,7 +686,17 @@ export default function TipsScreen() {
     }
 
     if (showHistory) {
-      return <ShiftHistory day={day} onClose={() => setShowHistory(false)} />;
+      return (
+        <ShiftHistory
+          day={day}
+          // История — экран самопроверки, и без сети он нужнее всего:
+          // именно там смотрят «прошла моя запись или нет».
+          pending={waitingEntries}
+          cached={fromDb}
+          cancelledHere={cancelledHere}
+          onClose={() => setShowHistory(false)}
+        />
+      );
     }
 
     if (showStaff) {
@@ -514,6 +727,9 @@ export default function TipsScreen() {
           day={day}
           entries={entries}
           crew={crew}
+          // Итоги считаются вместе с неотправленным — иначе сумма была бы
+          // меньше настоящей. Но сказать, что часть ещё не в базе, надо.
+          waiting={waitingSummary}
           onClose={() => setShowSummary(false)}
           onExport={exportShift}
           onHistory={() => {
@@ -578,6 +794,20 @@ export default function TipsScreen() {
           </div>
         </header>
 
+        {/* Всё, что ещё не доехало до базы, видно постоянно. Молчаливая
+            очередь — худший вариант: человек решит, что всё записалось. */}
+        <PendingBar
+          waiting={queue.items.length}
+          summary={waitingSummary}
+          sending={queue.sending}
+          online={online}
+          durable={queue.durable}
+          staleSince={staleSince}
+          onFlush={() => {
+            void flushQueue().then(() => refresh());
+          }}
+        />
+
         {/* Поступления по QR приходят сами, мимо зала и мимо кассира.
             Поэтому о них надо сказать, а не ждать, что кто-то догадается
             их поискать. Пока не разнесены — деньги ничьи. */}
@@ -640,7 +870,12 @@ export default function TipsScreen() {
               <div className="text-lg tabular-nums">{formatMoney(total)}</div>
               <div className="text-xs text-fg-muted">
                 за смену · {entryCount}{" "}
-                {plural(entryCount, "запись", "записи", "записей")} · итоги ›
+                {plural(entryCount, "запись", "записи", "записей")}
+                {/* Неотправленное входит в сумму: иначе итог был бы меньше
+                    настоящего, и администратор начал бы вводить заново
+                    поверх уже введённого. Сколько именно ждёт отправки,
+                    сказано полосой выше — здесь только пометка. */}
+                {queue.items.length > 0 && " · не всё отправлено"} · итоги ›
               </div>
             </button>
             {entries.length > 0 && (
