@@ -2,10 +2,17 @@
   "version": "0.0.1",
   "configurations": [
     {
+      "name": "manager-app",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev"],
+      "cwd": "/Users/user/Documents/Невский/manager-app",
+      "port": 3100
+    },
+    {
       "name": "mini-app",
       "runtimeExecutable": "npm",
       "runtimeArgs": ["run", "dev"],
-      "cwd": "mini-app",
+      "cwd": "/Users/user/Documents/Невский/mini-app",
       "port": 3000
     }
   ]
