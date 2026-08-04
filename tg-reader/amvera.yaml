@@ -1,0 +1,15 @@
+# Настройки публикации читателя QR-чаевых на Amvera.
+#
+# Собираем через Dockerfile: нужен Python с telethon и psycopg, а не готовое
+# окружение из панели — так версии видны в коде, а не в чужих настройках.
+#
+# containerPort здесь НЕ задаём: это не сайт, наружу читатель не смотрит.
+# Он только ходит в Telegram и в базу, обоих находит сам.
+
+meta:
+  environment: docker
+  toolchain:
+    name: docker
+
+build:
+  dockerfile: Dockerfile

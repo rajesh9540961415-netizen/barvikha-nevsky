@@ -1,36 +1,37 @@
-"""Связь скриптов с базой приложения.
+"""Настройки для скриптов, которые запускают на компьютере владельца.
 
-Строку подключения берём оттуда же, откуда её берёт приложение, —
-из `mini-app/.env.local`. Вторую копию доступов не заводим: две копии
-рано или поздно разъезжаются, и тогда скрипт пишет не в ту базу.
+На сервере читатель QR-чаевых берёт всё из переменных окружения — так устроены
+любые хостинги, и Amvera не исключение. На компьютере те же значения лежат
+файлами: `.env` (Telegram, Quick Resto) и `mini-app/.env.local` (база).
 
-⚠️ Боевые и тестовые данные разделены схемами одной базы: настоящие деньги
-смены — в `public`, проверки — в `test` (см. CLAUDE.md, раздел «Стек»).
-Поэтому правило здесь жёсткое: **по умолчанию скрипт работает с той схемой,
-что записана в `.env.local`** (а там `test`), и в боевую попадает только
-по явному требованию. Забыть флаг безопасно, поставить лишний — нет.
+Этот модуль просто переносит их в окружение. Дальше работает ровно тот же код,
+что и на сервере, — `tg-reader/qr_reader.py`. Второй ветки «а на компьютере
+по-другому» не заводим: именно в таких ветках и живут расхождения, которые
+обнаруживаются в бою.
+
+⚠️ Боевые и тестовые данные разделены схемами одной базы. Значение
+`DATABASE_SCHEMA` в `.env.local` — `test`, и это защита: скрипт, запущенный
+без явного указания, пишет в тестовую схему, а не поверх денег смены.
 """
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+ENV = ROOT / ".env"
 ENV_LOCAL = ROOT / "mini-app" / ".env.local"
+READER = ROOT / "tg-reader"
 
-PROD_SCHEMA = "public"
 
-
-def read_env_local() -> dict[str, str]:
-    """Читает mini-app/.env.local. Значения могут быть в кавычках — снимаем."""
-    if not ENV_LOCAL.exists():
-        sys.exit(
-            "Нет файла mini-app/.env.local — в нём лежит строка подключения "
-            "к базе. Он не в git, поэтому на новой машине его надо создать."
-        )
+def _read(path: Path) -> dict[str, str]:
+    """Читает файл вида КЛЮЧ=значение. Значения могут быть в кавычках."""
+    if not path.exists():
+        return {}
     cfg: dict[str, str] = {}
-    for line in ENV_LOCAL.read_text(encoding="utf-8").splitlines():
+    for line in path.read_text(encoding="utf-8").splitlines():
         line = line.strip()
         if not line or line.startswith("#") or "=" not in line:
             continue
@@ -42,40 +43,24 @@ def read_env_local() -> dict[str, str]:
     return cfg
 
 
-def connect(schema: str | None = None):
-    """Открывает соединение с базой. Возвращает (соединение, имя схемы).
+def load_env(need: tuple[str, ...] = ()) -> None:
+    """Кладёт настройки из файлов проекта в переменные окружения.
 
-    Соединение без autocommit: скрипты сами решают, когда закрепить запись.
-    Так частично записанная пачка не останется в базе, если что-то упало
-    посередине.
+    Уже заданные переменные не трогает: заданное руками должно побеждать файл,
+    иначе разовую проверку не сделать, не правя файл.
     """
-    try:
-        import psycopg
-        from psycopg import sql
-    except ModuleNotFoundError:
-        sys.exit(
-            "Не установлена psycopg — библиотека связи Python с PostgreSQL.\n"
-            "Поставить: python3 -m pip install --user 'psycopg[binary]'"
-        )
+    for path in (ENV, ENV_LOCAL):
+        for key, value in _read(path).items():
+            os.environ.setdefault(key, value)
 
-    cfg = read_env_local()
-    url = cfg.get("DATABASE_URL")
-    if not url:
-        sys.exit("В mini-app/.env.local не заполнено DATABASE_URL")
-
-    target = schema or cfg.get("DATABASE_SCHEMA") or PROD_SCHEMA
-
-    conn = psycopg.connect(url, connect_timeout=10)
-    with conn.cursor() as cur:
-        # Имя схемы подставляем как идентификатор, а не склейкой строк:
-        # склейка — это тот самый способ, которым в базу проникает чужой код.
-        cur.execute(sql.SQL("set search_path to {}").format(sql.Identifier(target)))
-    conn.commit()
-    return conn, target
+    missing = [key for key in need if not os.environ.get(key)]
+    if missing:
+        where = "`.env`" if missing[0].startswith("TG_") else "`mini-app/.env.local`"
+        sys.exit(f"Не заполнено: {', '.join(missing)} — искать в {where}")
 
 
-def describe(schema: str) -> str:
-    """Как назвать схему человеку, чтобы боевую было видно сразу."""
-    if schema == PROD_SCHEMA:
-        return f"{schema} — БОЕВАЯ, здесь настоящие деньги смены"
-    return f"{schema} — тестовая, боевые данные не тронуты"
+def use_reader_code() -> None:
+    """Делает доступным общий код читателя из папки tg-reader."""
+    if not READER.exists():
+        sys.exit(f"Нет папки {READER} — там лежит общий код читателя.")
+    sys.path.insert(0, str(READER))
