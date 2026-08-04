@@ -144,3 +144,82 @@ create table if not exists manual_people (
 -- впишут его одновременно с разным регистром букв.
 create unique index if not exists manual_people_name_idx
   on manual_people (lower(name));
+
+-- ─────────────────────────────────────────────────────────────────────
+-- Исправления
+-- ─────────────────────────────────────────────────────────────────────
+--
+-- Исправление НЕ переписывает запись, а заменяет её: старая помечается
+-- отменённой (это уже умеет `deleted_at`), новая ссылается на неё.
+--
+-- Почему не править на месте. Это денежный документ, и через год должно
+-- быть видно не только «сколько», но и «что было до того, как поправили,
+-- кто поправил и когда». Правка на месте стирает первое и превращает
+-- историю в пересказ победителя.
+alter table entries add column if not exists corrects uuid;
+
+create index if not exists entries_corrects_idx
+  on entries (corrects) where corrects is not null;
+
+-- Откуда пришла запись: из приложения смены или из бэк-офиса.
+--
+-- Смена правит только свою смену и только в ту же ночь. Бэк-офис — любой
+-- период. По этому полю сразу видно, вмешивались ли в смену задним числом.
+alter table entries add column if not exists source text not null default 'shift'
+  check (source in ('shift', 'office'));
+
+-- Управляющий, сделавший запись из бэк-офиса. У записей смены пусто.
+alter table entries add column if not exists manager_id integer;
+
+-- Автор записи из бэк-офиса — не сотрудник смены, и номера сотрудника
+-- у него нет. Поэтому operator_id перестаёт быть обязательным, но взамен
+-- появляется требование: автор должен быть указан хоть каким-то способом.
+alter table entries alter column operator_id drop not null;
+
+do $$
+begin
+  if not exists (select 1 from pg_constraint where conname = 'entries_author_present') then
+    alter table entries add constraint entries_author_present
+      check (operator_id is not null or manager_id is not null);
+  end if;
+end $$;
+
+-- ─────────────────────────────────────────────────────────────────────
+-- Управляющий состав
+-- ─────────────────────────────────────────────────────────────────────
+--
+-- Вход в бэк-офис — по людям, а не общим паролем. Решение владельца
+-- 04.08.2026: заходить будут трое, потом до пяти-шести.
+--
+-- Дело не в безопасности как таковой: под общим паролем правка денег
+-- подписывалась бы должностью, а не именем, и спросить «почему так»
+-- было бы не у кого. Это ровно то, от чего уходили, бросая бумагу.
+--
+-- Роли различаются не тем, что видят — видят все и всё, включая заработки
+-- поимённо, — а тем, что могут править:
+--   manager — факты: сумма, официант, вид денег, состав смены;
+--   owner   — правила: порог, доли, ставка комиссии, закрытые месяцы.
+create table if not exists managers (
+  id            serial      primary key,
+  name          text        not null,
+  login         text        not null unique,
+  password_hash text        not null,
+  role          text        not null check (role in ('owner', 'manager')),
+  -- Уволившегося отключаем, а не удаляем: вместе с ним ушла бы история
+  -- его правок, а это денежный след.
+  active        boolean     not null default true,
+  created_at    timestamptz not null default now()
+);
+
+-- Журнал входов. На шести людях с правом менять деньги это перестаёт быть
+-- излишеством. Неудачные попытки тоже пишем — по ним видно подбор пароля;
+-- у них manager_id пуст, а введённый логин сохраняется.
+create table if not exists manager_logins (
+  id         bigserial   primary key,
+  login      text        not null,
+  manager_id integer     references managers (id),
+  ok         boolean     not null,
+  at         timestamptz not null default now()
+);
+
+create index if not exists manager_logins_at_idx on manager_logins (at desc);
