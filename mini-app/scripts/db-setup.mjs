@@ -30,8 +30,13 @@ console.log(`Подключаюсь: ${shown}`);
 const schema = process.env.DATABASE_SCHEMA;
 if (schema) console.log(`Схема: ${schema} (тестовая, не боевая)`);
 
+// Своя база на этом компьютере работает без шифрования — и это правильно:
+// трафик не покидает машину, шифровать нечего. Для всех остальных адресов
+// шифрование обязательно: там строка подключения идёт через интернет.
+const isLocal = /@(localhost|127\.0\.0\.1)[:/]/.test(url);
+
 const sql = postgres(url, {
-  ssl: "require",
+  ssl: isLocal ? false : "require",
   connect_timeout: 15,
   ...(schema ? { connection: { search_path: schema } } : {}),
   // При повторном запуске PostgreSQL сообщает «таблица уже существует».
