@@ -223,3 +223,51 @@ create table if not exists manager_logins (
 );
 
 create index if not exists manager_logins_at_idx on manager_logins (at desc);
+
+-- ─────────────────────────────────────────────────────────────────────
+-- След правки: кто, когда, зачем
+-- ─────────────────────────────────────────────────────────────────────
+--
+-- Ссылка `corrects` выше говорит, ЧТО заменили. Здесь — КТО и ЗАЧЕМ.
+--
+-- Управляющий, отменивший запись из бэк-офиса, — не сотрудник смены,
+-- и номера сотрудника у него нет. Класть его в `deleted_by_id` нельзя:
+-- номера управляющих и номера сотрудников из Quick Resto считаются
+-- независимо и однажды совпадут — тогда отмену припишут не тому человеку.
+alter table entries add column if not exists deleted_by_manager_id integer
+  references managers (id);
+
+-- Зачем поправили и зачем отменили. Поля разные, потому что запись,
+-- созданную одной правкой, потом могут отменить другой: одно поле
+-- хранило бы только последнее объяснение, а первое теряло бы молча.
+--
+-- Заполнять не обязательно — решение владельца 07.08.2026: на мелких
+-- правках обязательное поле превращается в отписку «правка», и толку
+-- от него меньше, чем помех.
+alter table entries add column if not exists note         text;
+alter table entries add column if not exists deleted_note text;
+
+-- История правок состава смены.
+--
+-- Своей таблицей, а не по образцу записей: у `shifts` одна строка
+-- на бизнес-день, и правка её переписывает — следа не остаётся вовсе.
+-- А состав и роли определяют всю раскладку денег: сменился кассир —
+-- сменился и тот, кому уходит доля.
+--
+-- Было и стало храним целиком, а не разницей: разницу нельзя прочитать,
+-- не восстанавливая всю цепочку с самого начала.
+create table if not exists shift_changes (
+  id           bigserial   primary key,
+  business_day text        not null,
+  manager_id   integer     not null references managers (id),
+  -- Имя рядом с номером намеренно, как и в записях: это денежный след,
+  -- он должен читаться сам по себе и через год.
+  manager_name text        not null,
+  at           timestamptz not null default now(),
+  before_state jsonb       not null,
+  after_state  jsonb       not null,
+  note         text
+);
+
+create index if not exists shift_changes_day_idx
+  on shift_changes (business_day, at desc);

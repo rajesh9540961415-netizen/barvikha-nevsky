@@ -17,7 +17,6 @@ export type ShiftRow = {
   terminal: number;
   qr: number;
   service: number;
-  staff: number;
   tips: number;
   guestsGave: number;
   /** Трогали ли смену из бэк-офиса задним числом. */
@@ -31,7 +30,6 @@ type Raw = {
   terminal: string;
   qr: string;
   service: string;
-  staff: string;
   gross: string;
   corrected: boolean;
 };
@@ -46,7 +44,6 @@ export async function listShifts(limit = 30): Promise<ShiftRow[]> {
       coalesce(sum(amount) filter (where kind = 'terminal'), 0) as terminal,
       coalesce(sum(amount) filter (where kind = 'qr'),       0) as qr,
       coalesce(sum(amount) filter (where kind = 'service'),  0) as service,
-      coalesce(sum(amount) filter (where kind = 'staff'),    0) as staff,
       coalesce(sum(gross)  filter (where kind <> 'staff'),   0) as gross,
       bool_or(source = 'office')                            as corrected
     from entries
@@ -69,7 +66,6 @@ export async function listShifts(limit = 30): Promise<ShiftRow[]> {
       terminal,
       qr,
       service: Number(r.service),
-      staff: Number(r.staff),
       // Чаевые — это три вида денег. Сервисный сбор считается отдельно:
       // он входит в заработок официанта, но чаевыми не является.
       tips: cash + terminal + qr,

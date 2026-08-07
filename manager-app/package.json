@@ -3,11 +3,18 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
+    "predev": "npm run copies:check",
     "dev": "next dev --port 3100",
+    "prebuild": "npm run copies:check",
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "manager:add": "node --env-file=.env.local scripts/add-manager.mjs"
+    "copies": "node scripts/copies.mjs --fix",
+    "copies:check": "node scripts/copies.mjs",
+    "manager:add": "node --env-file=.env.local scripts/add-manager.mjs",
+    "manager:list": "node --env-file=.env.local scripts/list-managers.mjs",
+    "manager:password": "node --env-file=.env.local scripts/set-password.mjs",
+    "seed": "node --env-file=.env.local scripts/seed.mjs"
   },
   "dependencies": {
     "next": "16.2.12",

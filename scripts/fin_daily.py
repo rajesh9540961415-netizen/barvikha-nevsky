@@ -1,0 +1,151 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""Финансовое состояние на текущий момент — ежедневная сводка.
+
+Собирает в одну картинку:
+  • выручку за вчера и с начала месяца (обе кассы Quick Resto);
+  • расходы с начала месяца (банковские выписки);
+  • остатки на счетах и резерв под налоги;
+  • ближайшие крупные платежи по историческому календарю.
+
+Запуск:  python3 scripts/fin_daily.py [--no-quickresto]
+
+Выручка тянется из кассы онлайн. Расходы берутся из последней разобранной
+выписки — она обновляется скриптом bank_import.py, когда приходит новая.
+"""
+import csv
+import subprocess
+import sys
+from collections import defaultdict
+from datetime import date, timedelta
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+DATA = ROOT / "data" / "dds"
+M = lambda v: f"{v:,.0f}".replace(",", " ")
+
+
+def refresh_quickresto():
+    """Обновляет выгрузки обеих касс. Молча пропускает недоступную."""
+    import os
+    # при запуске из-под планировщика локаль может быть не UTF-8,
+    # и печать кириллицы в пайп роняет дочерний процесс
+    env = {**os.environ, "PYTHONIOENCODING": "utf-8"}
+    for cloud in ("mav", "shalaeva"):
+        try:
+            subprocess.run([sys.executable, str(ROOT / "scripts" / "qr_sales.py"), f"--{cloud}"],
+                           capture_output=True, timeout=600, check=True, env=env)
+        except Exception as e:
+            detail = getattr(e, "stderr", b"") or b""
+            print(f"   ⚠️  касса {cloud}: не обновилась ({type(e).__name__}) "
+                  f"{detail.decode('utf-8', 'replace').strip()[-200:]}")
+
+
+def read_sales():
+    """Выручка по дням, обе кассы вместе."""
+    day = defaultdict(lambda: {"cash": 0.0, "cashless": 0.0, "checks": 0})
+    for f in DATA.glob("qr_sales_*.csv"):
+        for r in csv.DictReader(f.open(encoding="utf-8")):
+            y, m, d = map(int, r["date"].split("-"))
+            a = day[date(y, m, d)]
+            a["cash"] += float(r["cash"])
+            a["cashless"] += float(r["cashless"])
+            a["checks"] += int(r["checks"])
+    return day
+
+
+def main():
+    if "--no-quickresto" not in sys.argv:
+        refresh_quickresto()
+
+    sales = read_sales()
+    today = max(sales) if sales else date.today()
+    month = (today.year, today.month)
+    prev = today - timedelta(days=1)
+
+    print("=" * 62)
+    print(f"  ФИНАНСОВОЕ СОСТОЯНИЕ на {today.strftime('%d.%m.%Y')}")
+    print("=" * 62)
+
+    # ── выручка ───────────────────────────────────────────────────────────
+    d = sales.get(today, {"cash": 0, "cashless": 0, "checks": 0})
+    p = sales.get(prev, {"cash": 0, "cashless": 0, "checks": 0})
+    mtd = defaultdict(float)
+    days_done = 0
+    for dt, v in sales.items():
+        if (dt.year, dt.month) == month:
+            mtd["cash"] += v["cash"]; mtd["cashless"] += v["cashless"]
+            mtd["checks"] += v["checks"]; days_done += 1
+    tot_day = d["cash"] + d["cashless"]
+    tot_prev = p["cash"] + p["cashless"]
+    tot_mtd = mtd["cash"] + mtd["cashless"]
+
+    print("\nВЫРУЧКА")
+    print(f"   за {today.strftime('%d.%m')}          {M(tot_day):>13}   чеков {d['checks']}")
+    print(f"   за {prev.strftime('%d.%m')}          {M(tot_prev):>13}   чеков {p['checks']}")
+    print(f"   с начала месяца  {M(tot_mtd):>13}   за {days_done} дн., в среднем "
+          f"{M(tot_mtd/days_done if days_done else 0)}/день")
+    if tot_mtd:
+        print(f"   наличные         {M(mtd['cash']):>13}   {mtd['cash']/tot_mtd*100:.0f}% выручки")
+
+    # ── расходы ───────────────────────────────────────────────────────────
+    cls = DATA / "bank_classified.csv"
+    if cls.exists():
+        rows = list(csv.DictReader(cls.open(encoding="utf-8")))
+        last_bank = max((r["date"] for r in rows), default="—")
+        ext = wd = 0.0
+        for r in rows:
+            if r["direction"] != "out":
+                continue
+            y, m, _ = map(int, r["date"].split("-"))
+            if (y, m) != month:
+                continue
+            if r["class"] == "external":
+                ext += float(r["amount"])
+            elif r["class"] == "withdrawal":
+                wd += float(r["amount"])
+        print("\nРАСХОДЫ С НАЧАЛА МЕСЯЦА (банк)")
+        print(f"   операционные     {M(ext):>13}")
+        print(f"   вывод собственнику {M(wd):>11}")
+        print(f"   сальдо к выручке {M(tot_mtd - ext):>13}")
+        if last_bank != "—" and last_bank < today.isoformat():
+            print(f"   ⚠️  выписка загружена по {last_bank}, отстаёт от кассы")
+
+    # ── остатки ───────────────────────────────────────────────────────────
+    bal = DATA / "bank_balances.csv"
+    if bal.exists():
+        last = {}
+        for b in csv.DictReader(bal.open(encoding="utf-8")):
+            key = b["account"]
+            if key not in last or b["date"] > last[key]["date"]:
+                last[key] = b
+        print("\nДЕНЬГИ НА СЧЕТАХ")
+        import json
+        reg = json.loads((DATA / "registry.json").read_text(encoding="utf-8"))
+        names = {}
+        for e in reg["entities"]:
+            for a in e["accounts"]:
+                if a["number"]:
+                    names[a["number"]] = (e["short"], a["type"], a.get("role", ""))
+        total_oper = 0.0
+        for num, b in sorted(last.items()):
+            short, typ, role = names.get(num, ("?", "?", ""))
+            tag = "резерв на налоги" if role == "tax_reserve" else typ
+            print(f"   {short:<12} {tag:<18} {M(float(b['closing'])):>13}   на {b['date']}")
+            if role != "tax_reserve":
+                total_oper += float(b["closing"])
+        print(f"   {'─'*46}")
+        print(f"   {'оборотные деньги':<31}{M(total_oper):>13}")
+
+    # ── ближайшие платежи ─────────────────────────────────────────────────
+    print("\nБЛИЖАЙШИЕ КРУПНЫЕ ПЛАТЕЖИ (по историческому календарю)")
+    plan = [(10, "зарплата / аванс"), (15, "аренда"), (25, "аренда, зарплата"),
+            (28, "налоги"), (30, "зарплата за месяц")]
+    for day_no, what in plan:
+        if day_no >= today.day:
+            print(f"   {day_no}-е — {what}")
+    print()
+
+
+if __name__ == "__main__":
+    main()

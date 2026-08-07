@@ -1,33 +1,23 @@
+import Link from "next/link";
 import { redirect } from "next/navigation";
 import { currentManager, signOut } from "@/lib/db/managers";
 import { listShifts } from "@/lib/db/shifts";
+import { dayLabel, moneyOrDash as money } from "@/lib/format";
 
 export const dynamic = "force-dynamic";
-
-function money(value: number): string {
-  if (!value) return "—";
-  const text = value.toLocaleString("ru-RU", {
-    minimumFractionDigits: Math.round(value * 100) % 100 ? 2 : 0,
-    maximumFractionDigits: 2,
-  });
-  return `${text.replace(/\s/g, " ")} ₽`;
-}
-
-const MONTHS = [
-  "января", "февраля", "марта", "апреля", "мая", "июня",
-  "июля", "августа", "сентября", "октября", "ноября", "декабря",
-];
-
-function day(key: string): string {
-  const [, month, date] = key.split("-");
-  return `${Number(date)} ${MONTHS[Number(month) - 1]}`;
-}
 
 export default async function Home() {
   const manager = await currentManager();
   if (!manager) redirect("/login");
 
   const shifts = await listShifts();
+
+  // Комиссия Сбера за показанные смены: сколько оставили гости минус сколько
+  // дошло. Поле guestsGave до сих пор считалось и никуда не показывалось —
+  // вот оно и пригодилось.
+  const guestsGave = shifts.reduce((sum, s) => sum + s.guestsGave, 0);
+  const received = shifts.reduce((sum, s) => sum + s.tips + s.service, 0);
+  const commission = Math.round((guestsGave - received) * 100) / 100;
 
   return (
     <main className="mx-auto max-w-5xl px-6 py-8">
@@ -38,9 +28,14 @@ export default async function Home() {
             {manager.name} · {manager.role === "owner" ? "владелец" : "управляющий"}
           </p>
         </div>
-        <form action={signOut}>
-          <button className="text-fg-muted underline">выйти</button>
-        </form>
+        <div className="flex items-baseline gap-5">
+          <Link href="/people" className="text-sand underline">
+            Сотрудники
+          </Link>
+          <form action={signOut}>
+            <button className="text-fg-muted underline">выйти</button>
+          </form>
+        </div>
       </header>
 
       {shifts.length === 0 ? (
@@ -53,10 +48,11 @@ export default async function Home() {
                 <th className="py-2 text-left font-normal">смена</th>
                 <th className="py-2 font-normal">записей</th>
                 <th className="py-2 font-normal">наличные</th>
-                <th className="py-2 font-normal">терминал</th>
+                <th className="py-2 font-normal">
+                  терминал<span className="text-sand">*</span>
+                </th>
                 <th className="py-2 font-normal">QR</th>
                 <th className="py-2 font-normal">сбор</th>
-                <th className="py-2 font-normal">питание</th>
                 <th className="py-2 font-normal">чаевые</th>
               </tr>
             </thead>
@@ -64,7 +60,12 @@ export default async function Home() {
               {shifts.map((s) => (
                 <tr key={s.businessDay} className="border-b border-line/50">
                   <td className="py-2 text-left">
-                    {day(s.businessDay)}
+                    <Link
+                      href={`/shift/${s.businessDay}`}
+                      className="underline decoration-line underline-offset-4 hover:decoration-sand"
+                    >
+                      {dayLabel(s.businessDay)}
+                    </Link>
                     {/* Смену, тронутую из бэк-офиса, помечаем прямо в списке:
                         иначе правка задним числом становится невидимой, а это
                         ровно то, чего мы избегаем. */}
@@ -77,7 +78,6 @@ export default async function Home() {
                   <td className="py-2 tabular-nums">{money(s.terminal)}</td>
                   <td className="py-2 tabular-nums">{money(s.qr)}</td>
                   <td className="py-2 tabular-nums">{money(s.service)}</td>
-                  <td className="py-2 tabular-nums">{money(s.staff)}</td>
                   <td className="py-2 font-medium tabular-nums">{money(s.tips)}</td>
                 </tr>
               ))}
@@ -86,10 +86,23 @@ export default async function Home() {
         </div>
       )}
 
-      <p className="mt-6 text-sm text-fg-muted">
+      {/* Сноска про комиссию — не мелочь. В колонке стоит не та сумма, которую
+          гость видел на терминале, и человек, заходящий сюда раз в месяц,
+          решит, что цифра неверная. Показываем настоящие рубли за показанный
+          период, а не общее «удерживается комиссия». */}
+      {commission > 0 && (
+        <p className="mt-6 text-sm text-fg-muted">
+          <span className="text-sand">*</span> По терминалу показано то, что{" "}
+          <b className="font-medium text-fg">дошло до официанта</b>. Сбер
+          удерживает 8 % с получателя, поэтому гость оставляет больше, чем
+          доходит. За показанные смены гости оставили {money(guestsGave)}, из
+          них комиссия — {money(commission)}.
+        </p>
+      )}
+
+      <p className="mt-3 text-sm text-fg-muted">
         Чаевые — это наличные, терминал и QR вместе. Сервисный сбор считается
         отдельно: он входит в заработок официанта, но чаевыми не является.
-        Питание — вычет, а не доход.
       </p>
     </main>
   );

@@ -1,0 +1,105 @@
+import Link from "next/link";
+import { redirect } from "next/navigation";
+import { Suspense } from "react";
+import PersonPicker from "@/components/PersonPicker";
+import PersonStatsView from "@/components/PersonStats";
+import { listPeople, readPerson } from "@/lib/db/people";
+import { currentManager, signOut } from "@/lib/db/managers";
+import { dayLabel } from "@/lib/format";
+
+export const dynamic = "force-dynamic";
+
+/**
+ * Границы периода в ключах бизнес-дня.
+ *
+ * День считаем по границе 11:00, как в Quick Resto: смена, идущая до трёх
+ * ночи, относится ко вчерашнему дню. Без этой поправки утром 1 августа
+ * «текущий месяц» начинался бы с пустого места, а вчерашняя смена
+ * оказывалась бы в прошлом месяце.
+ */
+function range(period: string): { from: string; to: string } {
+  const now = new Date();
+  if (now.getHours() < 11) now.setDate(now.getDate() - 1);
+  const key = (d: Date) =>
+    `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+
+  const to = key(now);
+
+  if (period === "month") {
+    return { from: key(new Date(now.getFullYear(), now.getMonth(), 1)), to };
+  }
+  if (period === "prev") {
+    const first = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    const last = new Date(now.getFullYear(), now.getMonth(), 0);
+    return { from: key(first), to: key(last) };
+  }
+  if (period === "all") {
+    // Приложение записывает с 31.07.2026 — раньше этой даты данных нет
+    // и быть не может. Верхнюю границу оставляем сегодняшней.
+    return { from: "2026-01-01", to };
+  }
+
+  const days = period === "90" ? 90 : 30;
+  const start = new Date(now);
+  start.setDate(start.getDate() - days + 1);
+  return { from: key(start), to };
+}
+
+export default async function PeoplePage({
+  searchParams,
+}: {
+  searchParams: Promise<{ id?: string; period?: string }>;
+}) {
+  const manager = await currentManager();
+  if (!manager) redirect("/login");
+
+  const params = await searchParams;
+  const period = params.period ?? "30";
+  const { from, to } = range(period);
+
+  const people = await listPeople();
+  const id = params.id ? Number(params.id) : null;
+  const stats = id !== null ? await readPerson(id, from, to) : null;
+
+  return (
+    <main className="mx-auto max-w-5xl px-6 py-8">
+      <header className="flex items-baseline justify-between gap-4">
+        <div>
+          <Link href="/" className="text-sm text-fg-muted underline">
+            ‹ все смены
+          </Link>
+          <h1 className="mt-1 text-2xl font-medium">Сотрудники</h1>
+          <p className="mt-1 text-sm text-fg-muted">
+            {dayLabel(from)} — {dayLabel(to)}
+          </p>
+        </div>
+        <form action={signOut} className="text-sm text-fg-muted">
+          {manager.name} ·{" "}
+          {manager.role === "owner" ? "владелец" : "управляющий"}{" "}
+          <button className="underline">выйти</button>
+        </form>
+      </header>
+
+      <div className="mt-6">
+        <Suspense fallback={<div className="h-16" />}>
+          <PersonPicker people={people} personId={id} period={period} />
+        </Suspense>
+      </div>
+
+      {stats === null ? (
+        <p className="mt-8 text-fg-muted">
+          {people.length === 0
+            ? "Пока некого показывать: в базе нет ни одной смены."
+            : "Выберите сотрудника, чтобы увидеть его смены за период."}
+        </p>
+      ) : stats.days.length === 0 ? (
+        <p className="mt-8 text-fg-muted">
+          За этот период у заведения не было ни одной смены. Попробуйте
+          выбрать период пошире.
+        </p>
+      ) : (
+        <PersonStatsView stats={stats} />
+      )}
+    </main>
+  );
+}

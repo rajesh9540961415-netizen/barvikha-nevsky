@@ -1,0 +1,81 @@
+/**
+ * Копии из приложения смены.
+ *
+ * Бэк-офис показывает «было / стало» по всей смене до сохранения правки,
+ * а считать смену он обязан ровно так же, как приложение смены. Значит
+ * правила деления денег и справочники нужны обоим приложениям.
+ *
+ * Общей папки быть не может: Amvera собирает mini-app и manager-app как два
+ * отдельных корня, и всё за их пределами до сервера не доедет. Остаётся
+ * копия — а копия опасна ровно тем, что расходится молча. Через полгода
+ * порог поменяли бы в одном приложении, и предпросмотр начал бы показывать
+ * не те деньги, которые потом получат люди.
+ *
+ * Поэтому копию стережёт эта проверка:
+ *
+ *   npm run copies         привести копии в соответствие с приложением смены
+ *   npm run copies:check    только проверить (запускается сама перед dev и build)
+ *
+ * На сервере папки mini-app рядом нет — там проверять нечего и не с чем,
+ * поэтому скрипт молча заканчивает работу.
+ */
+
+import { copyFileSync, existsSync, readFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const here = dirname(fileURLToPath(import.meta.url));
+const office = resolve(here, "..");
+const shift = resolve(office, "..", "mini-app");
+
+const FILES = [
+  "src/lib/split.ts",
+  "src/lib/types.ts",
+  "src/data/employees.json",
+  "src/data/tables.json",
+];
+
+if (!existsSync(shift)) {
+  // Собираемся на сервере: приложения смены рядом нет. Это не ошибка —
+  // копии уже лежат в репозитории и приехали вместе с этой папкой.
+  process.exit(0);
+}
+
+const fix = process.argv.includes("--fix");
+const diverged = [];
+
+for (const file of FILES) {
+  const from = join(shift, file);
+  const to = join(office, file);
+
+  if (!existsSync(from)) {
+    console.error(`✗ В приложении смены нет файла ${file}`);
+    console.error("  Его переименовали или убрали — поправьте список в scripts/copies.mjs");
+    process.exit(1);
+  }
+
+  const same =
+    existsSync(to) && readFileSync(from).equals(readFileSync(to));
+  if (same) continue;
+
+  if (fix) {
+    copyFileSync(from, to);
+    console.log(`✓ Обновлено: ${file}`);
+  } else {
+    diverged.push(file);
+  }
+}
+
+if (diverged.length > 0) {
+  console.error("✗ Копии разошлись с приложением смены:");
+  for (const file of diverged) console.error(`  ${file}`);
+  console.error("");
+  console.error("  Это правила деления денег и справочники. Пока они разные,");
+  console.error("  бэк-офис показывал бы в предпросмотре не те суммы, которые");
+  console.error("  потом получат люди.");
+  console.error("");
+  console.error("  Привести в соответствие:  npm run copies");
+  process.exit(1);
+}
+
+if (fix) console.log("Готово. Копии совпадают с приложением смены.");
