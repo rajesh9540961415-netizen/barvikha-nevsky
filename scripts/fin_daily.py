@@ -54,6 +54,83 @@ def read_sales():
     return day
 
 
+def gaps_report():
+    """Какие дни выписки не загружены.
+
+    Ссылка на выписку в письме живёт сутки. Если день пропустили — операции
+    за него просто не попадут в учёт, и заметить это по суммам невозможно.
+    Поэтому считаем дни явно: в файле формата 1С на каждый день есть своя
+    секция с остатком, так что пропуск виден точно.
+    """
+    import json
+    bal = DATA / "bank_balances.csv"
+    if not bal.exists():
+        return
+    reg = json.loads((DATA / "registry.json").read_text(encoding="utf-8"))
+    names, unconfirmed = {}, set()
+    for e in reg["entities"]:
+        for a in e["accounts"]:
+            if a["number"]:
+                names[a["number"]] = (e["short"], a.get("role") or a["type"])
+                if a.get("статус") == "требует подтверждения":
+                    unconfirmed.add(a["number"])
+
+    days = defaultdict(set)
+    for b in csv.DictReader(bal.open(encoding="utf-8")):
+        y, m, d = map(int, b["date"].split("-"))
+        days[b["account"]].add(date(y, m, d))
+
+    # Счёт, по которому нет ни одного дня, в разбор ниже не попадёт: у него нет
+    # ни первого дня, ни последнего, вычитать не из чего. Пустота при этом
+    # выглядит как порядок — поэтому такие счета показываем отдельно.
+    # Счета с неподтверждённым номером сюда не берём: там вопрос не к выписке,
+    # а к самому номеру, и ежедневно напоминать о нём нечестно.
+    empty = sorted(acc for acc in names if acc not in days and acc not in unconfirmed)
+
+    # Дыра бывает двух видов: пропущенный день внутри периода и «хвост» —
+    # когда выписку давно не выгружали и данных после какой-то даты просто нет.
+    # Второе опаснее: расходы за неделю могут молча отсутствовать.
+    yesterday = date.today() - timedelta(days=1)
+    problems, tails = [], []
+    for acc, ds in days.items():
+        lo, hi = min(ds), max(ds)
+        missing = sorted({lo + timedelta(n) for n in range((hi - lo).days + 1)} - ds)
+        if missing:
+            problems.append((acc, missing, hi))
+        if hi < yesterday:
+            tails.append((acc, hi, (yesterday - hi).days))
+
+    if not problems and not tails and not empty:
+        print("\nПРОПУСКИ В ВЫПИСКАХ\n   нет, все дни загружены")
+        return
+
+    print("\nПРОПУСКИ В ВЫПИСКАХ")
+    for acc in empty:
+        short, typ = names[acc]
+        print(f"   {short} · {typ}: выписки НЕТ СОВСЕМ — ни одного дня. Счёт {acc}")
+    for acc, hi, n in sorted(tails, key=lambda x: -x[2]):
+        short, typ = names.get(acc, ("?", "?"))
+        nxt = hi + timedelta(days=1)
+        print(f"   {short} · {typ}: нет данных после {hi:%d.%m} — "
+              f"не хватает {n} дн. ({nxt:%d.%m}–{yesterday:%d.%m})")
+    for acc, missing, hi in problems:
+        short, typ = names.get(acc, ("?", "?"))
+        rng, start = [], missing[0]
+        prev = start
+        for d in missing[1:]:
+            if (d - prev).days == 1:
+                prev = d
+                continue
+            rng.append((start, prev)); start = prev = d
+        rng.append((start, prev))
+        txt = ", ".join(f"{a:%d.%m}" if a == b else f"{a:%d.%m}–{b:%d.%m}" for a, b in rng)
+        print(f"   {short} · {typ}: не хватает {len(missing)} дн. — {txt}")
+    print("   → выгрузите в СберБизнес выписку за недостающий период "
+          "(Счета и выписки → Экспорт выписки, формат 1С)")
+    print("   → положите файл в data/dds/выписки/ — повторы отсеются сами, "
+          "можно брать период с запасом")
+
+
 def main():
     if "--no-quickresto" not in sys.argv:
         refresh_quickresto()
@@ -136,6 +213,8 @@ def main():
                 total_oper += float(b["closing"])
         print(f"   {'─'*46}")
         print(f"   {'оборотные деньги':<31}{M(total_oper):>13}")
+
+    gaps_report()
 
     # ── ближайшие платежи ─────────────────────────────────────────────────
     print("\nБЛИЖАЙШИЕ КРУПНЫЕ ПЛАТЕЖИ (по историческому календарю)")

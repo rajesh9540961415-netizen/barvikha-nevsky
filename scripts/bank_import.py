@@ -6,7 +6,8 @@
 Скрипт вытаскивает платежи и дневные остатки по счёту.
 
 Запуск:
-    python3 scripts/bank_import.py <путь к kl_to_1c.txt или .zip> [ещё файлы...]
+    python3 scripts/bank_import.py                     — всё из data/dds/выписки/
+    python3 scripts/bank_import.py <файл> [ещё файлы...] — только указанные
 
 Результат: data/dds/bank_transactions.csv и data/dds/bank_balances.csv
 """
@@ -44,8 +45,13 @@ def d(s):
 
 
 def parse(text):
-    """Возвращает (список платежей, список дневных остатков, номер счёта)."""
-    account = None
+    """Возвращает (список платежей, список дневных остатков, номера счетов).
+
+    В шапке файла может быть НЕСКОЛЬКО строк РасчСчет: банк отдаёт одной
+    выпиской и расчётный счёт, и депозит. Поэтому для каждого платежа счёт
+    определяем отдельно — по тому, какой из наших счетов участвует в операции.
+    """
+    accounts = []
     docs, balances = [], []
     cur, mode = {}, None
 
@@ -69,16 +75,23 @@ def parse(text):
             continue
         k, v = line.split("=", 1)
         k, v = k.strip(), v.strip()
-        if mode is None and k == "РасчСчет" and account is None:
-            account = v
+        if mode is None and k == "РасчСчет" and v and v not in accounts:
+            accounts.append(v)
         if mode:
             cur[k] = v
 
+    own = set(accounts)
     tx = []
     for x in docs:
         payer = x.get("ПлательщикСчет", "") or x.get("ПлательщикРасчСчет", "")
         recv = x.get("ПолучательСчет", "") or x.get("ПолучательРасчСчет", "")
-        outgoing = account in payer if account else True
+        # чей это счёт: тот из наших, что участвует в операции
+        if payer in own:
+            acc, outgoing = payer, True
+        elif recv in own:
+            acc, outgoing = recv, False
+        else:                       # ни один не наш — считаем по первому счёту файла
+            acc, outgoing = (accounts[0] if accounts else ""), True
         tx.append({
             "date": d(x.get("ДатаСписано") or x.get("ДатаПоступило") or x.get("Дата", "")),
             "doc_no": x.get("Номер", ""),
@@ -86,7 +99,7 @@ def parse(text):
             "amount": float((x.get("Сумма") or "0").replace(",", ".")),
             "counterparty": (x.get("Получатель") if outgoing else x.get("Плательщик")) or "",
             "inn": (x.get("ПолучательИНН") if outgoing else x.get("ПлательщикИНН")) or "",
-            "account": account or "",
+            "account": acc,
             "purpose": re.sub(r"\s+", " ", x.get("НазначениеПлатежа", "")).strip(),
         })
 
@@ -98,16 +111,27 @@ def parse(text):
         bal.append({"date": d(b["ДатаНачала"]), "account": b.get("РасчСчет", ""),
                     "opening": num("НачальныйОстаток"), "debit": num("ВсегоСписано"),
                     "credit": num("ВсегоПоступило"), "closing": num("КонечныйОстаток")})
-    return tx, bal, account
+    return tx, bal, accounts
 
 
 def main():
-    if len(sys.argv) < 2:
-        raise SystemExit(__doc__)
+    # Без аргументов берём всё из постоянной папки для выписок. Скрипт
+    # переписывает таблицы целиком, поэтому получать он должен весь набор
+    # сразу — папка это гарантирует, в отличие от «Загрузок», где выписки
+    # лежат вперемешку со всем остальным и одну легко забыть.
+    files = sys.argv[1:]
+    if not files:
+        inbox = OUT / "выписки"
+        files = sorted(str(p) for p in inbox.glob("*.txt")) + \
+                sorted(str(p) for p in inbox.glob("*.zip"))
+        if not files:
+            raise SystemExit(f"В папке {inbox} нет выписок, и файлы не переданы.\n{__doc__}")
+        print(f"Беру все выписки из {inbox}\n")
+
     tx, bal = [], []
-    for p in sys.argv[1:]:
-        t, b, acc = parse(read_text(p))
-        print(f"{Path(p).name}: счёт {acc}, платежей {len(t)}, дней {len(b)}")
+    for p in files:
+        t, b, accs = parse(read_text(p))
+        print(f"{Path(p).name}: счета {', '.join(accs) or '—'}, платежей {len(t)}, дней {len(b)}")
         tx += t
         bal += b
 

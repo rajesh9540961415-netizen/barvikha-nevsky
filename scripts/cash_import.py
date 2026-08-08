@@ -1,110 +1,213 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Разбор Google-таблицы «Выручка Невский 2026» (id 1bvnxNodVld0d6lPRgd4QWZtMUCK_Bi2Or7_osoKM5lM).
+"""Разбор Google-таблицы «Выручка Невский 2026» — наличная касса по дням.
 
-Исходник обновляется через коннектор Google Диска в data/dds/gsheet_raw.json.
-Старое описание:
-Разбор Google-таблицы «Выручка Невский 2026» — ежедневный журнал выручки и наличных.
+Таблица (id 1bvnxNodVld0d6lPRgd4QWZtMUCK_Bi2Or7_osoKM5lM) — единственный
+источник по расходу наличных: в банковскую выписку они не попадают.
+Обновляется через коннектор Google Диска в data/dds/gsheet_raw.json.
 
-В таблице два формата листов:
-  A (январь–май): Дата | день недели | БН | Нал | Виртуалка | Итого | статьи расходов...
-  B (июнь–август): (пусто) | Дата | Итого | БН | Нал | статьи расходов...
+Три поколения разметки листов, колонки менялись:
+  30 колонок — выручка разбита на ООО МАВ и ИП Шалаеву (с августа 2026)
+  26–28      — одна пара БН/Нал
+  18         — упрощённый шаблон на будущие месяцы, пока пустой
+Поэтому колонки читаем по названиям, а не по номерам.
+
+Месяц листа определяем не по подписи даты (там встречается «01.07» на
+августовской странице), а сверкой дневной выручки с выгрузкой из кассы.
+
+Запуск:  python3 scripts/cash_import.py
+Результат: data/dds/cash_daily.csv
 """
+import csv
 import json
 import re
-import csv
-from pathlib import Path
+from collections import defaultdict
 from datetime import date
+from pathlib import Path
 
-SRC = str(Path(__file__).resolve().parent.parent / "data" / "dds" / "gsheet_raw.json")
-OUT = str(Path(__file__).resolve().parent.parent / "data" / "dds")
+DATA = Path(__file__).resolve().parent.parent / "data" / "dds"
+SRC = DATA / "gsheet_raw.json"
+M = lambda v: f"{v:,.0f}".replace(",", " ")
+MR = ["", "январь", "февраль", "март", "апрель", "май", "июнь",
+      "июль", "август", "сентябрь", "октябрь", "ноябрь", "декабрь"]
 
-DATE = re.compile(r"^(\d{2})\.(\d{2})\.(\d{4})$")
+# Служебные колонки: это не расход, а движение денег и остатки.
+NOT_EXPENSE = {"Инкассация", "Инкасация", "Приход", "Нал остаток", "Нал. ост",
+               "Наличка накопительная", "Забрал из конверта ИТОГО",
+               "Дата", "БН", "Нал", "Виртуалка", "Итого"}
+
+
+def load_catmap():
+    """Перевод статей таблицы в статьи ДДС."""
+    f = DATA / "cash_categories.json"
+    if not f.exists():
+        return {}
+    return json.loads(f.read_text(encoding="utf-8")).get("map", {})
+
+
+CATMAP = None
 
 
 def num(s):
-    """«р.431 480,00» → 431480.0 ; «\\-р.15 000,00» → -15000.0"""
     if not s:
         return None
     s = s.replace("\\", "").replace("\xa0", "").replace(" ", "")
-    s = s.replace("р.", "").replace("₽", "").strip()
+    s = s.replace("р.", "").replace("₽", "")
     neg = s.startswith("-") or s.startswith("−")
-    s = s.lstrip("-−")
-    s = s.replace(".", "").replace(",", ".")
-    if not re.fullmatch(r"\d*\.?\d*", s) or s in ("", "."):
+    s = s.lstrip("-−").replace(".", "").replace(",", ".")
+    try:
+        v = float(s)
+    except ValueError:
         return None
-    v = float(s)
     return -v if neg else v
 
 
+def clean(c):
+    return re.sub(r"\\?\[merged\\?\]", "", c).strip()
+
+
+def qr_daily():
+    """Выручка по дням из кассы — эталон для определения месяца листа."""
+    day = defaultdict(float)
+    for f in DATA.glob("qr_sales_*.csv"):
+        for r in csv.DictReader(f.open(encoding="utf-8")):
+            y, m, d = map(int, r["date"].split("-"))
+            day[date(y, m, d)] += float(r["cash"]) + float(r["cashless"])
+    return day
+
+
+def resolve_month(totals, ref):
+    """Подбираем месяц: у какого совпадают дневные суммы выручки."""
+    best, best_hits = None, 0
+    for y in (2025, 2026):
+        for m in range(1, 13):
+            hits = 0
+            for dnum, val in totals.items():
+                try:
+                    d = date(y, m, dnum)
+                except ValueError:
+                    continue
+                if abs(ref.get(d, -1) - val) < 2:
+                    hits += 1
+            if hits > best_hits:
+                best, best_hits = (y, m), hits
+    return best, best_hits
+
+
 def main():
-    text = json.load(open(SRC, encoding="utf-8"))["fileContent"]
-    rows = [[c.strip() for c in l.strip().strip("|").split("|")]
+    if not SRC.exists():
+        raise SystemExit(f"Нет {SRC}. Скачайте таблицу через коннектор Google Диска.")
+    global CATMAP
+    CATMAP = load_catmap()
+    text = json.load(SRC.open(encoding="utf-8"))["fileContent"]
+    rows = [[clean(c) for c in l.strip().strip("|").split("|")]
             for l in text.split("\n") if l.strip().startswith("|")]
 
-    header = None       # актуальная шапка формата B
-    daily = []
-    for r in rows:
-        if any(c == "Дата" for c in r):
-            header = r
+    hdr = [i for i, r in enumerate(rows) if "Дата" in r and any(c in ("БН", "Нал") for c in r)]
+    ref = qr_daily()
+    out, report = [], []
+
+    for n, hi in enumerate(hdr):
+        end = hdr[n + 1] if n + 1 < len(hdr) else len(rows)
+        head = rows[hi]
+        col, seen = {}, set()
+        for j, c in enumerate(head):
+            if c and c not in seen:      # при повторе (БН/Нал дважды) берём первый
+                col[c] = j
+                seen.add(c)
+        # повторные БН/Нал — это второе юрлицо
+        dup = [j for j, c in enumerate(head) if c in ("БН", "Нал") and j > col.get(c, -1)]
+
+        body = rows[hi + 1:end]
+        totals, day_rows = {}, []
+        for r in body:
+            dnum = None
+            for j in (0, 1):
+                if len(r) > j and re.fullmatch(r"\d{2}\.\d{2}(\.\d{4})?", r[j] or ""):
+                    dnum = int(r[j][:2]); break
+            if dnum is None:
+                continue
+            tot = num(r[col["Итого"]]) if "Итого" in col and len(r) > col["Итого"] else None
+            if tot:
+                totals[dnum] = tot
+            day_rows.append((dnum, r))
+
+        if not day_rows:
             continue
-        if not r:
-            continue
+        (ym, hits) = resolve_month(totals, ref) if totals else (None, 0)
+        label = f"{MR[ym[1]]} {ym[0]}" if ym else "не определён"
 
-        # формат A: дата в первой колонке
-        m = DATE.match(r[0]) if r[0] else None
-        if m:
-            d = date(int(m.group(3)), int(m.group(2)), int(m.group(1)))
-            daily.append({"date": d, "fmt": "A",
-                          "cashless": num(r[2] if len(r) > 2 else ""),
-                          "cash": num(r[3] if len(r) > 3 else ""),
-                          "total": num(r[5] if len(r) > 5 else "")})
-            continue
+        filled = 0
+        for dnum, r in day_rows:
+            if not ym:
+                continue
+            try:
+                d = date(ym[0], ym[1], dnum)
+            except ValueError:
+                continue
+            rec = {"date": d, "cash_in": 0.0, "collection": 0.0,
+                   "net": None, "balance": None, "expenses": 0.0}
+            for name, j in col.items():
+                if len(r) <= j:
+                    continue
+                v = num(r[j])
+                if v is None:
+                    continue
+                if name == "Нал":
+                    rec["cash_in"] += v
+                elif name in ("Инкассация", "Инкасация"):
+                    rec["collection"] += v
+                elif name == "Приход":
+                    rec["net"] = v
+                elif name in ("Нал остаток", "Нал. ост"):
+                    # ЛОВУШКА: колонка названа «остаток», но хранит изменение
+                    # за день. Накопленный остаток — в «Наличка накопительная».
+                    rec["net"] = v if rec["net"] is None else rec["net"]
+                elif name == "Наличка накопительная":
+                    rec["balance"] = v
+                elif name not in NOT_EXPENSE:
+                    rec["expenses"] += v
+                    out.append({"date": d, "column": name,
+                                "category": CATMAP.get(name, "Прочие расходы"),
+                                "amount": round(v, 2)})
+            for j in dup:                       # наличные второго юрлица
+                if len(r) > j and head[j] == "Нал":
+                    v = num(r[j])
+                    if v:
+                        rec["cash_in"] += v
+            # пустая строка будущего дня — в учёт не берём
+            if not (rec["cash_in"] or rec["expenses"] or rec["collection"]
+                    or rec["balance"]):
+                continue
+            filled += 1
+            report.append((d, rec))
+        report_line = (label, len(day_rows), filled, hits, len(col))
+        print(f"{label:<16} строк {len(day_rows):>3}  с данными {filled:>3}  "
+              f"совпало с кассой {hits:>3} дн.  колонок {len(col)}")
 
-        # формат B: дата во второй колонке
-        m = DATE.match(r[1]) if len(r) > 1 and r[1] else None
-        if m:
-            d = date(int(m.group(3)), int(m.group(2)), int(m.group(1)))
-            daily.append({"date": d, "fmt": "B",
-                          "cashless": num(r[3] if len(r) > 3 else ""),
-                          "cash": num(r[4] if len(r) > 4 else ""),
-                          "total": num(r[2] if len(r) > 2 else "")})
+    out.sort(key=lambda r: (r["date"], r["category"]))
+    with (DATA / "cash_expenses.csv").open("w", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, ["date", "column", "category", "amount"])
+        w.writeheader(); w.writerows(out)
 
-    daily.sort(key=lambda x: x["date"])
-
-    # ── помесячная сводка ────────────────────────────────────────────────
-    from collections import defaultdict
-    agg = defaultdict(lambda: {"cash": 0.0, "cashless": 0.0, "total": 0.0, "days": 0, "filled": 0})
-    for r in daily:
-        k = (r["date"].year, r["date"].month)
-        a = agg[k]
-        a["days"] += 1
-        for f in ("cash", "cashless", "total"):
-            if r[f]:
-                a[f] += r[f]
-        if (r["total"] or 0) > 0:
-            a["filled"] += 1
-
-    M = lambda v: f"{v:,.0f}".replace(",", " ")
-    MR = ["", "январь", "февраль", "март", "апрель", "май", "июнь",
-          "июль", "август", "сентябрь", "октябрь", "ноябрь", "декабрь"]
-    print("GOOGLE-ТАБЛИЦА «ВЫРУЧКА НЕВСКИЙ 2026»")
-    print(f"{'месяц':<12}{'безнал':>14}{'наличные':>13}{'итого':>14}{'нал %':>7}"
-          f"{'дней':>7}{'заполнено':>11}  формат")
-    print("─" * 82)
-    for k in sorted(agg):
-        a = agg[k]
-        tot = a["total"] or (a["cash"] + a["cashless"])
-        sh = f"{a['cash']/(a['cash']+a['cashless'])*100:.0f}%" if (a["cash"] + a["cashless"]) else "—"
-        fmt = {r["fmt"] for r in daily if (r["date"].year, r["date"].month) == k}
-        print(f"{MR[k[1]]+' '+str(k[0]):<12}{M(a['cashless']):>14}{M(a['cash']):>13}"
-              f"{M(tot):>14}{sh:>7}{a['days']:>7}{a['filled']:>11}  {'/'.join(sorted(fmt))}")
-
-    with open(f"{OUT}/gsheet_daily.csv", "w", newline="", encoding="utf-8") as f:
-        w = csv.DictWriter(f, ["date", "fmt", "cashless", "cash", "total"])
+    daily = {}
+    for d, rec in report:
+        daily[d] = rec
+    with (DATA / "cash_daily.csv").open("w", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, ["date", "cash_in", "expenses", "collection", "net", "balance"])
         w.writeheader()
-        w.writerows(daily)
-    print(f"\nсохранено {len(daily)} дней → gsheet_daily.csv")
+        for d in sorted(daily):
+            r = daily[d]
+            w.writerow({"date": d, "cash_in": round(r["cash_in"], 2),
+                        "expenses": round(r["expenses"], 2),
+                        "collection": round(r["collection"], 2),
+                        "net": r["net"], "balance": r["balance"]})
+
+    print(f"\nзаписано: {len(out)} строк расходов, {len(daily)} дней")
+    if daily:
+        last = max(daily)
+        print(f"последний день: {last:%d.%m.%Y}   остаток наличных: "
+              f"{M(daily[last]['balance']) if daily[last]['balance'] is not None else '—'} ₽")
 
 
 if __name__ == "__main__":

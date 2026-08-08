@@ -18,6 +18,7 @@
 import csv
 import json
 from collections import defaultdict
+from datetime import date, timedelta
 from pathlib import Path
 
 DATA = Path(__file__).resolve().parent.parent / "data" / "dds"
@@ -107,18 +108,83 @@ def main():
 
     tax_reserve_report(reg, by_account, out)
 
-    missing = [e["name"] for e in reg["entities"]
-               if not any(a["number"] for a in e["accounts"])]
-    if missing:
-        print(f"\n⚠️  Нет реквизитов счёта: {', '.join(missing)} — операции по ним не попадут в учёт.")
+    report_gaps(reg, out)
+
+
+def report_gaps(reg, out):
+    """Чего в учёте не хватает.
+
+    Три разные беды, и молчаливая из них — вторая. Юрлицо без реквизитов ещё
+    заметно, а вот юрлицо, у которого счёт заведён, но не пришло ни одной
+    операции, в отчётах просто отсутствует: расходы группы занижены, а выглядит
+    это как нормальная картина.
+    """
+    problems = []
+
+    for e in reg["entities"]:
+        if not any(a["number"] for a in e["accounts"]):
+            problems.append(f"{e['name']}: не заведён ни один счёт — "
+                            f"операции по нему в учёт не попадут")
+
+    seen = {r["entity"] for r in out}
+    today = date.today().isoformat()
+    for e in reg["entities"]:
+        active = e.get("active_to") is None and (e.get("active_from") or "") <= today
+        if active and e["id"] not in seen and any(a["number"] for a in e["accounts"]):
+            problems.append(f"{e['name']}: счёт заведён, но НИ ОДНОЙ операции — "
+                            f"расходы группы занижены на неизвестную величину")
+
+    # Счёт из выписки, которого нет в справочнике. Операции загрузились, но
+    # повисли без юрлица и во все итоги по юрлицам не попали.
+    unknown = defaultdict(int)
+    for r in out:
+        if r["entity"] == "?":
+            unknown[r["account"]] += 1
+    for acc, cnt in sorted(unknown.items(), key=lambda x: -x[1]):
+        problems.append(f"счёт {acc}: {cnt} оп. — такого счёта нет в registry.json, "
+                        f"эти операции ни в одном итоге по юрлицам не учтены")
+
+    if problems:
+        print("\n⚠️  ЧЕГО НЕ ХВАТАЕТ")
+        for p in problems:
+            print(f"   • {p}")
+
+
+# Налоги платятся не ровным потоком, а рывками. Усреднять их по месяцам нельзя.
+#   • УСН — авансовый платёж раз в квартал, до 28 января / апреля / июля / октября.
+#     Плюс годовой расчёт в марте. Это самые крупные транши.
+#   • НДС — тоже квартальный, но разбит на три равные доли и платится
+#     до 28 числа каждого месяца следующего квартала.
+#   • Взносы и НДФЛ — каждый месяц, обычно около 10 числа, суммы небольшие.
+QUARTER_MONTHS = (1, 4, 7, 10)      # авансовый УСН за прошедший квартал
+ANNUAL_MONTH = 3                    # годовой расчёт по УСН
+# Доля квартальной выручки, которая уходит крупным траншем.
+# Проверено на факте: июль-25 6.9%, окт-25 8.3%, апр-26 7.9%, июль-26 7.7%.
+QUARTER_TAX_RATE = 0.08
+
+
+def month_kind(m):
+    if m in QUARTER_MONTHS:
+        return "квартальный"
+    if m == ANNUAL_MONTH:
+        return "годовой УСН"
+    return "обычный"
+
+
+def revenue_by_month():
+    rev = defaultdict(float)
+    for f in DATA.glob("qr_sales_*.csv"):
+        for r in csv.DictReader(f.open(encoding="utf-8")):
+            rev[r["date"][:7]] += float(r["cash"]) + float(r["cashless"])
+    return rev
 
 
 def tax_reserve_report(reg, by_account, out):
-    """Депозит — копилка на налоги. Показываем ОСТАТОК, а не операции.
+    """Депозит — копилка на налоги. Показываем ОСТАТОК и хватит ли его.
 
     Механика: с каждого поступления на расчётный счёт 6% автоматически уходит
-    на депозит; к сроку налогового платежа деньги возвращаются обратно.
-    Поэтому в ДДС движения по депозиту не показываем — это свои же деньги.
+    на депозит; к сроку платежа деньги возвращаются. В ДДС движения по депозиту
+    не показываем — это свои же деньги.
     """
     deposits = {num for num, (_, t) in by_account.items() if t == "deposit"}
     if not deposits:
@@ -128,32 +194,70 @@ def tax_reserve_report(reg, by_account, out):
         return
 
     M = lambda v: f"{v:,.0f}".replace(",", " ")
-    last = {}
+    per_acc = {}
+    monthly = defaultdict(dict)
     for b in csv.DictReader(balances.open(encoding="utf-8")):
-        if b["account"] in deposits:
-            last[b["date"][:7]] = float(b["closing"])
+        if b["account"] not in deposits:
+            continue
+        cur = per_acc.get(b["account"])
+        if cur is None or b["date"] > cur["date"]:
+            per_acc[b["account"]] = b
+        m = b["date"][:7]
+        prev = monthly[m].get(b["account"])
+        if prev is None or b["date"] > prev["date"]:
+            monthly[m][b["account"]] = b
 
     taxes = defaultdict(float)
     for r in out:
         if r["direction"] == "out" and r["why"] == "налоги":
             taxes[r["date"][:7]] += float(r["amount"])
 
-    print("\nНАКОПЛЕНИЯ НА НАЛОГИ (депозит — только остаток, операции в ДДС не идут)")
-    print(f"{'месяц':<10}{'отложено на конец':>20}{'заплачено налогов':>20}")
-    print("─" * 50)
-    for k in sorted(set(last) | set(taxes)):
-        print(f"{k:<10}{M(last.get(k, 0)):>20}{M(taxes.get(k, 0)):>20}")
+    print("\nНАЛОГИ И КОПИЛКА")
+    print("(платежи неравномерны: крупный транш раз в квартал, НДС по 1/3 каждый месяц)")
+    print(f"{'месяц':<10}{'тип месяца':<14}{'заплачено':>14}{'в копилке на конец':>21}")
+    print("─" * 60)
+    for k in sorted(set(monthly) | set(taxes)):
+        m = int(k[5:7])
+        bal = sum(float(b["closing"]) for b in monthly.get(k, {}).values())
+        print(f"{k:<10}{month_kind(m):<14}{M(taxes.get(k, 0)):>14}{M(bal):>21}")
 
-    total_tax = sum(taxes.values())
-    reserve = last[max(last)] if last else 0
-    print(f"\n   налогов заплачено за период: {M(total_tax)}")
-    print(f"   отложено сейчас:             {M(reserve)}")
-    if total_tax:
-        months = len(taxes) or 1
-        need = total_tax / months
-        print(f"   в среднем налогов в месяц:   {M(need)}")
-        if reserve < need:
-            print(f"   ⚠️  Резерва не хватает на один средний месячный платёж.")
+    reserve = sum(float(b["closing"]) for b in per_acc.values())
+
+    # ── сколько понадобится к ближайшему 28-му ────────────────────────────
+    today = date.today()
+    nxt = today if today.day <= 28 else (today.replace(day=1) + timedelta(days=32)).replace(day=1)
+    kind = month_kind(nxt.month)
+    rev = revenue_by_month()
+
+    print(f"\n   в копилке сейчас: {M(reserve)}")
+    print(f"   ближайший срок:   28.{nxt.month:02d}.{nxt.year} — месяц {kind}")
+
+    if kind == "обычный":
+        ordinary = [v for k, v in taxes.items() if month_kind(int(k[5:7])) == "обычный" and v > 0]
+        need = sum(ordinary) / len(ordinary) if ordinary else 0
+        print(f"   ожидаемый платёж: ~{M(need)} (НДС 1/3 + взносы + НДФЛ)")
+    else:
+        # крупный транш считаем от выручки прошедшего квартала
+        q_end = nxt.month - 1
+        months = [(nxt.year, q_end - i) for i in range(3)]
+        months = [(y + (m - 1) // 12, (m - 1) % 12 + 1) for y, m in months]
+        q_rev = sum(rev.get(f"{y}-{m:02d}", 0) for y, m in months)
+        need = q_rev * QUARTER_TAX_RATE
+        names = ", ".join(f"{m:02d}.{y}" for y, m in reversed(months))
+        print(f"   ожидаемый платёж: ~{M(need)} — это {QUARTER_TAX_RATE*100:.0f}% "
+              f"от выручки квартала ({names}: {M(q_rev)})")
+
+    if need:
+        gap = need - reserve
+        months_left = max((date(nxt.year, nxt.month, 28) - today).days, 0) / 30.4
+        if gap > 0:
+            print(f"   ⚠️  НЕ ХВАТАЕТ {M(gap)}. До срока {int(months_left * 30.4)} дн.")
+            print(f"       При нынешней ставке 6% от поступлений копилка растёт "
+                  f"примерно на 1 млн ₽ в месяц — этого мало для квартального транша."
+                  if kind != "обычный" else
+                  f"       Пополнение по ставке 6% обычно перекрывает обычный месяц.")
+        else:
+            print(f"   ✅ хватает, запас {M(-gap)}")
 
 
 if __name__ == "__main__":

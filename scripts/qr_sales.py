@@ -19,6 +19,7 @@ import base64
 import csv
 import json
 import sys
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -58,17 +59,44 @@ def read_env(cloud="mav"):
     return out
 
 
-def fetch_shifts(cfg, limit=5000):
+def fetch_shifts(cfg, page=300, max_pages=40):
+    """Тянет смены постранично.
+
+    Одним запросом вся история весит десятки мегабайт, и соединение рвётся
+    на середине — приходит обрезанный ответ. Раньше это молча оставляло
+    старые данные в CSV. Теперь: маленькие страницы, повтор при обрыве и
+    громкая ошибка, если страницу так и не удалось получить.
+    """
     token = base64.b64encode(f"{cfg['QR_LOGIN']}:{cfg['QR_PASSWORD']}".encode()).decode()
     q = urllib.parse.urlencode({"moduleName": MODULE, "className": CLASS})
     url = cfg["QR_URL"].rstrip("/") + "/platform/online/api/list?" + q
-    req = urllib.request.Request(
-        url, data=json.dumps({"limit": limit, "offset": 0}).encode(),
-        headers={"Authorization": "Basic " + token,
-                 "Content-Type": "application/json", "Connection": "keep-alive"},
-        method="POST")
-    with urllib.request.urlopen(req, timeout=180) as r:
-        return json.loads(r.read().decode())
+    head = {"Authorization": "Basic " + token,
+            "Content-Type": "application/json", "Connection": "close"}
+
+    all_rows, offset = [], 0
+    for _ in range(max_pages):
+        chunk = None
+        for attempt in range(4):
+            try:
+                req = urllib.request.Request(
+                    url, data=json.dumps({"limit": page, "offset": offset}).encode(),
+                    headers=head, method="POST")
+                with urllib.request.urlopen(req, timeout=120) as r:
+                    chunk = json.loads(r.read().decode())
+                break
+            except Exception as e:
+                if attempt == 3:
+                    raise SystemExit(
+                        f"Касса не отдала страницу offset={offset} после 4 попыток: "
+                        f"{type(e).__name__}. Данные НЕ обновлены — прежний файл оставлен как есть.")
+                time.sleep(2 * (attempt + 1))
+        if not chunk:
+            break
+        all_rows += chunk
+        offset += len(chunk)
+        if len(chunk) < page:
+            break
+    return all_rows
 
 
 def business_day(shift):
