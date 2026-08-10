@@ -24,6 +24,7 @@ import StaffScreen from "@/components/StaffScreen";
 import { COMMISSION_RATE, netAmount, shares, splitShift } from "@/lib/split";
 import {
   flushQueue,
+  isStaleDeploy,
   mergeEntries,
   pendingEntries,
   pendingSummary,
@@ -143,6 +144,14 @@ export default function TipsScreen() {
    * Поэтому для поступлений с прошлых дней состав читается отдельно, по их дню.
    */
   const [qrCrew, setQrCrew] = useState<Employee[]>([]);
+  /**
+   * Чтение упёрлось в то, что страница осталась от прошлой версии.
+   *
+   * Очередь отправки ловит это сама, но чтения идут мимо неё: экран открылся
+   * до выкладки и просто перестал обновляться. Молчать нельзя — человек будет
+   * смотреть на устаревшие цифры и не поймёт, почему они не меняются.
+   */
+  const [staleDeploy, setStaleDeploy] = useState(false);
   const [hallId, setHallId] = useState(halls[0].id);
   const [picked, setPicked] = useState<Picked | null>(null);
   const [editingCrew, setEditingCrew] = useState(false);
@@ -191,7 +200,8 @@ export default function TipsScreen() {
       setQrTips(qr);
       setStaleSince(null);
       return fresh;
-    } catch {
+    } catch (error) {
+      if (isStaleDeploy(error)) setStaleDeploy(true);
       return null;
     }
   }, [day]);
@@ -217,8 +227,9 @@ export default function TipsScreen() {
         setQrTips(qr);
         setStaleSince(null);
         setLoading("ready");
-      } catch {
+      } catch (error) {
         if (!alive) return;
+        if (isStaleDeploy(error)) setStaleDeploy(true);
         // Связи нет. Поднимаемся на снимке прошлого удачного чтения:
         // без него администратор упёрся бы в отказ и не смог бы внести
         // ни одной записи — то есть ровно то, от чего уходим.
@@ -856,6 +867,7 @@ export default function TipsScreen() {
           online={online}
           durable={queue.durable}
           staleSince={staleSince}
+          needsReload={queue.needsReload || staleDeploy}
           onFlush={() => {
             void flushQueue().then(() => refresh());
           }}

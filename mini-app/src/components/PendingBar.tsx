@@ -32,6 +32,13 @@ type Props = {
   durable: boolean;
   /** Когда снят снимок, на котором держится экран. Пусто — данные из базы. */
   staleSince: string | null;
+  /**
+   * Приложение обновилось, а страница осталась от прошлой версии.
+   *
+   * Единственная беда, которая не проходит сама и требует действия человека.
+   * Поэтому она главнее всех прочих и показывается поверх них.
+   */
+  needsReload: boolean;
   onFlush: () => void;
 };
 
@@ -48,8 +55,30 @@ export default function PendingBar({
   online,
   durable,
   staleSince,
+  needsReload,
   onFlush,
 }: Props) {
+  // Приложение обновилось. Говорим об этом вместо всего остального и просим
+  // ровно одно действие — нажать. Прочие подписи здесь были бы вредны:
+  // «не отправлено, уйдёт само» — неправда, само оно уже не уйдёт.
+  if (needsReload) {
+    return (
+      <button
+        onClick={() => window.location.reload()}
+        className="mx-4 mb-2 rounded-xl border border-sand bg-sand/10 px-3 py-2 text-left active:bg-sand/20"
+      >
+        <div className="text-sm text-fg">
+          Приложение обновилось — нажмите, чтобы обновить страницу
+        </div>
+        <div className="text-xs text-fg-muted">
+          {waiting > 0
+            ? `записи сохранены на телефоне (${summary}) и уйдут сразу после обновления`
+            : "ничего не потеряется"}
+        </div>
+      </button>
+    );
+  }
+
   // Всё хорошо и говорить не о чем: полосы нет, экран не засоряется.
   if (waiting === 0 && online && !staleSince) return null;
 

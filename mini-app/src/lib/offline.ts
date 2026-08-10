@@ -53,7 +53,32 @@ export type QueueState = {
    * надо сказать прямо: обещание «ничего не потеряется» здесь не работает.
    */
   durable: boolean;
+  /**
+   * Приложение обновилось, а эта страница осталась от прошлой версии.
+   *
+   * Отдельно от обычной ошибки намеренно: все прочие беды проходят сами,
+   * когда вернётся связь, а эта не пройдёт никогда. Очередь будет упорно
+   * повторять то, что сервер уже не примет, и человек увидит растущее
+   * «не отправлено» без единой подсказки, что делать.
+   *
+   * Лечится только перезагрузкой страницы. Записи при этом не теряются:
+   * очередь лежит в памяти телефона и уйдёт сразу после обновления.
+   */
+  needsReload: boolean;
 };
+
+/**
+ * Та самая ошибка: «Failed to find Server Action …».
+ *
+ * Next.js даёт каждой сборке свои внутренние адреса для серверных действий.
+ * Страница, открытая до выкладки, помнит старые, и новый сервер их не знает.
+ * Поймано в бою 10.08.2026 сразу после выкладки.
+ */
+export function isStaleDeploy(error: unknown): boolean {
+  const text =
+    error instanceof Error ? error.message : typeof error === "string" ? error : "";
+  return /Failed to find Server Action/i.test(text);
+}
 
 const KEY = "chaevye.outbox.v1";
 
@@ -74,6 +99,7 @@ let state: QueueState = {
   lastError: null,
   lastSentAt: null,
   durable: true,
+  needsReload: false,
 };
 
 let loaded = false;
@@ -142,6 +168,7 @@ const EMPTY_ON_SERVER: QueueState = {
   lastError: null,
   lastSentAt: null,
   durable: true,
+  needsReload: false,
 };
 
 export function queueStateOnServer(): QueueState {
@@ -241,7 +268,15 @@ async function drain(): Promise<void> {
         ],
       };
       persist();
-      patch({ sending: false, lastError: text });
+      // Страница осталась от прошлой версии — повторять бессмысленно, сервер
+      // не примет это никогда. Поднимаем отдельный признак: полоса покажет
+      // не «не отправлено», а «обновите страницу», и это единственная беда,
+      // где от человека действительно что-то требуется.
+      patch({
+        sending: false,
+        lastError: text,
+        needsReload: state.needsReload || isStaleDeploy(error),
+      });
       return;
     }
     state = { ...state, items: state.items.slice(1) };
