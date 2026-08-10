@@ -12,6 +12,7 @@
   2. Одному контрагенту одинаковая сумма в пределах 14 дней разными документами.
   3. Платёж, резко выбивающийся из обычных сумм этого контрагента.
   4. Новый контрагент с крупным первым платежом.
+  5. Перевод на личные нужды, ушедший через зарплатный реестр.
 
 Запуск:
     python3 scripts/fin_redflags.py            # за последние 120 дней
@@ -166,6 +167,106 @@ def check_new_big(rows, out, history):
                         "первый платёж этому получателю за всю историю"))
 
 
+REESTR = re.compile(r"реестру\s*№\s*(\d+)", re.IGNORECASE)
+
+
+def load_registers(month=None, days_back=None):
+    """Зарплатные реестры и переводы на личный счёт — с номерами реестров.
+
+    Отдельная загрузка: основной load() выбрасывает и то, и другое, потому что
+    к оплате счетов они отношения не имеют. Здесь они как раз и нужны.
+    """
+    src = DATA / "bank_classified.csv"
+    cutoff = date.today() - timedelta(days=days_back) if days_back else None
+    rows = []
+    for r in csv.DictReader(src.open(encoding="utf-8")):
+        if r["direction"] != "out":
+            continue
+        low = (r["purpose"] or "").lower()
+        is_sal = "заработная плата по реестру" in low
+        is_wd = "на личный счет" in low
+        if not (is_sal or is_wd):
+            continue
+        m = REESTR.search(r["purpose"] or "")
+        if not m:
+            continue
+        if month and r["date"][:7] != month:
+            continue
+        y, mm, d = map(int, r["date"].split("-"))
+        if cutoff and date(y, mm, d) < cutoff:
+            continue
+        r["reestr"] = int(m.group(1))
+        r["amount"] = float(r["amount"])
+        r["kind"] = "salary" if is_sal else "withdrawal"
+        rows.append(r)
+    return rows
+
+
+def check_salary_registers(rows, out):
+    """Перевод на личные нужды, отправленный через зарплатный проект.
+
+    Такой платёж выглядит зарплатой и попадает в расходы, хотя расходом не
+    является — это вывод собственнику, и прибыль из-за него занижается.
+
+    Признаков нужно два сразу, по одному ловятся ложные.
+
+    Первый — номер реестра. Переводы на личный счёт нумеруются сплошным рядом,
+    зарплата своим, отдельным; подменный платёж занимает пропущенное место в
+    ряду переводов. Но ряды иногда пересекаются по диапазону, и тогда обычная
+    зарплата попадает под подозрение: в феврале так отметился платёж на 42 804 ₽
+    с реестром №7, в апреле — 14 268 ₽ с №18.
+
+    Второй — размер и ровность суммы. Настоящая зарплата даёт копейки и держится
+    в своём диапазоне; подменный платёж ровный и кратно крупнее. Порог берём от
+    данных, а не с потолка: впятеро выше медианной зарплаты этого счёта.
+
+    Проверено на двух случаях 2026 года: апрель (реестр 18 между 17 и 19,
+    800 000 ₽) и июнь (реестр 37 между 36 и 38, 900 000 ₽). На остальных
+    месяцах года срабатываний нет.
+    """
+    import statistics
+    by = defaultdict(lambda: {"salary": [], "withdrawal": []})
+    for r in rows:
+        by[(r["date"][:7], r["account"])][r["kind"]].append(r)
+
+    for (month, acc), g in sorted(by.items()):
+        wd = {x["reestr"] for x in g["withdrawal"]}
+        if len(wd) < 3:          # ряда нет — сравнивать не с чем
+            continue
+        lo, hi = min(wd), max(wd)
+        sal_regs = {x["reestr"] for x in g["salary"]}
+        sal_amounts = [x["amount"] for x in g["salary"]]
+        if not sal_amounts:
+            continue
+        med = statistics.median(sal_amounts)
+        for x in g["salary"]:
+            n, a = x["reestr"], x["amount"]
+            if not (lo <= n <= hi) or n in wd:
+                continue
+            if a % 10000 or a < 5 * med:      # обычная зарплата: не ровная, в своём диапазоне
+                continue
+            # номер попал внутрь ряда переводов и занял в нём пустое место
+            others = sorted(sal_regs - {n})
+            lines = [
+                f"{x['date']}  {M(x['amount'])} ₽  реестр №{n}  (счёт …{acc[-6:]})",
+                f"переводы на личный счёт в этом месяце: реестры "
+                f"{lo}–{hi}, и №{n} в этом ряду отсутствует",
+                f"настоящие зарплатные реестры месяца: "
+                f"{', '.join('№' + str(i) for i in others) if others else 'нет'}",
+                f"сумма ровная и в {a / med:.0f} раз крупнее медианной зарплаты "
+                f"этого счёта ({M(med)} ₽)",
+            ]
+            out.append((
+                x["amount"], "ПЕРЕВОД НА ЛИЧНЫЕ НУЖДЫ ПОД ВИДОМ ЗАРПЛАТЫ",
+                f"{month}: платёж помечен зарплатой, но по номеру реестра "
+                f"принадлежит переводам на личный счёт",
+                lines,
+                "Если это действительно перевод собственнику — впишите платёж в "
+                "rules.reclassify в data/dds/registry.json (по дате и номеру документа "
+                f"{x['doc_no']}) и перезапустите fin_classify.py. Иначе он останется в "
+                "расходах и занизит прибыль."))
+
+
 def main():
     arg = sys.argv[1] if len(sys.argv) > 1 else "120"
     if re.fullmatch(r"\d{4}-\d{2}", arg):        # разовая проверка за месяц
@@ -179,6 +280,10 @@ def main():
     check_same_amount(rows, out)
     check_outliers(rows, out)
     check_new_big(rows, out, history)
+    if re.fullmatch(r"\d{4}-\d{2}", arg):
+        check_salary_registers(load_registers(month=arg), out)
+    else:
+        check_salary_registers(load_registers(days_back=int(arg)), out)
 
     print(f"КРАСНЫЕ ФЛАГИ · проверено {len(rows)} платежей поставщикам {period}")
     print("(переводы собственнику, зарплата, налоги и комиссии из проверки исключены)")
