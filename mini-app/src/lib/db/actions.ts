@@ -270,6 +270,50 @@ function toShift(r: ShiftRow): Shift {
   };
 }
 
+export type ExportMark = { at: string; by: string };
+
+/**
+ * Когда смену выгрузили для отчёта и кто.
+ *
+ * Отдельным запросом, а не полем в Shift: состав смены читают на каждом
+ * экране и по многу раз, а это нужно в одном месте — на экране итогов.
+ */
+export async function readExportMark(
+  businessDay: string,
+): Promise<ExportMark | null> {
+  const sql = db();
+  const rows = await sql<{ exported_at: Date | null; exported_by: string | null }[]>`
+    select exported_at, exported_by from shifts where business_day = ${businessDay}
+  `;
+  const row = rows[0];
+  if (!row?.exported_at) return null;
+  return { at: row.exported_at.toISOString(), by: row.exported_by ?? "" };
+}
+
+/**
+ * Отмечает смену выгруженной. Возвращает время, записанное базой.
+ *
+ * Время берём у базы, а не у телефона: часы на телефонах расходятся, а это
+ * отметка о денежном документе. Перезаписываем при повторной выгрузке —
+ * важно, когда смену выгрузили в последний раз, а не когда впервые.
+ */
+export async function markExported(
+  businessDay: string,
+  by: string,
+): Promise<ExportMark> {
+  const sql = db();
+  const rows = await sql<{ exported_at: Date }[]>`
+    update shifts
+       set exported_at = now(), exported_by = ${by}
+     where business_day = ${businessDay}
+     returning exported_at
+  `;
+  // Строки смены может не быть, если состав ни разу не сохраняли. Тогда
+  // отмечать нечего — но и выгрузка в этом случае пустая.
+  const at = rows[0]?.exported_at ?? new Date();
+  return { at: at.toISOString(), by };
+}
+
 export async function readShift(businessDay: string): Promise<Shift | null> {
   const sql = db();
   const rows = await sql<ShiftRow[]>`

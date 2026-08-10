@@ -3,9 +3,14 @@ import {
   listEntries,
   listHistory,
   listPendingQrTips,
+  markExported,
+  readExportMark,
 } from "./db/actions";
+import type { ExportMark } from "./db/actions";
 import { enqueueAndSend } from "./offline";
 import type { Entry, QrTip } from "./types";
+
+export type { ExportMark };
 
 /**
  * Хранилище записей.
@@ -27,6 +32,19 @@ export async function listByDay(businessDay: string): Promise<Entry[]> {
 /** То же, но вместе с отменёнными — для экрана истории. */
 export async function historyByDay(businessDay: string): Promise<Entry[]> {
   return listHistory(businessDay);
+}
+
+/** Когда смену выгружали для отчёта и кто. Пусто — значит ещё ни разу. */
+export async function exportMark(businessDay: string): Promise<ExportMark | null> {
+  return readExportMark(businessDay);
+}
+
+/** Отмечает смену выгруженной. Время ставит база, а не телефон. */
+export async function markShiftExported(
+  businessDay: string,
+  by: string,
+): Promise<ExportMark> {
+  return markExported(businessDay, by);
 }
 
 /**

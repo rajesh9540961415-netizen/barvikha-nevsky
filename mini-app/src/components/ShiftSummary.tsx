@@ -25,6 +25,16 @@ type Props = {
    * Отчёт, собранный из половины записей, — самая тихая из ошибок.
    */
   onExport: () => void;
+  /**
+   * Когда смену выгружали и кто. Пусто — значит ещё ни разу.
+   *
+   * Раньше выгрузка не оставляла следа: файл падал в загрузки, а на экране
+   * не менялось ничего. Выгрузил или нет, выгрузил ли уже сменщик — узнать
+   * было неоткуда, и смену выгружали дважды либо не выгружали вовсе.
+   */
+  exported: { at: string; by: string } | null;
+  /** Идёт сборка отчёта — кнопка занята. */
+  exporting: boolean;
 };
 
 export default function ShiftSummary({
@@ -35,6 +45,8 @@ export default function ShiftSummary({
   onClose,
   onHistory,
   onExport,
+  exported,
+  exporting,
 }: Props) {
   const s = splitShift(entries, crew, day);
   const paying = s.waiters.filter((w) => w.aboveThreshold).length;
@@ -132,12 +144,33 @@ export default function ShiftSummary({
           История записей ›
         </button>
         <button
-          disabled={entries.length === 0}
+          disabled={entries.length === 0 || exporting}
           onClick={onExport}
-          className="w-full rounded-xl border border-sand py-3.5 text-base text-sand disabled:border-line disabled:text-fg-muted"
+          className={`w-full rounded-xl border py-3.5 text-base disabled:border-line disabled:text-fg-muted ${
+            exported
+              ? "border-line bg-surface text-fg"
+              : "border-sand text-sand"
+          }`}
         >
-          Выгрузить смену для отчёта
+          {exporting
+            ? "Собираю отчёт…"
+            : exported
+              ? "Выгрузить заново"
+              : "Выгрузить смену для отчёта"}
         </button>
+        {/* Отметка держится на экране, а не мигает сообщением на две секунды:
+            вопрос «эту смену уже выгружали?» задают и через час, и назавтра,
+            и часто не тот, кто нажимал кнопку. */}
+        {exported ? (
+          <div className="pt-2 text-center text-xs text-sand">
+            ✓ выгружена в {clock(exported.at)}
+            {exported.by && ` · ${exported.by}`}
+          </div>
+        ) : (
+          <div className="pt-2 text-center text-xs text-fg-muted">
+            ещё не выгружена
+          </div>
+        )}
       </div>
 
       <div className="px-4 pb-1.5 pt-5 text-xs text-fg-muted">по официантам</div>
@@ -276,6 +309,12 @@ function Line({ label, value }: { label: string; value: number }) {
       <span className="tabular-nums text-fg-muted">{formatMoney(value)}</span>
     </div>
   );
+}
+
+/** «06:12» — время по часам того, кто смотрит. */
+function clock(iso: string): string {
+  const d = new Date(iso);
+  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
 }
 
 function plural(n: number, one: string, few: string, many: string): string {

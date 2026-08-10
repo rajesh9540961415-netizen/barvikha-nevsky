@@ -37,10 +37,13 @@ import PendingBar from "@/components/PendingBar";
 import {
   cancel,
   distributeQr,
+  exportMark,
   listByDay,
+  markShiftExported,
   pendingQrTips,
   save,
 } from "@/lib/storage";
+import type { ExportMark } from "@/lib/storage";
 import type {
   Employee,
   Entry,
@@ -152,6 +155,9 @@ export default function TipsScreen() {
    * смотреть на устаревшие цифры и не поймёт, почему они не меняются.
    */
   const [staleDeploy, setStaleDeploy] = useState(false);
+  /** Когда смену выгружали для отчёта и кто. Пусто — значит ещё ни разу. */
+  const [exported, setExported] = useState<ExportMark | null>(null);
+  const [exporting, setExporting] = useState(false);
   const [hallId, setHallId] = useState(halls[0].id);
   const [picked, setPicked] = useState<Picked | null>(null);
   const [editingCrew, setEditingCrew] = useState(false);
@@ -212,12 +218,13 @@ export default function TipsScreen() {
     let alive = true;
     (async () => {
       try {
-        const [today, people, records, last, qr] = await Promise.all([
+        const [today, people, records, last, qr, mark] = await Promise.all([
           getShift(day),
           getManualPeople(),
           listByDay(day),
           getLastShift(),
           pendingQrTips(),
+          exportMark(day),
         ]);
         if (!alive) return;
         setShiftState(today);
@@ -225,6 +232,7 @@ export default function TipsScreen() {
         setFromDb(records);
         setLastShift(last);
         setQrTips(qr);
+        setExported(mark);
         setStaleSince(null);
         setLoading("ready");
       } catch (error) {
@@ -639,25 +647,53 @@ export default function TipsScreen() {
    * без базы нельзя знать, что внесли с другого телефона.
    */
   async function exportShift() {
-    await flushQueue().catch(() => undefined);
-    const fresh = await refresh();
-    if (fresh === null) {
-      setToast({
-        text: "Отчёт не собран: нет связи, данные могли быть неполными",
-        bad: true,
-      });
-      return;
-    }
-    const waiting = queueState().items;
-    const rows = mergeEntries(fresh, waiting, day);
-    downloadExport(buildExport(day, rows, crew, shift, everyone));
-    if (waiting.length > 0) {
-      // Ждущие записи в отчёт включены — деньги есть деньги. Но в базе их
-      // ещё нет, и сказать об этом надо: иначе отчёт и база разойдутся.
-      setToast({
-        text: `Отчёт собран, но в базу ещё не ушли: ${pendingSummary(waiting)}`,
-        bad: true,
-      });
+    if (exporting) return;
+    // Имя файла собирается так же, как в downloadExport. Называем его прямо:
+    // «файл скачан» без имени не помогает — в загрузках их десятки.
+    const fileName = `смена-${day}.json`;
+    setExporting(true);
+    try {
+      await flushQueue().catch(() => undefined);
+      const fresh = await refresh();
+      if (fresh === null) {
+        setToast({
+          text: "Отчёт не собран: нет связи, данные могли быть неполными",
+          bad: true,
+        });
+        return;
+      }
+      const waiting = queueState().items;
+      const rows = mergeEntries(fresh, waiting, day);
+      downloadExport(buildExport(day, rows, crew, shift, everyone));
+
+      // Отмечаем в базе, а не в памяти телефона: вопрос «эту смену уже
+      // выгружали?» задают позже и часто не с того телефона, где нажимали.
+      // Не вышло — файл всё равно скачан, и говорить «не выгрузилось» нельзя.
+      try {
+        setExported(await markShiftExported(day, operator?.short ?? ""));
+      } catch {
+        setToast({
+          text: `Файл ${fileName} скачан, но отметку в базе поставить не удалось`,
+          bad: true,
+        });
+        return;
+      }
+
+      if (waiting.length > 0) {
+        // Ждущие записи в отчёт включены — деньги есть деньги. Но в базе их
+        // ещё нет, и сказать об этом надо: иначе отчёт и база разойдутся.
+        setToast({
+          text: `Отчёт собран, но в базу ещё не ушли: ${pendingSummary(waiting)}`,
+          bad: true,
+        });
+        return;
+      }
+      // Раньше при успехе не показывалось ничего: файл падал в загрузки молча,
+      // и администратор не знал, получилось или нет. Замечание владельца
+      // 10.08.2026.
+      setToast({ text: `Смена выгружена · файл ${fileName}`, bad: false });
+    } finally {
+      setExporting(false);
     }
   }
 
@@ -794,6 +830,8 @@ export default function TipsScreen() {
           // Итоги считаются вместе с неотправленным — иначе сумма была бы
           // меньше настоящей. Но сказать, что часть ещё не в базе, надо.
           waiting={waitingSummary}
+          exported={exported}
+          exporting={exporting}
           onClose={() => setShowSummary(false)}
           onExport={exportShift}
           onHistory={() => {
