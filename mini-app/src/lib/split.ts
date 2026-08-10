@@ -99,6 +99,17 @@ export type WaiterSplit = {
   waiterName: string;
   cash: number;
   terminal: number;
+  /**
+   * Сколько гости оставили на терминале ДО комиссии Сбера.
+   *
+   * Кассиры сверяют смену с лентой терминала, а там пробита полная сумма:
+   * без неё цифры не сходятся и приходится делить в уме на 0,92. Просьба
+   * кассиров 08.08.2026.
+   *
+   * Отдельно от общего `gross`: тот считает все виды денег вместе, и по нему
+   * терминал не отделить от наличных.
+   */
+  terminalGross: number;
   /** Разнесённые по людям поступления с персонального QR. */
   qr: number;
   service: number;
@@ -121,6 +132,18 @@ export type WaiterSplit = {
   aboveThreshold: boolean;
   toAdmin: number;
   toCashier: number;
+  /**
+   * Начислено за смену: заработок минус доли администратору и кассиру.
+   * Питание НЕ вычитается.
+   *
+   * Это то, что уходит в отчёт: отчёт фиксирует выплаты в пользу сотрудника,
+   * а обед — его встречная покупка у заведения (решение владельца 08.08.2026).
+   * Считать «на руки» отчёт не может ещё и потому, что тогда сумма блоков
+   * «на руки» не сходится с тем, что оставили гости, и строка «Расхождение»
+   * краснеет ровно на размер питания каждую смену, где кто-то поел.
+   */
+  accrued: number;
+  /** Начислено минус питание — столько человек получает на руки в конце смены. */
   net: number;
 };
 
@@ -133,6 +156,8 @@ export type ShiftSplit = {
   waiters: WaiterSplit[];
   totalCash: number;
   totalTerminal: number;
+  /** Сколько всего оставили на терминале до комиссии — для сверки с лентой. */
+  totalTerminalGross: number;
   totalQr: number;
   /**
    * Все чаевые смены без сервисного сбора.
@@ -152,6 +177,8 @@ export type ShiftSplit = {
   totalCommission: number;
   adminTotal: number;
   cashierTotal: number;
+  /** Начислено официантам за смену — без вычета питания. То, что идёт в отчёт. */
+  waitersAccrued: number;
   waitersNet: number;
 };
 
@@ -204,6 +231,14 @@ export function splitShift(
 
     const cash = by("cash");
     const terminal = by("terminal");
+    // Полная сумма с терминала — до того, как Сбер удержал свои 8 %.
+    // У записей, сделанных до появления комиссии, поля нет: тогда до официанта
+    // дошло ровно то, что оставил гость.
+    const terminalGross = money(
+      mine
+        .filter((e) => e.kind === "terminal")
+        .reduce((sum, e) => sum + (e.gross ?? e.amount), 0),
+    );
     const qr = by("qr");
     const service = by("service");
     const tips = cash + terminal + qr;
@@ -232,6 +267,7 @@ export function splitShift(
       waiterName: person.short,
       cash,
       terminal,
+      terminalGross,
       qr,
       service,
       tips,
@@ -242,6 +278,7 @@ export function splitShift(
       aboveThreshold,
       toAdmin,
       toCashier,
+      accrued: money(total - toAdmin - toCashier),
       // Питание вычитается последним, из того, что осталось. Может увести
       // в минус — тогда так и показываем: обнулять значит скрыть долг.
       net: money(total - toAdmin - toCashier - staff),
@@ -260,6 +297,7 @@ export function splitShift(
     waiters,
     totalCash: sum((w) => w.cash),
     totalTerminal: sum((w) => w.terminal),
+    totalTerminalGross: sum((w) => w.terminalGross),
     totalQr: sum((w) => w.qr),
     totalTips: sum((w) => w.tips),
     totalService: sum((w) => w.service),
@@ -269,6 +307,7 @@ export function splitShift(
     totalCommission: sum((w) => w.commission),
     adminTotal: sum((w) => w.toAdmin),
     cashierTotal: sum((w) => w.toCashier),
+    waitersAccrued: sum((w) => w.accrued),
     waitersNet: sum((w) => w.net),
   };
 }

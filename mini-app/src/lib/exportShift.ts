@@ -29,9 +29,14 @@ export type ShiftExport = {
      */
     qr: number;
     service: number;
-    /** Удержано за питание — вычитается из выплаты, а не из заработка. */
-    staff: number;
-    net: number;
+    /**
+     * Начислено: заработок минус доли администратору и кассиру.
+     *
+     * Питание отсюда НЕ вычитается и в выгрузку не попадает вовсе: отчёт
+     * фиксирует выплаты в пользу сотрудника, а обед — его встречная покупка
+     * у заведения. Решение владельца 08.08.2026.
+     */
+    accrued: number;
   }[];
   admin: { name: string | null; amount: number };
   cashier: { name: string | null; amount: number };
@@ -40,7 +45,6 @@ export type ShiftExport = {
     terminal: number;
     qr: number;
     service: number;
-    staff: number;
     earned: number;
     payout: number;
   };
@@ -67,8 +71,7 @@ export function buildExport(
       terminal: w.terminal,
       qr: w.qr,
       service: w.service,
-      staff: w.staff,
-      net: w.net,
+      accrued: w.accrued,
     })),
     admin: { name: nameOf(shift.admin), amount: s.adminTotal },
     cashier: { name: nameOf(shift.cashier), amount: s.cashierTotal },
@@ -77,13 +80,15 @@ export function buildExport(
       terminal: s.totalTerminal,
       qr: s.totalQr,
       service: s.totalService,
-      staff: s.totalStaff,
       earned: s.totalEarned,
-      // Питание входит в сумму как ещё один получатель: деньги остались
-      // в заведении в оплату еды. Иначе строка «Расхождение» в отчёте
-      // показала бы ровно размер вычета и краснела бы каждую смену.
-      payout:
-        s.waitersNet + s.adminTotal + s.cashierTotal + s.totalStaff,
+      // Сходится с earned без всяких поправок: раз питание не вычитается,
+      // деньги гостей целиком расходятся по трём получателям.
+      //
+      // Раньше здесь к сумме отдельно прибавляли удержанное за питание —
+      // иначе выгрузка не сходилась. Но это чинило только строку в выгрузке:
+      // формула «Расхождение» в самом отчёте считает по своим ячейкам
+      // и всё равно краснела ровно на размер питания.
+      payout: s.waitersAccrued + s.adminTotal + s.cashierTotal,
     },
   };
 }

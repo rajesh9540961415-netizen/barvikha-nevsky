@@ -86,8 +86,8 @@ export default function ShiftSummary({
             <span className="tabular-nums">{formatMoney(s.totalTips)}</span>
           </div>
           <div className="text-xs text-fg-muted">
-            наличные {formatMoney(s.totalCash)} · терминал{" "}
-            {formatMoney(s.totalTerminal)}
+            наличные {formatMoney(s.totalCash)} ·{" "}
+            <Terminal net={s.totalTerminal} gross={s.totalTerminalGross} />
             {s.totalQr > 0 && ` · QR ${formatMoney(s.totalQr)}`}
           </div>
           <div className="mt-2 flex justify-between text-sm">
@@ -154,7 +154,8 @@ export default function ShiftSummary({
               </span>
             </div>
             <div className="text-xs text-fg-muted">
-              наличные {formatMoney(w.cash)} · терминал {formatMoney(w.terminal)}
+              наличные {formatMoney(w.cash)} ·{" "}
+              <Terminal net={w.terminal} gross={w.terminalGross} />
               {w.qr > 0 && ` · QR ${formatMoney(w.qr)}`}
               {w.commission > 0 && ` · комиссия −${formatMoney(w.commission)}`}
             </div>
@@ -223,6 +224,25 @@ function Row({
         {formatMoney(value)}
       </span>
     </div>
+  );
+}
+
+/**
+ * Терминал двумя цифрами: сколько дошло и, в скобках, сколько оставил гость.
+ *
+ * Кассиры сверяют смену с лентой терминала, а в ленте пробита полная сумма.
+ * Без второй цифры сверка не сходится ровно на комиссию Сбера, и её каждый
+ * раз считают в уме. Просьба кассиров 08.08.2026.
+ *
+ * Скобки появляются только когда комиссию действительно удержали. Совпали
+ * суммы — вторая цифра ничего не скажет, а строку удлинит.
+ */
+function Terminal({ net, gross }: { net: number; gross: number }) {
+  return (
+    <>
+      терминал {formatMoney(net)}
+      {gross > net && <span className="text-sand"> ({formatMoney(gross)})</span>}
+    </>
   );
 }
 

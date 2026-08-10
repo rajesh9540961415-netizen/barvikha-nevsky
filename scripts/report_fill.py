@@ -20,15 +20,36 @@ from pathlib import Path
 
 from openpyxl import load_workbook
 
+from report_path import describe, report_dir
+
 ROOT = Path(__file__).resolve().parent.parent
 
 # Блок отчёта → что из выгрузки в него кладём.
+#
+# Поля `staff` (удержано за питание) здесь нет намеренно: отчёт фиксирует
+# выплаты В ПОЛЬЗУ сотрудника, а обед — его встречная покупка у заведения.
+# Решение владельца 08.08.2026.
 WAITER_BLOCKS = {
     "ОФИЦИАНТЫ · ЧАЕВЫЕ НАЛИЧНЫЕ": "cash",
     "ОФИЦИАНТЫ · ЧАЕВЫЕ ТЕРМИНАЛ": "terminal",
+    "ОФИЦИАНТЫ · ЧАЕВЫЕ QR": "qr",
     "ОФИЦИАНТЫ · СЕРВИСНЫЙ СБОР": "service",
-    "ОФИЦИАНТЫ · НА РУКИ": "net",
+    # Блок зовётся «начислено», а не «на руки»: питание из этой цифры
+    # не вычтено, и поевший получит на руки меньше.
+    "ОФИЦИАНТЫ · НАЧИСЛЕНО": "accrued",
 }
+
+
+def value_of(waiter: dict, field: str) -> float:
+    """Сумма из выгрузки. Выручает, когда выгрузка старше формата.
+
+    Выгрузки до 08.08.2026 звали начисленное полем `net`, и питание из него
+    было вычтено. Берём как есть — другого числа в файле просто нет, а
+    остановиться значило бы не заполнить смену вовсе.
+    """
+    if field == "accrued" and "accrued" not in waiter:
+        return waiter.get("net", 0)
+    return waiter.get(field, 0)
 ADMIN_BLOCK = "АДМИНИСТРАТОРЫ · на руки (доля 20 %)"
 CASHIER_BLOCK = "КАССИРЫ · на руки (доля от 750 ₽)"
 
@@ -105,15 +126,26 @@ def main():
     day = data["businessDay"]
 
     if args.report:
-        report = Path(args.report)
+        report = Path(args.report).expanduser()
         if not report.is_absolute():
-            report = ROOT / report
+            report = report_dir() / report
+        if not report.exists():
+            sys.exit(f"Не нашёл отчёт: {report}")
     else:
         months = "январь февраль март апрель май июнь июль август сентябрь октябрь ноябрь декабрь".split()
         year, month, _ = day.split("-")
-        report = ROOT / f"Чаевые-дубль-{months[int(month) - 1]}-{year}.xlsx"
-    if not report.exists():
-        sys.exit(f"Не нашёл отчёт: {report}")
+        name = f"Чаевые-дубль-{months[int(month) - 1]}-{year}.xlsx"
+        # Сначала там, куда кладём сегодня, потом в корне проекта: отчёты
+        # за июль и август лежат в корне, они старше переезда на Диск.
+        found = [p for p in (report_dir() / name, ROOT / name) if p.exists()]
+        if not found:
+            sys.exit(
+                f"Не нашёл отчёт «{name}».\n"
+                f"  Искал в: {report_dir()}\n"
+                f"           {ROOT}\n"
+                f"  Создать: python3 scripts/report_new.py {day[:7]}"
+            )
+        report = found[0]
 
     wb = load_workbook(report)
     ws = wb[wb.sheetnames[0]]
@@ -123,9 +155,18 @@ def main():
     missing: list[str] = []
     for title, field in WAITER_BLOCKS.items():
         if title not in blocks:
-            sys.exit(f"В отчёте нет блока «{title}»")
+            sys.exit(
+                f"В отчёте нет блока «{title}».\n"
+                "  Отчёт собран старой версией шаблона. Создайте новый:\n"
+                f"  python3 scripts/report_new.py {day[:7]}"
+            )
+        # Выгрузки, сделанные до появления вида денег, поля не содержат —
+        # для них это просто ноль, а не повод останавливаться.
         missing += put(
-            ws, blocks[title], col, {w["name"]: w[field] for w in data["waiters"]}
+            ws,
+            blocks[title],
+            col,
+            {w["name"]: value_of(w, field) for w in data["waiters"]},
         )
 
     for title, who in ((ADMIN_BLOCK, "admin"), (CASHIER_BLOCK, "cashier")):
@@ -142,11 +183,16 @@ def main():
 
     print(f"Смена {day} записана в столбец {ws.cell(1, col).value}")
     print(f"Отчёт: {report.name}")
+    print(f"Папка: {describe(report.parent)}")
     print(f"Официантов: {len(data['waiters'])}")
     t = data["totals"]
+    # Виды денег перечисляем все до одного: строка «заработано = A + B + C»,
+    # где сумма не сходится, читается как ошибка расчёта, хотя на деле
+    # в ней просто забыли слагаемое.
     print(
         f"Заработано {t['earned']:,.2f} ₽ = наличные {t['cash']:,.2f} + "
-        f"терминал {t['terminal']:,.2f} + сбор {t['service']:,.2f}".replace(",", " ")
+        f"терминал {t['terminal']:,.2f} + QR {t.get('qr', 0):,.2f} + "
+        f"сбор {t['service']:,.2f}".replace(",", " ")
     )
     diff = round(t["earned"] - t["payout"], 2)
     print(f"Распределено {t['payout']:,.2f} ₽, расхождение {diff:,.2f} ₽".replace(",", " "))
