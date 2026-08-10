@@ -1,4 +1,5 @@
 import { db } from "@/lib/db/sql";
+import { BUILD_RAW } from "@/lib/version";
 
 /**
  * Проверка связи с базой: /api/health
@@ -8,6 +9,13 @@ import { db } from "@/lib/db/sql";
  * а для починки нужно знать, что именно сломалось: не задан адрес базы,
  * не подошёл пароль или база не отвечает.
  *
+ * Здесь же отдаём отметку сборки. Это единственный способ спросить у боя
+ * «какая ты версия» одним запросом: раньше на этот вопрос отвечали разбором
+ * бандла, и 10.08.2026 такой разбор дал неверный ответ.
+ *
+ * Отметка есть и при неудаче с базой: чаще всего эти два вопроса задают
+ * вместе — «поднялась ли новая версия и жива ли она».
+ *
  * Строку подключения и пароль наружу не отдаём никогда — только то,
  * чем ответила сама база.
  */
@@ -16,10 +24,13 @@ import { db } from "@/lib/db/sql";
 export const dynamic = "force-dynamic";
 
 export async function GET() {
+  const сборка = BUILD_RAW ?? "разработка";
+
   if (!process.env.DATABASE_URL) {
     return Response.json(
       {
         ok: false,
+        сборка,
         причина: "переменная DATABASE_URL не задана — приложение не знает, где база",
       },
       { status: 500 },
@@ -29,12 +40,13 @@ export async function GET() {
   try {
     const sql = db();
     const [row] = await sql<{ v: number }[]>`select 1 as v`;
-    return Response.json({ ok: row.v === 1, база: "отвечает" });
+    return Response.json({ ok: row.v === 1, сборка, база: "отвечает" });
   } catch (e) {
     const err = e as { message?: string; code?: string };
     return Response.json(
       {
         ok: false,
+        сборка,
         код: err.code ?? null,
         причина: err.message ?? "неизвестная ошибка",
       },

@@ -10,6 +10,7 @@ import {
   removeManualPerson,
 } from "@/lib/people";
 import type { Employee } from "@/lib/types";
+import { BUILD } from "@/lib/version";
 
 const FROM_QUICK_RESTO = getQuickRestoPeople();
 
@@ -207,6 +208,10 @@ export default function ShiftCrew({
             дозаполнять руками
           </p>
         )}
+        {/* Отметка сборки на первом же экране: чтобы проверить, доехала ли
+            новая версия, не нужно ни собирать смену, ни куда-то заходить —
+            достаточно открыть приложение. */}
+        <p className="pt-3 text-center text-xs text-fg-muted">сборка {BUILD}</p>
       </div>
     </div>
   );

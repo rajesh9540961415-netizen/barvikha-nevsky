@@ -3,6 +3,7 @@
 import { formatBusinessDay, formatMoney } from "@/lib/businessDay";
 import { THRESHOLD, splitShift } from "@/lib/split";
 import type { Employee, Entry } from "@/lib/types";
+import { BUILD } from "@/lib/version";
 
 type Props = {
   day: string;
@@ -198,6 +199,13 @@ export default function ShiftSummary({
             )}
           </div>
         ))}
+      </div>
+
+      {/* Отметка сборки. Мелко и в самом низу: смене она не нужна, но когда
+          спрашивают «а новая версия доехала?» — ответ здесь, а не в панели
+          хостинга и не в разборе бандла. */}
+      <div className="px-4 pt-6 text-right text-xs text-fg-muted">
+        сборка {BUILD}
       </div>
     </div>
   );
