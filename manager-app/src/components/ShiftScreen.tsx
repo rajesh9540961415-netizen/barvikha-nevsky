@@ -7,8 +7,6 @@ import { cancelEvent } from "@/lib/db/corrections";
 import { clock, money, moneyOrDash, moment, plural } from "@/lib/format";
 import {
   KIND_TITLE,
-  accrued,
-  accruedTotal,
   eventKey,
   splitOffice,
   type ShiftEvent,
@@ -59,7 +57,7 @@ export default function ShiftScreen({ data }: { data: DayData }) {
 
         <div className="grid gap-x-8 gap-y-1 px-5 py-4 sm:grid-cols-2">
           <Total label="Заработано за смену" value={split.totalEarned} strong />
-          <Total label="Начислено официантам" value={accruedTotal(split)} strong />
+          <Total label="Начислено официантам" value={split.waitersAccrued} strong />
           <Total label="чаевые" value={split.totalTips} />
           <Total label="Администратору" value={split.adminTotal} />
           <Total label="сервисный сбор" value={split.totalService} />
@@ -109,7 +107,7 @@ export default function ShiftScreen({ data }: { data: DayData }) {
                     {moneyOrDash(-w.toCashier)}
                   </td>
                   <td className="px-5 py-1.5 tabular-nums text-sand">
-                    {money(accrued(w))}
+                    {money(w.accrued)}
                   </td>
                 </tr>
               ))}

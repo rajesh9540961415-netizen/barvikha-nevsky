@@ -1,7 +1,6 @@
 "use client";
 
 import { delta, money, moneyOrDash } from "@/lib/format";
-import { accrued, accruedTotal } from "@/lib/office";
 import { THRESHOLD, type ShiftSplit } from "@/lib/split";
 
 /**
@@ -99,8 +98,8 @@ export default function Compare({ before, after }: Props) {
           />
           <Line
             label="Начислено официантам"
-            was={accruedTotal(before)}
-            now={accruedTotal(after)}
+            was={before.waitersAccrued}
+            now={after.waitersAccrued}
             strong
           />
         </tbody>
@@ -117,8 +116,8 @@ export default function Compare({ before, after }: Props) {
               <Line
                 key={w.waiterId}
                 label={w.waiterName}
-                was={was ? accrued(was) : 0}
-                now={accrued(w)}
+                was={was ? was.accrued : 0}
+                now={w.accrued}
                 note={
                   w.aboveThreshold
                     ? undefined
@@ -128,7 +127,7 @@ export default function Compare({ before, after }: Props) {
             );
           })}
           {gone.map((w) => (
-            <Line key={w.waiterId} label={w.waiterName} was={accrued(w)} now={0} />
+            <Line key={w.waiterId} label={w.waiterName} was={w.accrued} now={0} />
           ))}
         </tbody>
       </table>

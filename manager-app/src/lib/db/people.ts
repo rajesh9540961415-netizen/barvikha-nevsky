@@ -1,7 +1,7 @@
 "use server";
 
 import quickResto from "@/data/employees.json";
-import { accrued, splitOffice, type OfficeEntry } from "../office";
+import { splitOffice, type OfficeEntry } from "../office";
 import type { Employee, Shift } from "../types";
 import { db } from "./sql";
 
@@ -270,7 +270,7 @@ export async function readPerson(
       roles.length > 0 ||
       dayEntries.some((e) => e.waiterId === personId);
 
-    const mineAccrued = mine ? accrued(mine) : 0;
+    const mineAccrued = mine ? mine.accrued : 0;
 
     // Сравниваем с остальными, а не со всей сменой вместе с собой: включив
     // себя в среднее, человек сравнивался бы наполовину сам с собой, и любая
