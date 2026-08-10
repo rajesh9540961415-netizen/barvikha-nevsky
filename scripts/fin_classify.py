@@ -39,6 +39,14 @@ def classify(row, reg, by_account):
     """Возвращает (id юрлица, тип счёта, класс операции, пояснение)."""
     ent, acc_type = by_account.get(row["account"], (None, "unknown"))
     rules = reg["rules"]
+
+    # Ручная переразметка: платежи, у которых назначение не соответствует сути.
+    # Стоит первой — иначе обычные правила разберут платёж по тексту назначения.
+    for x in rules.get("reclassify", []):
+        if (row["date"] == x["date"] and row["doc_no"] == x["doc_no"]
+                and abs(float(row["amount"]) - x["amount"]) < 0.01):
+            return ent, acc_type, x["class"], x["why"]
+
     inn = (row.get("inn") or "").strip()
     purpose = (row.get("purpose") or "").lower()
 
