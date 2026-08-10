@@ -127,6 +127,12 @@ def article(row, keydict):
         u = p.upper()
         if "YANDEX*4121" in u or "YANDEX*4215" in u:
             return "Такси", "правило: такси по карте"
+        # Остальные покупки по карте — маркетплейсы (Wildberries, ОЗОН, Яндекс Маркет)
+        # и мелочь. Владелец подтвердил 10.08.2026: это «Прочие расходы», потому что
+        # закупки там делятся между баром и административными нуждами, и разнести их
+        # по одной статье нельзя. Правило нужно явно — иначе справочник цепляется за
+        # слово «Сбербанк» в названии контрагента и ставит что попало.
+        return "Прочие расходы", "правило: покупка по карте, кроме такси"
     if row.get("inn") == "7707083893" and not CARD.search(p):
         low = p.lower()
         if "заработная плата" not in low and "расчет при увольнении" not in low:
@@ -223,6 +229,14 @@ def main():
                 src[how.split(":")[0]] += 1
             else:
                 unknown.append((amount, r["counterparty"], r["purpose"][:60]))
+
+        # Возврат покупки по карте — не расход. Уменьшаем ту же статью, иначе
+        # расходы завышены: за 2026 год возвратов набралось около 15 тыс. ₽.
+        for r in rows:
+            if (r["date"][:7] != month or r["direction"] != "in"
+                    or not CARD.search(r["purpose"])): continue
+            a, _ = article(r, keydict)
+            if a: agg[a] -= float(r["amount"])
 
         ca, cu = cash_articles(month)
         for k, v in ca.items():
