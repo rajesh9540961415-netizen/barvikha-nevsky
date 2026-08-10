@@ -47,13 +47,15 @@ export async function save(entries: Entry[]): Promise<void> {
 }
 
 /**
- * Поступления по QR за смену, которые ещё ждут распределения.
+ * Все поступления по QR, которые ещё ждут распределения — включая забытые
+ * в прошлые смены.
  *
  * Пока поступление не разнесли, деньги ничьи: в заработок они не входят
- * и в итогах смены их нет.
+ * и в итогах смены их нет. Поэтому забытое не должно пропадать с экрана
+ * вместе со сменой — оно всплывает на следующей и висит, пока не разнесут.
  */
-export async function pendingQrTips(businessDay: string): Promise<QrTip[]> {
-  return listPendingQrTips(businessDay);
+export async function pendingQrTips(): Promise<QrTip[]> {
+  return listPendingQrTips();
 }
 
 /** Разносит поступление по QR на официантов — записи и отметка вместе. */

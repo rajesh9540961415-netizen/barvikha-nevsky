@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { formatMoney } from "@/lib/businessDay";
+import { formatBusinessDay, formatMoney } from "@/lib/businessDay";
 import { shares } from "@/lib/split";
 import type { Employee, QrTip } from "@/lib/types";
 
@@ -19,8 +19,16 @@ import type { Employee, QrTip } from "@/lib/types";
 
 type Props = {
   tip: QrTip;
-  /** Официанты, отмеченные на смене. */
+  /**
+   * Официанты той смены, к которой относится поступление.
+   *
+   * Обычно это текущая смена. Но забытое поступление разносят уже следующим
+   * вечером, и тогда здесь состав ТОГО вечера — делить надо между теми,
+   * кто работал, когда гость платил.
+   */
   crew: Employee[];
+  /** Текущий бизнес-день — чтобы отличить сегодняшнее поступление от забытого. */
+  today: string;
   onCancel: () => void;
   onConfirm: (waiters: Employee[]) => Promise<void>;
 };
@@ -31,7 +39,14 @@ function clock(iso: string): string {
   return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
 }
 
-export default function QrTipScreen({ tip, crew, onCancel, onConfirm }: Props) {
+export default function QrTipScreen({
+  tip,
+  crew,
+  today,
+  onCancel,
+  onConfirm,
+}: Props) {
+  const stale = tip.businessDay !== today;
   const [ids, setIds] = useState<number[]>([]);
   const [saving, setSaving] = useState(false);
   const [failed, setFailed] = useState<string | null>(null);
@@ -83,12 +98,29 @@ export default function QrTipScreen({ tip, crew, onCancel, onConfirm }: Props) {
         <div className="text-base">Чаевые по QR</div>
       </header>
 
+      {/* Забытое поступление — не рядовой случай, и молчать об этом нельзя:
+          кассир видит сегодняшний экран, а раздаёт деньги за прошлый вечер
+          прошлому составу. Если он этого не поймёт, то решит, что ошибся
+          списком людей, и разнесёт не тем. */}
+      {stale && (
+        <div className="mx-4 mt-4 rounded-xl border border-alert bg-alert/10 px-3 py-2">
+          <div className="text-sm text-fg">
+            Не разнесли в смену {formatBusinessDay(tip.businessDay)}
+          </div>
+          <div className="text-xs text-fg-muted">
+            деньги уйдут в ту смену, а не в сегодняшнюю — и список ниже
+            тоже её, а не сегодняшний
+          </div>
+        </div>
+      )}
+
       <div className="flex flex-1 flex-col items-center justify-center gap-1 py-6">
         <span className="text-4xl tabular-nums text-fg">
           {formatMoney(tip.amount)}
         </span>
         <span className="text-xs text-fg-muted">
           {tip.team} · пришли в {clock(tip.receivedAt)}
+          {stale && ` ${formatBusinessDay(tip.businessDay)}`}
         </span>
       </div>
 

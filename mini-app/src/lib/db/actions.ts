@@ -172,17 +172,28 @@ type QrTipRow = {
 };
 
 /**
- * Поступления по QR за смену, которые ещё не разнесли по людям.
+ * Все поступления по QR, которые ещё не разнесли по людям.
  *
  * Пока поступление здесь, деньги ничьи: в заработок официантов они не входят,
  * в итоги смены не попадают. Разносит их кассир.
+ *
+ * ⚠️ Раньше отбирались только поступления текущего бизнес-дня. Кассир, забывший
+ * нажать до конца смены, терял их из виду навсегда: в 11 утра день сменялся,
+ * полоса исчезала, а в бэк-офисе про эту таблицу вообще ничего нет. Деньги
+ * оставались в базе живыми и невидимыми одновременно.
+ *
+ * Поэтому отдаём всё неразнесённое, независимо от дня. Старые поступления
+ * всплывают на следующей смене и висят, пока их не разнесут, — а разносятся
+ * они на свой день, а не на сегодняшний (см. distributeQrTip в TipsScreen).
+ *
+ * Порядок — от старых к новым: забытое вчера важнее пришедшего минуту назад.
  */
-export async function listPendingQrTips(businessDay: string): Promise<QrTip[]> {
+export async function listPendingQrTips(): Promise<QrTip[]> {
   const sql = db();
   const rows = await sql<QrTipRow[]>`
     select message_id, received_at, business_day, amount, team
       from qr_tips
-     where business_day = ${businessDay} and distributed_at is null
+     where distributed_at is null
      order by received_at
   `;
   return rows.map((r) => ({

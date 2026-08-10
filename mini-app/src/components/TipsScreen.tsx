@@ -134,6 +134,15 @@ export default function TipsScreen() {
   // Поступления по QR, которые пришли, но ещё не разнесены по людям.
   const [qrTips, setQrTips] = useState<QrTip[]>([]);
   const [openQr, setOpenQr] = useState<QrTip | null>(null);
+  /**
+   * Кому раздавать открытое поступление.
+   *
+   * Обычно это состав текущей смены. Но забытое поступление разносят уже
+   * на следующий вечер, а делить его надо между теми, кто работал ТОГДА:
+   * иначе деньги гостя достанутся людям, которых в тот вечер в зале не было.
+   * Поэтому для поступлений с прошлых дней состав читается отдельно, по их дню.
+   */
+  const [qrCrew, setQrCrew] = useState<Employee[]>([]);
   const [hallId, setHallId] = useState(halls[0].id);
   const [picked, setPicked] = useState<Picked | null>(null);
   const [editingCrew, setEditingCrew] = useState(false);
@@ -176,7 +185,7 @@ export default function TipsScreen() {
     try {
       const [fresh, qr] = await Promise.all([
         listByDay(day),
-        pendingQrTips(day),
+        pendingQrTips(),
       ]);
       setFromDb(fresh);
       setQrTips(qr);
@@ -198,7 +207,7 @@ export default function TipsScreen() {
           getManualPeople(),
           listByDay(day),
           getLastShift(),
-          pendingQrTips(day),
+          pendingQrTips(),
         ]);
         if (!alive) return;
         setShiftState(today);
@@ -474,6 +483,38 @@ export default function TipsScreen() {
    * Ошибку наружу не глотаем: её ловит экран распределения. Второй кассир
    * мог разнести это же поступление секундой раньше, и об этом надо сказать.
    */
+  /**
+   * Открывает поступление на разнос.
+   *
+   * Для сегодняшнего берём состав текущей смены. Для забытого с прошлых дней
+   * читаем состав того вечера: делить его между сегодняшними — значит отдать
+   * деньги гостя людям, которых тогда в зале не было.
+   */
+  async function openQrTip(tip: QrTip) {
+    if (tip.businessDay === day) {
+      setQrCrew(crew);
+      setOpenQr(tip);
+      return;
+    }
+    try {
+      const past = await getShift(tip.businessDay);
+      const people = everyone.filter((p) => past.crew.includes(p.id));
+      if (people.length === 0) {
+        // Состава за тот день нет — разделить не на кого, и придумывать
+        // получателей нельзя. Такое чинится в бэк-офисе, где видно всю смену.
+        setToast({
+          text: `Смена за ${formatBusinessDay(tip.businessDay)} не заполнена — разнести не на кого`,
+          bad: true,
+        });
+        return;
+      }
+      setQrCrew(people);
+      setOpenQr(tip);
+    } catch {
+      setToast({ text: "Не удалось прочитать ту смену — проверьте связь", bad: true });
+    }
+  }
+
   async function distributeQrTip(tip: QrTip, waiters: Employee[]) {
     if (!operator || waiters.length === 0) return;
     const group = waiters.length > 1 ? crypto.randomUUID() : null;
@@ -495,7 +536,11 @@ export default function TipsScreen() {
       operatorId: operator.id,
       operatorName: operator.name,
       createdAt: now,
-      businessDay: day,
+      // День берём у самого поступления, а не текущий. Забытое вчера
+      // принадлежит вчерашней смене: там его заработали, там оно должно
+      // войти в итоги и в отчёт. Записать его сегодняшним числом значило бы
+      // занизить вчерашний вечер и на столько же завысить сегодняшний.
+      businessDay: tip.businessDay,
       splitGroup: group,
     }));
 
@@ -503,10 +548,16 @@ export default function TipsScreen() {
     // не кладётся: поступление приходит с сервера, и разнести его дважды
     // с разных телефонов нельзя. Без связи экран честно откажет.
     await distributeQr(tip.messageId, rows, operator.name);
-    showLocally(rows);
+    // На экране показываем только то, что относится к открытой смене.
+    // Записи прошлого дня подмешивать сюда нельзя: они не входят
+    // ни в сегодняшние итоги, ни в сегодняшнюю историю.
+    if (tip.businessDay === day) showLocally(rows);
     await refresh();
     setToast({
-      text: `QR ${formatMoney(tip.amount)} · ${waiters.map((w) => w.short).join(", ")}`,
+      text:
+        tip.businessDay === day
+          ? `QR ${formatMoney(tip.amount)} · ${waiters.map((w) => w.short).join(", ")}`
+          : `QR ${formatMoney(tip.amount)} за ${formatBusinessDay(tip.businessDay)} · ${waiters.map((w) => w.short).join(", ")}`,
       bad: false,
     });
     setOpenQr(null);
@@ -714,7 +765,9 @@ export default function TipsScreen() {
       return (
         <QrTipScreen
           tip={openQr}
-          crew={crew}
+          // Состав того вечера, а не обязательно текущего: см. openQrTip.
+          crew={qrCrew}
+          today={day}
           onCancel={() => setOpenQr(null)}
           onConfirm={(waiters) => distributeQrTip(openQr, waiters)}
         />
@@ -813,16 +866,28 @@ export default function TipsScreen() {
             их поискать. Пока не разнесены — деньги ничьи. */}
         {qrTips.length > 0 && (
           <button
-            onClick={() => setOpenQr(qrTips[0])}
-            className="mx-4 mb-2 rounded-xl border border-sand bg-sand/10 px-3 py-2.5 text-left active:bg-sand/20"
+            onClick={() => void openQrTip(qrTips[0])}
+            className={`mx-4 mb-2 rounded-xl border px-3 py-2.5 text-left ${
+              // Забытое с прошлых смен подсвечиваем тревожным цветом: это уже
+              // не «пришли деньги, разнеси», а «деньги висят ничьи со вчера».
+              qrTips[0].businessDay === day
+                ? "border-sand bg-sand/10 active:bg-sand/20"
+                : "border-alert bg-alert/10 active:bg-alert/20"
+            }`}
           >
             <div className="text-sm text-fg">
               Чаевые по QR: {formatMoney(qrTips[0].amount)} · {qrTips[0].team}
+              {qrTips[0].businessDay !== day &&
+                ` · за ${formatBusinessDay(qrTips[0].businessDay)}`}
             </div>
             <div className="text-xs text-fg-muted">
-              {qrTips.length > 1
-                ? `и ещё ${qrTips.length - 1} — нажмите, чтобы разнести`
-                : "нажмите, чтобы разнести по официантам"}
+              {qrTips[0].businessDay !== day
+                ? qrTips.length > 1
+                  ? `не разнесли в ту смену · и ещё ${qrTips.length - 1} ждут`
+                  : "не разнесли в ту смену — нажмите, деньги до сих пор ничьи"
+                : qrTips.length > 1
+                  ? `и ещё ${qrTips.length - 1} — нажмите, чтобы разнести`
+                  : "нажмите, чтобы разнести по официантам"}
             </div>
           </button>
         )}
