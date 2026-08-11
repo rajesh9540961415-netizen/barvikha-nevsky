@@ -26,6 +26,7 @@ from datetime import datetime, timedelta, timezone
 
 import backup
 import jobs
+import probe
 import qr_reader as core
 
 logging.basicConfig(
@@ -43,6 +44,10 @@ logging.getLogger("telethon").setLevel(logging.WARNING)
 
 POLL_SECONDS = int(os.environ.get("POLL_SECONDS", "60"))
 
+# Сколько ждать между попытками дозвониться до Telegram. Минута: связь рвётся
+# и восстанавливается сама, а долбиться чаще — только греть журнал.
+RECONNECT_SECONDS = 60
+
 # Раз в час говорим, что живы, даже когда ничего не пришло. Иначе «работает
 # и поступлений нет» и «упало» выглядят в журнале одинаково — пустотой.
 # Это то же правило, что и про молчание рассылки, только про саму службу.
@@ -57,8 +62,39 @@ SILENCE_REPEAT = timedelta(hours=1)
 FIRST_RUN_LIMIT = 200
 
 
+def connection_modes():
+    """Способы подключения к Telegram, от обычного к обходным.
+
+    Зачем несколько. 11.08.2026 робот на Amvera не смог подключиться вовсе:
+    шесть попыток, на каждой тишина. Обычный способ ходит по порту 443,
+    и если хостинг его наружу не выпускает, помогает подключение через 80 —
+    тот открыт почти везде, потому что через него ходят все сайты.
+
+    Порядок важен: сначала обычный, он самый быстрый и надёжный. Обходные —
+    только если обычный не отозвался.
+    """
+    from telethon.network import (
+        ConnectionHttp,
+        ConnectionTcpAbridged,
+        ConnectionTcpFull,
+        ConnectionTcpObfuscated,
+    )
+
+    return (
+        ("full", "обычный, порт 443", ConnectionTcpFull),
+        ("abridged", "укороченный, порт 443", ConnectionTcpAbridged),
+        ("obfuscated", "замаскированный, порт 443", ConnectionTcpObfuscated),
+        ("http", "через порт 80", ConnectionHttp),
+    )
+
+
 def make_client():
-    """Подключение к Telegram. На сервере — сессией из переменной окружения."""
+    """Подключение к Telegram. На сервере — сессией из переменной окружения.
+
+    Перебирает способы подключения и возвращает первый, который отозвался.
+    Переменной `TG_CONNECTION` можно закрепить один — когда станет известно,
+    какой работает, чтобы не тратить время на заведомо мёртвые.
+    """
     from telethon.sessions import StringSession
     from telethon.sync import TelegramClient
 
@@ -74,11 +110,73 @@ def make_client():
             "Получить: python3 scripts/tg_session_export.py на компьютере владельца."
         )
 
-    client = TelegramClient(StringSession(session), int(api_id), api_hash)
-    client.connect()
-    if not client.is_user_authorized():
-        sys.exit("Сессия не годится: Telegram не признал её. Нужен новый вход.")
-    return client
+    only = (os.environ.get("TG_CONNECTION") or "").strip().lower()
+    tried = []
+
+    for key, title, mode in connection_modes():
+        if only and key != only:
+            continue
+        tried.append(title)
+        client = TelegramClient(
+            StringSession(session),
+            int(api_id),
+            api_hash,
+            connection=mode,
+            # По одной попытке на способ: перебор всё равно идёт по кругу
+            # снаружи, а пять попыток на каждом растянули бы его на минуты.
+            connection_retries=1,
+            timeout=10,
+        )
+        try:
+            client.connect()
+        except Exception as error:
+            log.warning("способ «%s» не подошёл: %s", title, type(error).__name__)
+            try:
+                client.disconnect()
+            except Exception:
+                pass
+            continue
+
+        # Сессия негодна — это не про связь, перебирать способы бессмысленно.
+        if not client.is_user_authorized():
+            sys.exit("Сессия не годится: Telegram не признал её. Нужен новый вход.")
+
+        log.info("подключился к Telegram, способ: %s", title)
+        if key != "full":
+            log.info(
+                "  обычный способ не отозвался — впишите TG_CONNECTION=%s "
+                "в переменные, чтобы робот больше его не пробовал",
+                key,
+            )
+        return client
+
+    raise ConnectionError(
+        "ни один способ подключения к Telegram не сработал: " + ", ".join(tried)
+    )
+
+
+def wait_for_telegram():
+    """Дозваниваться до Telegram, сколько потребуется.
+
+    Раньше при неудаче служба просто выходила: Amvera перезапускала контейнер,
+    он падал снова, и журнал забивался одинаковыми падениями — понять из него
+    было нельзя ничего. Теперь робот остаётся жив, а журнал остаётся читаемым.
+
+    Ошибка в настройках (нет переменной, негодная сессия) по-прежнему
+    останавливает службу: это `sys.exit`, и ждать тут нечего — само не пройдёт.
+    """
+    attempt = 0
+    while True:
+        attempt += 1
+        try:
+            return make_client()
+        except ConnectionError as error:
+            log.error("не дозвонился до Telegram (попытка %d): %s", attempt, error)
+            if attempt == 1:
+                # Подробности — один раз: при каждой попытке они бы засорили журнал.
+                probe.check(log)
+            log.info("жду %d с и пробую снова", RECONNECT_SECONDS)
+            time.sleep(RECONNECT_SECONDS)
 
 
 def one_pass(client, group, since_day):
@@ -135,6 +233,10 @@ def schedule_pass(client, now):
     """
     conn, schema = core.connect()
     try:
+        # Таблицу отметок заводим здесь, а не при старте службы: у стартового
+        # обращения к базе нет второй попытки, и недоступная в ту секунду база
+        # уронила бы робота целиком. Здесь всё внутри общего «попробуем снова».
+        jobs.setup(conn)
         jobs.tick(
             conn,
             (
@@ -162,18 +264,12 @@ def main():
         sys.exit("Не задана TG_GROUP_ID")
     since_day = os.environ.get("QR_SINCE_DAY")
 
-    client = make_client()
+    client = make_client() if once else wait_for_telegram()
     group = client.get_entity(int(group_id))
     log.info("читаю группу «%s» раз в %d с", getattr(group, "title", "—"), POLL_SECONDS)
     if since_day:
         log.info("при первом запуске беру смены с %s и позже", since_day)
 
-    # Таблицу отметок заводим один раз при старте, а не каждую минуту.
-    starter, _ = core.connect()
-    try:
-        jobs.setup(starter)
-    finally:
-        starter.close()
     if backup.password():
         log.info("расписание: копия базы — по понедельникам в 5 утра")
     else:

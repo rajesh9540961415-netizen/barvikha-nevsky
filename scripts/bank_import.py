@@ -100,6 +100,10 @@ def parse(text):
             "counterparty": (x.get("Получатель") if outgoing else x.get("Плательщик")) or "",
             "inn": (x.get("ПолучательИНН") if outgoing else x.get("ПлательщикИНН")) or "",
             "account": acc,
+            # Счёт второй стороны. Нужен, чтобы отличать переводы внутри группы
+            # от переводов на счёт другой площадки: ИНН у них один и тот же,
+            # и по нему такие платежи неразличимы.
+            "counter_account": (recv if outgoing else payer) or "",
             "purpose": re.sub(r"\s+", " ", x.get("НазначениеПлатежа", "")).strip(),
         })
 
@@ -164,7 +168,7 @@ def main():
     bal.sort(key=lambda r: r["date"])
     OUT.mkdir(parents=True, exist_ok=True)
     with open(OUT / "bank_transactions.csv", "w", newline="", encoding="utf-8") as f:
-        w = csv.DictWriter(f, ["date", "account", "doc_no", "direction", "amount",
+        w = csv.DictWriter(f, ["date", "account", "counter_account", "doc_no", "direction", "amount",
                                "counterparty", "inn", "purpose"])
         w.writeheader(); w.writerows(tx)
     with open(OUT / "bank_balances.csv", "w", newline="", encoding="utf-8") as f:

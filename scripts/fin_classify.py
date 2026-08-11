@@ -79,7 +79,7 @@ def main():
         out.append(r)
 
     with (DATA / "bank_classified.csv").open("w", newline="", encoding="utf-8") as f:
-        w = csv.DictWriter(f, ["date", "entity", "account", "account_type", "doc_no",
+        w = csv.DictWriter(f, ["date", "entity", "account", "counter_account", "account_type", "doc_no",
                                "direction", "class", "amount", "counterparty", "inn",
                                "why", "purpose"])
         w.writeheader()

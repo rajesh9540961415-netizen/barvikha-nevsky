@@ -13,6 +13,7 @@
   3. Платёж, резко выбивающийся из обычных сумм этого контрагента.
   4. Новый контрагент с крупным первым платежом.
   5. Перевод на личные нужды, ушедший через зарплатный реестр.
+  6. Движение на счёт московской площадки — деньги уходят из невского бизнеса.
 
 Запуск:
     python3 scripts/fin_redflags.py            # за последние 120 дней
@@ -267,6 +268,36 @@ def check_salary_registers(rows, out):
                 "расходах и занизит прибыль."))
 
 
+def check_moscow(out):
+    """Переводы на счёт московской площадки.
+
+    Счёт оформлен на то же ИП, поэтому обычное правило разметки считает такой
+    перевод внутренним — и он исчезает из отчёта совсем: не расход, не вывод.
+    А это отток из невского бизнеса на другое заведение. Владелец потребовал
+    11.08.2026 подсвечивать каждое такое движение.
+    """
+    import json
+    reg = json.loads((DATA / "registry.json").read_text(encoding="utf-8"))
+    acc = reg["rules"].get("moscow_account")
+    if not acc:
+        return
+    hits = []
+    for r in csv.DictReader((DATA / "bank_classified.csv").open(encoding="utf-8")):
+        if r.get("counter_account") == acc or r["account"] == acc:
+            hits.append(r)
+    if not hits:
+        return
+    total = sum(float(r["amount"]) for r in hits)
+    lines = [f"{r['date']}  {M(float(r['amount']))} ₽  {'ушло' if r['direction'] == 'out' else 'пришло'}"
+             for r in sorted(hits, key=lambda x: x["date"])]
+    out.append((total, "🔴 ДВИЖЕНИЕ НА СЧЁТ МОСКОВСКОЙ ПЛОЩАДКИ",
+                f"счёт {acc} — другое заведение, не Невский. Всего {M(total)} ₽",
+                lines,
+                "Эти деньги ушли ИЗ невского бизнеса. Разметка считает их внутренним "
+                "переводом, потому что счёт оформлен на то же ИП, и в отчёте они не "
+                "видны ни в расходах, ни в выводе. Решите, как их учитывать."))
+
+
 def main():
     arg = sys.argv[1] if len(sys.argv) > 1 else "120"
     if re.fullmatch(r"\d{4}-\d{2}", arg):        # разовая проверка за месяц
@@ -280,6 +311,7 @@ def main():
     check_same_amount(rows, out)
     check_outliers(rows, out)
     check_new_big(rows, out, history)
+    check_moscow(out)
     if re.fullmatch(r"\d{4}-\d{2}", arg):
         check_salary_registers(load_registers(month=arg), out)
     else:
