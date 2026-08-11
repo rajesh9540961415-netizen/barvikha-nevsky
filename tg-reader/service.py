@@ -165,6 +165,7 @@ def wait_for_telegram():
     Ошибка в настройках (нет переменной, негодная сессия) по-прежнему
     останавливает службу: это `sys.exit`, и ждать тут нечего — само не пройдёт.
     """
+    picture = None
     attempt = 0
     while True:
         attempt += 1
@@ -172,6 +173,13 @@ def wait_for_telegram():
             return make_client()
         except ConnectionError as error:
             log.error("не дозвонился до Telegram (попытка %d): %s", attempt, error)
+            if picture is None:
+                picture = probe.summary(probe.check(log))
+            # Повторяем при каждой неудаче, а не пишем один раз при запуске:
+            # журнал листают с конца, и ответ из первых строк до читателя
+            # не доходит. Две строки в минуту журнал не утопят.
+            for line in picture:
+                log.error("  %s", line)
             log.info("жду %d с и пробую снова", RECONNECT_SECONDS)
             time.sleep(RECONNECT_SECONDS)
 
@@ -261,12 +269,10 @@ def main():
         sys.exit("Не задана TG_GROUP_ID")
     since_day = os.environ.get("QR_SINCE_DAY")
 
-    # Проверка связи — самое первое, что делает робот, до всяких подключений.
-    # Так её видно в первых строках журнала. 11.08.2026 она стояла после первой
-    # неудачи, а неудача занимает полторы минуты перебора — и ответ оказывался
-    # где-то в середине, куда ещё надо долистать.
-    probe.check(log)
-
+    # Проверка связи живёт в `wait_for_telegram` и идёт только при неудаче:
+    # когда всё работает, диагностика не нужна, а когда не работает — её итог
+    # повторяется при каждой попытке, чтобы попадаться на глаза в любом
+    # обрывке журнала.
     client = make_client() if once else wait_for_telegram()
     group = client.get_entity(int(group_id))
     log.info("читаю группу «%s» раз в %d с", getattr(group, "title", "—"), POLL_SECONDS)

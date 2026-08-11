@@ -35,30 +35,35 @@ NOWHERE = ("203.0.113.9", 443)
 # хочется видеть это отдельной строкой, а не вперемешку с отказом связи.
 TARGETS = (
     (
+        "путь-робота",
         "Telegram, основной путь робота",
         "149.154.167.51",
         443,
         "не отвечает — робот читать чаевые не сможет",
     ),
     (
+        "порт-80",
         "Telegram, тот же адрес через порт 80",
         "149.154.167.51",
         80,
         "отвечает при закрытом 443 — поможет другой способ подключения",
     ),
     (
+        "запасной-ЦОД",
         "Telegram, запасной дата-центр",
         "149.154.167.91",
         443,
         "отвечает при отказе основного — дело в одном адресе, а не во всех",
     ),
     (
+        "api.telegram.org",
         "Telegram для ботов, api.telegram.org",
         "api.telegram.org",
         443,
         "отвечает при отказе остальных — Telegram доступен, закрыт путь робота",
     ),
     (
+        "ya.ru",
         "Обычный сайт, ya.ru",
         "ya.ru",
         443,
@@ -101,7 +106,7 @@ def check(log) -> dict[str, bool]:
 
     log.info("проверяю связь с этого сервера:")
     result: dict[str, bool] = {}
-    for title, host, port, meaning in TARGETS:
+    for _short, title, host, port, meaning in TARGETS:
         ok, note = reach(host, port)
         result[f"{host}:{port}"] = ok
         log.info("  %s %s — %s", "✓" if ok else "✗", title, note)
@@ -110,6 +115,25 @@ def check(log) -> dict[str, bool]:
 
     log.info("итог: %s", verdict(result))
     return result
+
+
+def summary(result: dict[str, bool]) -> list[str]:
+    """Две строки на всю картину — чтобы повторять их при каждой неудаче.
+
+    Зачем повторять. Журнал в панели Amvera листают с конца, и подробный
+    разбор, написанный один раз при запуске, до читателя не доходит: 11.08.2026
+    он дважды подряд оказался выше того куска, который удалось скопировать.
+    Ответ должен попадаться на глаза в любом обрывке журнала, а не только
+    в том, где он записан.
+    """
+    if not result:
+        return ["проверке связи здесь верить нельзя — что-то отвечает за все адреса"]
+
+    marks = " ".join(
+        f"{'✓' if result.get(f'{host}:{port}') else '✗'}{short}"
+        for short, _title, host, port, _meaning in TARGETS
+    )
+    return [f"связь: {marks}", f"итог: {verdict(result)}"]
 
 
 def verdict(result: dict[str, bool]) -> str:
