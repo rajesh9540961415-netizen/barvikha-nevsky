@@ -24,6 +24,8 @@ import sys
 import time
 from datetime import datetime, timedelta, timezone
 
+import backup
+import jobs
 import qr_reader as core
 
 logging.basicConfig(
@@ -121,6 +123,35 @@ def one_pass(client, group, since_day):
         conn.close()
 
 
+def schedule_pass(client, now):
+    """Проверить расписание и сделать то, чему настал срок.
+
+    Соединение своё и короткое: дела здесь редкие — раз в неделю, — держать
+    ради них связь круглосуточно незачем.
+
+    Копию базы делаем в понедельник в пять утра. Смена к этому часу разошлась
+    даже в пятницу и субботу, когда работают до шести: понедельник — самое
+    пустое утро недели.
+    """
+    conn, schema = core.connect()
+    try:
+        jobs.tick(
+            conn,
+            (
+                jobs.Job(
+                    name="копия базы",
+                    weekday=0,
+                    hour=5,
+                    do=lambda: backup.run(client, conn, schema, now),
+                ),
+            ),
+            now,
+            log,
+        )
+    finally:
+        conn.close()
+
+
 def main():
     # Один заход и выход — чтобы службу можно было проверить, не запуская
     # навсегда. На сервере запускается без ключей и работает постоянно.
@@ -136,6 +167,19 @@ def main():
     log.info("читаю группу «%s» раз в %d с", getattr(group, "title", "—"), POLL_SECONDS)
     if since_day:
         log.info("при первом запуске беру смены с %s и позже", since_day)
+
+    # Таблицу отметок заводим один раз при старте, а не каждую минуту.
+    starter, _ = core.connect()
+    try:
+        jobs.setup(starter)
+    finally:
+        starter.close()
+    if backup.password():
+        log.info("расписание: копия базы — по понедельникам в 5 утра")
+    else:
+        # Говорим при каждом старте, а не молчим: беззвучно не делать копию —
+        # ровно тот случай, когда пропажу замечают в день, когда она нужна.
+        log.warning("⚠️  копии базы НЕ будет: не задан BACKUP_PASSWORD")
 
     said_about_silence = None
     said_alive = None
@@ -154,6 +198,9 @@ def main():
                 if said_alive is None or now - said_alive > HEARTBEAT:
                     log.info("жив. %s", message)
                     said_alive = now
+            # Расписание проверяем после чтения чаевых, а не до: чаевые —
+            # главная работа робота, и она не должна ждать, пока соберётся копия.
+            schedule_pass(client, datetime.now(core.MOSCOW))
         except KeyboardInterrupt:
             log.info("остановлено вручную")
             break
