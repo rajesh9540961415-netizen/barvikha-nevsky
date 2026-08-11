@@ -111,7 +111,12 @@ def put(ws, block: tuple[int, int], col: int, values: dict[str, float]) -> list[
                 continue
             ws.cell(free, 1, name)
             rows[name] = row = free
-        ws.cell(row, col, amount if amount else None)
+        # Округляем до копеек. Суммы приходят сложением дробных долей —
+        # чаевые на терминале это остаток после 8 % комиссии, — и обычная
+        # арифметика с плавающей точкой даёт хвосты вида 3271.5200000000004.
+        # В ячейке Excel такой хвост хранится целиком, даже когда показывает
+        # две цифры, и всплывает при любой сверке. Это денежный документ.
+        ws.cell(row, col, round(amount, 2) if amount else None)
 
     return no_room
 
