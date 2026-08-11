@@ -161,13 +161,9 @@ def recipient(log) -> str | None:
             "это число в переменные Amvera, иначе через сутки адрес потеряется",
             found,
         )
-        return found
-
-    log.error(
-        "не задан TG_BACKUP_CHAT, и боту никто не писал. Откройте переписку "
-        "с ботом, отправьте любое сообщение и перезапустите контейнер"
-    )
-    return None
+    # Про «не нашли» здесь молчим: об этом скажет `postpone`, и скажет
+    # раз в час, а не каждую минуту.
+    return found
 
 
 def send(chat: str, blob: bytes, when: datetime, note: str) -> None:
@@ -187,18 +183,44 @@ def send(chat: str, blob: bytes, when: datetime, note: str) -> None:
     )
 
 
-def run(conn, schema: str, when: datetime, log) -> str:
-    """Дело для расписания: собрать и отправить. Вернуть строку для журнала."""
+# Когда последний раз жаловались на нехватку настроек. Жалобу повторяем
+# раз в час: расписание проверяется каждую минуту, и без этого журнал забился бы
+# одной и той же строкой — ровно то, из-за чего в нём перестают искать ошибки.
+_complained_at: datetime | None = None
+_COMPLAIN_EVERY = 3600
+
+
+def postpone(reason: str, when: datetime, log) -> None:
+    """Отложить дело: сказать, чего не хватает, но не считать его сделанным."""
+    global _complained_at
+    if (
+        _complained_at is None
+        or (when - _complained_at).total_seconds() >= _COMPLAIN_EVERY
+    ):
+        log.warning("⚠️  копия базы отложена: %s", reason)
+        _complained_at = when
+
+
+def run(conn, schema: str, when: datetime, log) -> str | None:
+    """Дело для расписания: собрать и отправить.
+
+    Возвращает строку для журнала, если копия ушла, и `None`, если дело
+    отложено из-за нехватки настроек. `None` для расписания значит «не сделано»,
+    и день не засчитывается — иначе несделанное ждало бы следующей недели.
+    """
     secret = password()
     if not secret:
         # Это не поломка, а сознательный отказ: см. пояснение в начале файла.
-        return "пропущено: не задан BACKUP_PASSWORD, без него копию не делаем"
+        postpone("не задан BACKUP_PASSWORD, без него копию не делаем", when, log)
+        return None
     if not tgbot.token():
-        return "пропущено: не задан TG_BOT_TOKEN, отправлять нечем"
+        postpone("не задан TG_BOT_TOKEN, отправлять нечем", when, log)
+        return None
 
     chat = recipient(log)
     if not chat:
-        return "пропущено: некуда слать, см. строку выше"
+        postpone("некуда слать: нет TG_BACKUP_CHAT и боту никто не писал", when, log)
+        return None
 
     blob, note = build(conn, schema, secret, when)
     send(chat, blob, when, note)

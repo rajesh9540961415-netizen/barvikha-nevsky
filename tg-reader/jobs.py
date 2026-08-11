@@ -34,6 +34,14 @@ from typing import Callable
 # копия молча пропустила бы неделю, а заметили бы через месяц.
 CATCH_UP = timedelta(days=8)
 
+# Через сколько повторять после неудачи. Неудача — это оборванная связь или
+# отказ Telegram: само пройдёт, но не через минуту. Час — чтобы и повторить
+# в тот же день, и не забить журнал одной строкой.
+#
+# ⚠️ Неудача НЕ закрывает день. Иначе одна оборванная связь в понедельник утром
+# отложила бы копию базы на неделю — а копия и нужна ровно на случай беды.
+RETRY_AFTER = timedelta(hours=1)
+
 
 @dataclass(frozen=True)
 class Job:
@@ -59,22 +67,35 @@ def setup(conn) -> None:
             )
             """
         )
+        # Разовая уборка за собственной ошибкой от 11.08.2026. Та версия
+        # засчитывала «пропущено: не задан …» за выполненное дело, и день
+        # оказывался закрыт, хотя копии не было. Такие отметки — ложные,
+        # снимаем их, чтобы дело взялось заново.
+        #
+        # Новый код подобных заметок не пишет вовсе: нехватка настроек теперь
+        # возвращает None и отметку не ставит. Значит уборка сработает один раз
+        # и дальше будет вхолостую — оставить её дешевле, чем ходить в боевую
+        # базу руками, куда с компьютера владельца хода всё равно нет.
+        cur.execute("delete from robot_jobs where ok and note like 'пропущено:%'")
     conn.commit()
 
 
-def last_run(conn, name: str) -> date | None:
+def last_run(conn, name: str):
+    """Что известно о прошлом заходе: (день удачи, когда пробовали, вышло ли)."""
     with conn.cursor() as cur:
-        cur.execute("select last_day from robot_jobs where job = %s", (name,))
+        cur.execute(
+            "select last_day, last_at, ok from robot_jobs where job = %s", (name,)
+        )
         row = cur.fetchone()
-    return row[0] if row else None
+    return row if row else (None, None, None)
 
 
 def mark(conn, name: str, ok: bool, note: str, now: datetime) -> None:
     """Записать, чем кончилось.
 
-    Неудачу отмечаем тоже — иначе робот бился бы в одно и то же дело каждую
-    минуту до конца суток и забил бы журнал так, что настоящую причину
-    в нём было бы не найти.
+    ⚠️ **День закрывает только удача.** При неудаче `last_day` не двигаем —
+    двигаем лишь время попытки, чтобы повторить через час. Иначе одна
+    оборванная связь откладывала бы недельное дело на неделю.
     """
     with conn.cursor() as cur:
         cur.execute(
@@ -82,20 +103,28 @@ def mark(conn, name: str, ok: bool, note: str, now: datetime) -> None:
             insert into robot_jobs (job, last_day, last_at, ok, note)
                  values (%s, %s, %s, %s, %s)
             on conflict (job) do update
-                    set last_day = excluded.last_day,
+                    set last_day = case when excluded.ok
+                                        then excluded.last_day
+                                        else robot_jobs.last_day end,
                         last_at  = excluded.last_at,
                         ok       = excluded.ok,
                         note     = excluded.note
             """,
-            (name, now.date(), now, ok, note[:500]),
+            (name, now.date() if ok else None, now, ok, note[:500]),
         )
     conn.commit()
 
 
-def due(job: Job, now: datetime, last: date | None) -> bool:
+def due(job: Job, now: datetime, state) -> bool:
     """Настало ли время. `now` приходит уже по Москве."""
+    last, tried_at, ok = state
+
     if last == now.date():
-        return False  # сегодня уже делали
+        return False  # сегодня уже сделали
+
+    # Только что не вышло — подождём час, а не будем биться каждую минуту.
+    if ok is False and tried_at is not None and now - tried_at < RETRY_AFTER:
+        return False
 
     overdue = last is None or (now.date() - last) >= CATCH_UP
 
@@ -122,6 +151,15 @@ def tick(conn, schedule, now: datetime, log) -> None:
         log.info("расписание: берусь за «%s»", job.name)
         try:
             note = job.do()
+
+            # Дело вернуло None — оно не сделано, а отложено: чего-то
+            # не хватает в настройках. Отметку НЕ ставим, иначе несделанное
+            # засчиталось бы за сделанное и следующая попытка была бы только
+            # через неделю. 11.08.2026 так и вышло: копия не ушла, потому что
+            # ключа бота ещё не было, и робот записал день как отработанный.
+            if note is None:
+                continue
+
             log.info("расписание: «%s» — %s", job.name, note)
             mark(conn, job.name, True, note, now)
         except Exception as error:
