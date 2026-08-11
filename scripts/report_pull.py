@@ -110,7 +110,12 @@ def дни_месяца(месяц: str, по: date) -> list[str]:
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("день", nargs="?", help="день смены, например 2026-08-10")
-    ap.add_argument("--month", help="весь месяц: 2026-08")
+    ap.add_argument(
+        "--month",
+        nargs="?",
+        const="",
+        help="весь месяц: --month 2026-08. Без значения — месяц вчерашнего дня",
+    )
     args = ap.parse_args()
 
     load_env()
@@ -123,8 +128,13 @@ def main() -> None:
         )
 
     вчера = date.today() - timedelta(days=1)
-    if args.month:
-        дни = дни_месяца(args.month, вчера)
+    # Отдельным признаком, а не проверкой самой строки: у «--month» без
+    # значения строка пустая, и обычное «если задан» на ней не срабатывает.
+    месяцем = args.month is not None
+    if месяцем:
+        # Месяц берём по ВЧЕРАШНЕМУ дню, а не по сегодняшнему: первого числа
+        # забирать надо ещё прошлый месяц, там лежит последняя смена.
+        дни = дни_месяца(args.month or вчера.strftime("%Y-%m"), вчера)
     elif args.день:
         дни = [args.день]
     else:
@@ -142,7 +152,7 @@ def main() -> None:
         # мешал бы увидеть настоящую беду.
         if not данные.get("waiters"):
             пустых += 1
-            if not args.month:
+            if not месяцем:
                 print(f"· {день}: смена пустая, в отчёт вписывать нечего")
             continue
 
@@ -156,7 +166,7 @@ def main() -> None:
         else:
             print(f"✗ {день}: не удалось вписать в отчёт", file=sys.stderr)
 
-    if args.month:
+    if месяцем:
         print(f"\nГотово. Смен записано: {записано}, пустых дней: {пустых}")
 
 
