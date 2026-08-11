@@ -28,6 +28,7 @@ import backup
 import jobs
 import probe
 import qr_reader as core
+import tgbot
 
 logging.basicConfig(
     level=logging.INFO,
@@ -155,35 +156,6 @@ def make_client():
     )
 
 
-def wait_for_telegram():
-    """Дозваниваться до Telegram, сколько потребуется.
-
-    Раньше при неудаче служба просто выходила: Amvera перезапускала контейнер,
-    он падал снова, и журнал забивался одинаковыми падениями — понять из него
-    было нельзя ничего. Теперь робот остаётся жив, а журнал остаётся читаемым.
-
-    Ошибка в настройках (нет переменной, негодная сессия) по-прежнему
-    останавливает службу: это `sys.exit`, и ждать тут нечего — само не пройдёт.
-    """
-    picture = None
-    attempt = 0
-    while True:
-        attempt += 1
-        try:
-            return make_client()
-        except ConnectionError as error:
-            log.error("не дозвонился до Telegram (попытка %d): %s", attempt, error)
-            if picture is None:
-                picture = probe.summary(probe.check(log))
-            # Повторяем при каждой неудаче, а не пишем один раз при запуске:
-            # журнал листают с конца, и ответ из первых строк до читателя
-            # не доходит. Две строки в минуту журнал не утопят.
-            for line in picture:
-                log.error("  %s", line)
-            log.info("жду %d с и пробую снова", RECONNECT_SECONDS)
-            time.sleep(RECONNECT_SECONDS)
-
-
 def one_pass(client, group, since_day):
     """Один заход: прочитать новое, записать, вернуть сведения о молчании."""
     conn, schema = core.connect()
@@ -226,11 +198,16 @@ def one_pass(client, group, since_day):
         conn.close()
 
 
-def schedule_pass(client, now):
+def schedule_pass(now):
     """Проверить расписание и сделать то, чему настал срок.
 
-    Соединение своё и короткое: дела здесь редкие — раз в неделю, — держать
-    ради них связь круглосуточно незачем.
+    ⚠️ **Не зависит от связи с Telegram по MTProto.** Копия базы уходит обычным
+    https через бота, а чтение чаевых — через telethon. 11.08.2026 на Amvera
+    работало только первое, и робот, который ждал бы второго, не сделал бы
+    копию никогда. Дела по расписанию и чтение группы должны жить порознь.
+
+    Соединение с базой своё и короткое: дела здесь редкие — раз в неделю, —
+    держать ради них связь круглосуточно незачем.
 
     Копию базы делаем в понедельник в пять утра. Смена к этому часу разошлась
     даже в пятницу и субботу, когда работают до шести: понедельник — самое
@@ -249,7 +226,7 @@ def schedule_pass(client, now):
                     name="копия базы",
                     weekday=0,
                     hour=5,
-                    do=lambda: backup.run(client, conn, schema, now),
+                    do=lambda: backup.run(conn, schema, now, log),
                 ),
             ),
             now,
@@ -257,6 +234,23 @@ def schedule_pass(client, now):
         )
     finally:
         conn.close()
+
+
+def announce_schedule():
+    """Сказать при старте, будет копия базы или нет, и почему.
+
+    Говорим всегда, а не молчим: беззвучно не делать копию — ровно тот случай,
+    когда пропажу обнаруживают в день, когда она нужна.
+    """
+    missing = []
+    if not backup.password():
+        missing.append("BACKUP_PASSWORD")
+    if not tgbot.token():
+        missing.append("TG_BOT_TOKEN")
+    if missing:
+        log.warning("⚠️  копии базы НЕ будет: не задано %s", ", ".join(missing))
+    else:
+        log.info("расписание: копия базы — по понедельникам в 5 утра")
 
 
 def main():
@@ -269,58 +263,96 @@ def main():
         sys.exit("Не задана TG_GROUP_ID")
     since_day = os.environ.get("QR_SINCE_DAY")
 
-    # Проверка связи живёт в `wait_for_telegram` и идёт только при неудаче:
-    # когда всё работает, диагностика не нужна, а когда не работает — её итог
-    # повторяется при каждой попытке, чтобы попадаться на глаза в любом
-    # обрывке журнала.
-    client = make_client() if once else wait_for_telegram()
-    group = client.get_entity(int(group_id))
-    log.info("читаю группу «%s» раз в %d с", getattr(group, "title", "—"), POLL_SECONDS)
-    if since_day:
-        log.info("при первом запуске беру смены с %s и позже", since_day)
+    announce_schedule()
 
-    if backup.password():
-        log.info("расписание: копия базы — по понедельникам в 5 утра")
-    else:
-        # Говорим при каждом старте, а не молчим: беззвучно не делать копию —
-        # ровно тот случай, когда пропажу замечают в день, когда она нужна.
-        log.warning("⚠️  копии базы НЕ будет: не задан BACKUP_PASSWORD")
-
+    client = None
+    group = None
+    picture = None
+    tried_at = None
     said_about_silence = None
     said_alive = None
-    while True:
-        try:
-            alarm, message = one_pass(client, group, since_day)
-            now = datetime.now(timezone.utc)
-            if alarm:
-                # Тревогу повторяем редко, но повторяем: она должна попадаться
-                # на глаза и через сутки, а не потеряться в первой строке.
-                if said_about_silence is None or now - said_about_silence > SILENCE_REPEAT:
-                    log.warning("⚠️  %s", message)
-                    said_about_silence = now
-            else:
-                said_about_silence = None
-                if said_alive is None or now - said_alive > HEARTBEAT:
-                    log.info("жив. %s", message)
-                    said_alive = now
-            # Расписание проверяем после чтения чаевых, а не до: чаевые —
-            # главная работа робота, и она не должна ждать, пока соберётся копия.
-            schedule_pass(client, datetime.now(core.MOSCOW))
-        except KeyboardInterrupt:
-            log.info("остановлено вручную")
-            break
-        except Exception as error:
-            # Падать нельзя: связь с Telegram или базой рвётся, это обычное дело
-            # ночью. Записали, чем именно, и пробуем снова через минуту.
-            log.error("заход не удался: %s: %s", type(error).__name__, error)
 
-        if once:
-            log.info("один заход сделан, выхожу")
-            break
+    try:
+        while True:
+            now_utc = datetime.now(timezone.utc)
 
-        time.sleep(POLL_SECONDS)
+            # 1. Связь с Telegram. Держим, но НЕ ждём её.
+            #
+            # ⚠️ Раньше служба стояла здесь, пока не дозвонится, и всё
+            # остальное стояло вместе с ней. 11.08.2026 это значило бы, что
+            # копия базы не сделается никогда: MTProto с Amvera перекрыт,
+            # а копия уходит другим путём и в нём не нуждается.
+            if client is None and (
+                tried_at is None
+                or now_utc - tried_at >= timedelta(seconds=RECONNECT_SECONDS)
+            ):
+                tried_at = now_utc
+                try:
+                    client = make_client()
+                    group = client.get_entity(int(group_id))
+                    log.info(
+                        "читаю группу «%s» раз в %d с",
+                        getattr(group, "title", "—"),
+                        POLL_SECONDS,
+                    )
+                    if since_day:
+                        log.info("при первом запуске беру смены с %s и позже", since_day)
+                    picture = None  # связь появилась — старая картина устарела
+                except ConnectionError as error:
+                    log.error("не дозвонился до Telegram: %s", error)
+                    if picture is None:
+                        picture = probe.summary(probe.check(log))
+                    # Повторяем итог при каждой неудаче: журнал листают с конца,
+                    # и ответ из первых строк до читателя не доходит.
+                    for line in picture:
+                        log.error("  %s", line)
+                    client = None
 
-    client.disconnect()
+            # 2. Чаевые по QR — только когда связь есть.
+            if client is not None:
+                try:
+                    alarm, message = one_pass(client, group, since_day)
+                    if alarm:
+                        # Тревогу повторяем редко, но повторяем: она должна
+                        # попадаться на глаза и через сутки.
+                        if (
+                            said_about_silence is None
+                            or now_utc - said_about_silence > SILENCE_REPEAT
+                        ):
+                            log.warning("⚠️  %s", message)
+                            said_about_silence = now_utc
+                    else:
+                        said_about_silence = None
+                        if said_alive is None or now_utc - said_alive > HEARTBEAT:
+                            log.info("жив. %s", message)
+                            said_alive = now_utc
+                except Exception as error:
+                    log.error("заход не удался: %s: %s", type(error).__name__, error)
+                    # Связь могла оборваться — пусть следующий круг переподключится.
+                    try:
+                        client.disconnect()
+                    except Exception:
+                        pass
+                    client = None
+
+            # 3. Расписание — всегда, даже когда Telegram недоступен.
+            try:
+                schedule_pass(datetime.now(core.MOSCOW))
+            except Exception as error:
+                log.error(
+                    "расписание не отработало: %s: %s", type(error).__name__, error
+                )
+
+            if once:
+                log.info("один заход сделан, выхожу")
+                break
+
+            time.sleep(POLL_SECONDS)
+    except KeyboardInterrupt:
+        log.info("остановлено вручную")
+
+    if client is not None:
+        client.disconnect()
 
 
 if __name__ == "__main__":

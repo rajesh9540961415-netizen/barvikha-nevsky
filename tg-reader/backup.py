@@ -17,6 +17,16 @@
 CSV читается чем угодно и не устаревает. Схема при восстановлении берётся
 из `mini-app/scripts/schema.sql`: второй копии схемы в проекте быть не должно.
 
+Почему отправка ботом, а не тем же telethon, которым робот читает группу.
+11.08.2026 выяснилось: Amvera не выпускает соединения к дата-центрам Telegram,
+и telethon с сервера не работает вовсе. А `api.telegram.org` отвечает за 0,3 с —
+это обычный https. Поэтому копия уходит через бота (`tgbot.py`) и не зависит
+от того, починится ли чтение чаевых.
+
+Что нужно задать в панели Amvera: `BACKUP_PASSWORD`, `TG_BOT_TOKEN`
+и `TG_BACKUP_CHAT` — переписка, куда слать. Не хватает любого — копии не будет,
+и робот скажет об этом словами.
+
 Проверить, ничего не отправляя:
 
     python3 backup.py --file /tmp/копия.zip
@@ -31,9 +41,7 @@ import os
 import sys
 from datetime import datetime
 
-# Кому шлём. «me» — «Избранное» того аккаунта, которым робот читает Telegram.
-# Отдельный адрес не нужен: чем меньше настроек, тем меньше способов ошибиться.
-RECIPIENT = "me"
+import tgbot
 
 
 def password() -> str | None:
@@ -135,32 +143,65 @@ def build(conn, schema: str, secret: str, when: datetime) -> tuple[bytes, str]:
     return blob, note
 
 
-def send(client, blob: bytes, when: datetime, note: str) -> None:
-    """Отправить архив в «Избранное» служебного аккаунта."""
-    parcel = io.BytesIO(blob)
-    # Telethon берёт имя файла из атрибута `.name`, как у настоящего файла.
-    parcel.name = f"база-невский-{when.strftime('%Y-%m-%d')}.zip"
-    client.send_file(
-        RECIPIENT,
-        parcel,
-        force_document=True,
+def recipient(log) -> str | None:
+    """Кому слать. Задаётся переменной `TG_BACKUP_CHAT`.
+
+    Не задана — спрашиваем у Telegram, кто писал боту, и печатаем номер
+    в журнал, чтобы его осталось вписать в панель. Само по себе гадание
+    ненадёжно: Telegram помнит эти события около суток.
+    """
+    fixed = (os.environ.get("TG_BACKUP_CHAT") or "").strip()
+    if fixed:
+        return fixed
+
+    found = tgbot.find_chat()
+    if found:
+        log.warning(
+            "⚠️  не задан TG_BACKUP_CHAT. Боту писали из переписки %s — впишите "
+            "это число в переменные Amvera, иначе через сутки адрес потеряется",
+            found,
+        )
+        return found
+
+    log.error(
+        "не задан TG_BACKUP_CHAT, и боту никто не писал. Откройте переписку "
+        "с ботом, отправьте любое сообщение и перезапустите контейнер"
+    )
+    return None
+
+
+def send(chat: str, blob: bytes, when: datetime, note: str) -> None:
+    """Отправить архив обычным https через api.telegram.org."""
+    # Имя файла латиницей намеренно. Оно едет в заголовке запроса, а кириллица
+    # там кодируется по-разному и читается получателем неоднозначно: в разборе
+    # 11.08.2026 «база-невский» превратилась в мусор. Всё человеческое —
+    # в подписи к файлу, она идёт отдельным полем и с кодировкой не спорит.
+    tgbot.send_document(
+        chat,
+        f"baza-nevskiy-{when.strftime('%Y-%m-%d')}.zip",
+        blob,
         caption=(
-            f"Резервная копия базы, {when.strftime('%d.%m.%Y')}.\n"
-            f"{note}.\n"
+            f"Резервная копия базы, {when.strftime('%d.%m.%Y')}. {note}. "
             "Архив под паролем — он в панели Amvera, переменная BACKUP_PASSWORD."
         ),
     )
 
 
-def run(client, conn, schema: str, when: datetime) -> str:
+def run(conn, schema: str, when: datetime, log) -> str:
     """Дело для расписания: собрать и отправить. Вернуть строку для журнала."""
     secret = password()
     if not secret:
         # Это не поломка, а сознательный отказ: см. пояснение в начале файла.
         return "пропущено: не задан BACKUP_PASSWORD, без него копию не делаем"
+    if not tgbot.token():
+        return "пропущено: не задан TG_BOT_TOKEN, отправлять нечем"
+
+    chat = recipient(log)
+    if not chat:
+        return "пропущено: некуда слать, см. строку выше"
 
     blob, note = build(conn, schema, secret, when)
-    send(client, blob, when, note)
+    send(chat, blob, when, note)
     return f"отправлено в Telegram — {note}"
 
 
