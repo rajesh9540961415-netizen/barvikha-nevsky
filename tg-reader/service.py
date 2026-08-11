@@ -172,9 +172,6 @@ def wait_for_telegram():
             return make_client()
         except ConnectionError as error:
             log.error("не дозвонился до Telegram (попытка %d): %s", attempt, error)
-            if attempt == 1:
-                # Подробности — один раз: при каждой попытке они бы засорили журнал.
-                probe.check(log)
             log.info("жду %d с и пробую снова", RECONNECT_SECONDS)
             time.sleep(RECONNECT_SECONDS)
 
@@ -263,6 +260,12 @@ def main():
     if not group_id:
         sys.exit("Не задана TG_GROUP_ID")
     since_day = os.environ.get("QR_SINCE_DAY")
+
+    # Проверка связи — самое первое, что делает робот, до всяких подключений.
+    # Так её видно в первых строках журнала. 11.08.2026 она стояла после первой
+    # неудачи, а неудача занимает полторы минуты перебора — и ответ оказывался
+    # где-то в середине, куда ещё надо долистать.
+    probe.check(log)
 
     client = make_client() if once else wait_for_telegram()
     group = client.get_entity(int(group_id))
