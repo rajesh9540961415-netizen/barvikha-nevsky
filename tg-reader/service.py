@@ -28,6 +28,7 @@ import backup
 import jobs
 import probe
 import qr_reader as core
+import storage as storage_module
 import tgbot
 
 logging.basicConfig(
@@ -156,46 +157,46 @@ def make_client():
     )
 
 
-def one_pass(client, group, since_day):
-    """Один заход: прочитать новое, записать, вернуть сведения о молчании."""
-    conn, schema = core.connect()
-    try:
-        since_id, known_newest = core.known_state(conn)
-        found, skipped, too_old = core.collect(
-            client,
-            group,
-            limit=None if since_id else FIRST_RUN_LIMIT,
-            since_id=since_id,
-            since_day=None if since_id else since_day,
+def one_pass(client, group, since_day, storage):
+    """Один заход: прочитать новое, записать, вернуть сведения о молчании.
+
+    Куда именно записать — решает `storage`: прямо в базу или через приложение
+    смены по https. Читателю это безразлично, и в этом весь смысл: переезд
+    в Варшаву не потребовал трогать разбор уведомлений.
+    """
+    since_id, known_newest = storage.known_state()
+    found, skipped, too_old = core.collect(
+        client,
+        group,
+        limit=None if since_id else FIRST_RUN_LIMIT,
+        since_id=since_id,
+        since_day=None if since_id else since_day,
+    )
+
+    added = storage.store(found) if found else 0
+    if added:
+        total = sum(n.amount for _, _, _, n in found)
+        log.info(
+            "записано %d на %.2f ₽ (пропущено чужих %d, старых %d)",
+            added,
+            total,
+            skipped,
+            too_old,
         )
-
-        added = core.store(conn, found) if found else 0
-        if added:
-            total = sum(n.amount for _, _, _, n in found)
+        for _, moment, day, notice in found:
+            _, local = core.business_day(moment)
             log.info(
-                "записано %d на %.2f ₽ (схема %s, пропущено чужих %d, старых %d)",
-                added,
-                total,
-                schema,
-                skipped,
-                too_old,
+                "  %s %s — %.2f ₽ · %s",
+                day,
+                local.strftime("%H:%M"),
+                notice.amount,
+                notice.team,
             )
-            for _, moment, day, notice in found:
-                _, local = core.business_day(moment)
-                log.info(
-                    "  %s %s — %.2f ₽ · %s",
-                    day,
-                    local.strftime("%H:%M"),
-                    notice.amount,
-                    notice.team,
-                )
 
-        newest = max((m for _, m, _, _ in found), default=None)
-        if known_newest and (newest is None or known_newest > newest):
-            newest = known_newest
-        return core.silence_report(newest)
-    finally:
-        conn.close()
+    newest = max((m for _, m, _, _ in found), default=None)
+    if known_newest and (newest is None or known_newest > newest):
+        newest = known_newest
+    return core.silence_report(newest)
 
 
 def schedule_pass(now):
@@ -236,12 +237,19 @@ def schedule_pass(now):
         conn.close()
 
 
-def announce_schedule():
+def announce_schedule(storage):
     """Сказать при старте, будет копия базы или нет, и почему.
 
     Говорим всегда, а не молчим: беззвучно не делать копию — ровно тот случай,
     когда пропажу обнаруживают в день, когда она нужна.
     """
+    if not storage.has_database:
+        # Варшавский робот до базы не дотягивается вовсе — копию делает
+        # московский. Это не поломка, а разделение труда, и сказать о нём
+        # надо прямо, иначе выглядит как молчаливая пропажа.
+        log.info("расписание: копию базы делает московский робот, здесь её нет")
+        return
+
     missing = []
     if not backup.password():
         missing.append("BACKUP_PASSWORD")
@@ -263,7 +271,8 @@ def main():
         sys.exit("Не задана TG_GROUP_ID")
     since_day = os.environ.get("QR_SINCE_DAY")
 
-    announce_schedule()
+    storage = storage_module.choose(log)
+    announce_schedule(storage)
 
     client = None
     group = None
@@ -311,7 +320,7 @@ def main():
             # 2. Чаевые по QR — только когда связь есть.
             if client is not None:
                 try:
-                    alarm, message = one_pass(client, group, since_day)
+                    alarm, message = one_pass(client, group, since_day, storage)
                     if alarm:
                         # Тревогу повторяем редко, но повторяем: она должна
                         # попадаться на глаза и через сутки.
@@ -335,13 +344,17 @@ def main():
                         pass
                     client = None
 
-            # 3. Расписание — всегда, даже когда Telegram недоступен.
-            try:
-                schedule_pass(datetime.now(core.MOSCOW))
-            except Exception as error:
-                log.error(
-                    "расписание не отработало: %s: %s", type(error).__name__, error
-                )
+            # 3. Расписание — всегда, когда есть база: оно не зависит
+            #    от связи с Telegram. Без базы дел у расписания нет вовсе,
+            #    и лезть в неё каждую минуту значило бы засорять журнал
+            #    одной и той же ошибкой про неразрешимое имя.
+            if storage.has_database:
+                try:
+                    schedule_pass(datetime.now(core.MOSCOW))
+                except Exception as error:
+                    log.error(
+                        "расписание не отработало: %s: %s", type(error).__name__, error
+                    )
 
             if once:
                 log.info("один заход сделан, выхожу")

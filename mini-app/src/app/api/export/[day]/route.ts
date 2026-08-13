@@ -1,5 +1,4 @@
-import { timingSafeEqual } from "node:crypto";
-
+import { отказПоКлючу } from "@/lib/apiKey";
 import { listEntries, listManual, readShift } from "@/lib/db/actions";
 import { buildExport } from "@/lib/exportShift";
 import { getQuickRestoPeople } from "@/lib/people";
@@ -44,39 +43,13 @@ const ПУСТАЯ_СМЕНА: Shift = {
   cashier: null,
 };
 
-/** Сравнение ключей за постоянное время: обычное `===` выдаёт длину совпадения. */
-function ключиСовпали(данный: string, нужный: string): boolean {
-  const a = Buffer.from(данный);
-  const b = Buffer.from(нужный);
-  // timingSafeEqual падает на разной длине, поэтому длину проверяем отдельно.
-  // Сама по себе она секрета не выдаёт.
-  return a.length === b.length && timingSafeEqual(a, b);
-}
-
 export async function GET(
   request: Request,
   { params }: { params: Promise<{ day: string }> },
 ) {
-  const нужный = process.env.EXPORT_KEY;
-
-  // Не задан ключ — молчим. Отдать деньги смены без защиты нельзя даже
-  // разово: адрес угадывается с первой попытки, а данные в нём поимённые.
-  if (!нужный) {
-    return Response.json(
-      {
-        ok: false,
-        причина:
-          "не задана переменная EXPORT_KEY — выдача выключена. " +
-          "Задать её в панели Amvera, тем же значением, что и у скрипта отчёта",
-      },
-      { status: 503 },
-    );
-  }
-
-  const данный = request.headers.get("X-Export-Key");
-  if (!данный || !ключиСовпали(данный, нужный)) {
-    return Response.json({ ok: false, причина: "неверный ключ" }, { status: 401 });
-  }
+  // Проверка ключа общая на все служебные адреса, см. `@/lib/apiKey`.
+  const отказ = отказПоКлючу(request);
+  if (отказ) return отказ;
 
   const { day } = await params;
   if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) {

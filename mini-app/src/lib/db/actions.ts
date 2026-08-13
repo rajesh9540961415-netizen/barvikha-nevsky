@@ -208,6 +208,67 @@ export async function listPendingQrTips(): Promise<QrTip[]> {
 }
 
 /**
+ * Что база уже знает о поступлениях по QR: номер последнего прочитанного
+ * сообщения и время последнего.
+ *
+ * Ровно то же, что читатель Telegram брал у базы сам, пока мог до неё
+ * дотянуться. С 13.08.2026 он живёт в Варшаве — иначе его режет РКН, — а там
+ * внутреннее имя московской базы не разрешается вовсе. Поэтому он спрашивает
+ * это у приложения по https, а в базу пишет уже приложение.
+ */
+export async function qrTipsState(): Promise<{
+  sinceId: number | null;
+  newestAt: string | null;
+}> {
+  const sql = db();
+  const [строка] = await sql<{ max_id: string | null; max_at: Date | null }[]>`
+    select max(message_id) as max_id, max(received_at) as max_at from qr_tips
+  `;
+  return {
+    // bigint приезжает строкой: обычное число в JavaScript не вместило бы
+    // все возможные идентификаторы Telegram без потери точности.
+    sinceId: строка?.max_id == null ? null : Number(строка.max_id),
+    newestAt: строка?.max_at == null ? null : строка.max_at.toISOString(),
+  };
+}
+
+/** Одно поступление, как его присылает читатель Telegram. */
+export type ВходящееQr = {
+  messageId: number;
+  receivedAt: string;
+  businessDay: string;
+  amount: number;
+  team: string;
+};
+
+/**
+ * Кладёт прочитанное читателем в `qr_tips`. Возвращает, сколько появилось.
+ *
+ * Повторы отсекает сама база: `message_id` — первичный ключ. Поэтому читатель
+ * может присылать одно и то же сколько угодно раз, не разбираясь, что уже
+ * записано, — это и делает пересылку безопасной при обрывах связи.
+ */
+export async function saveQrTips(поступления: ВходящееQr[]): Promise<number> {
+  if (поступления.length === 0) return 0;
+  const sql = db();
+  let добавлено = 0;
+  await sql.begin(async (tx) => {
+    for (const п of поступления) {
+      const появилось = await tx`
+        insert into qr_tips
+               (message_id, received_at, business_day, amount, team)
+        values (${п.messageId}, ${п.receivedAt}, ${п.businessDay},
+                ${п.amount}, ${п.team})
+        on conflict (message_id) do nothing
+        returning message_id
+      `;
+      if (появилось.length > 0) добавлено += 1;
+    }
+  });
+  return добавлено;
+}
+
+/**
  * Разносит поступление по QR на официантов.
  *
  * Всё одной транзакцией: записи официантам и отметка «разнесено» должны
