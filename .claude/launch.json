@@ -4,16 +4,32 @@
     {
       "name": "manager-app",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev"],
+      "runtimeArgs": [
+        "run",
+        "dev"
+      ],
       "cwd": "/Users/user/Documents/Невский/manager-app",
       "port": 3100
     },
     {
       "name": "mini-app",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev"],
+      "runtimeArgs": [
+        "run",
+        "dev"
+      ],
       "cwd": "/Users/user/Documents/Невский/mini-app",
       "port": 3000
+    },
+    {
+      "name": "manager-app-check",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": [
+        "next",
+        "dev"
+      ],
+      "cwd": "/Users/user/Documents/Невский/manager-app",
+      "autoPort": true
     }
   ]
 }
