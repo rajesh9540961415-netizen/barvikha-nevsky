@@ -1,8 +1,8 @@
 import Link from "next/link";
-import { notFound, redirect } from "next/navigation";
+import { notFound } from "next/navigation";
 import ShiftScreen from "@/components/ShiftScreen";
 import { readDay } from "@/lib/db/corrections";
-import { currentManager, signOut } from "@/lib/db/managers";
+import { requireManager, signOut } from "@/lib/db/managers";
 import { dayLabel, weekday } from "@/lib/format";
 
 export const dynamic = "force-dynamic";
@@ -12,8 +12,7 @@ export default async function ShiftPage({
 }: {
   params: Promise<{ day: string }>;
 }) {
-  const manager = await currentManager();
-  if (!manager) redirect("/login");
+  const manager = await requireManager();
 
   const { day } = await params;
   const data = await readDay(day);

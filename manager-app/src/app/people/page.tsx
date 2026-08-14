@@ -1,10 +1,9 @@
 import Link from "next/link";
-import { redirect } from "next/navigation";
 import { Suspense } from "react";
 import PersonPicker from "@/components/PersonPicker";
 import PersonStatsView from "@/components/PersonStats";
 import { listPeople, readPerson } from "@/lib/db/people";
-import { currentManager, signOut } from "@/lib/db/managers";
+import { requireManager, signOut } from "@/lib/db/managers";
 import { dayLabel } from "@/lib/format";
 
 export const dynamic = "force-dynamic";
@@ -50,8 +49,7 @@ export default async function PeoplePage({
 }: {
   searchParams: Promise<{ id?: string; period?: string }>;
 }) {
-  const manager = await currentManager();
-  if (!manager) redirect("/login");
+  const manager = await requireManager();
 
   const params = await searchParams;
   const period = params.period ?? "30";

@@ -1,14 +1,12 @@
 import Link from "next/link";
-import { redirect } from "next/navigation";
-import { currentManager, signOut } from "@/lib/db/managers";
+import { requireManager, signOut } from "@/lib/db/managers";
 import { listShifts } from "@/lib/db/shifts";
 import { dayLabel, moneyOrDash as money } from "@/lib/format";
 
 export const dynamic = "force-dynamic";
 
 export default async function Home() {
-  const manager = await currentManager();
-  if (!manager) redirect("/login");
+  const manager = await requireManager();
 
   const shifts = await listShifts();
 
@@ -31,6 +29,16 @@ export default async function Home() {
         <div className="flex items-baseline gap-5">
           <Link href="/people" className="text-sand underline">
             Сотрудники
+          </Link>
+          {/* Доступом распоряжается только владелец: право завести человека —
+              это право впустить его к деньгам. Решение владельца 14.08.2026. */}
+          {manager.role === "owner" && (
+            <Link href="/access" className="text-sand underline">
+              Доступ
+            </Link>
+          )}
+          <Link href="/password" className="text-fg-muted underline">
+            пароль
           </Link>
           <form action={signOut}>
             <button className="text-fg-muted underline">выйти</button>

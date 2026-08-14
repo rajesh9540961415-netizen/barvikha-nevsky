@@ -26,10 +26,12 @@
       "runtimeExecutable": "npx",
       "runtimeArgs": [
         "next",
-        "dev"
+        "dev",
+        "--port",
+        "3101"
       ],
       "cwd": "/Users/user/Documents/Невский/manager-app",
-      "autoPort": true
+      "port": 3101
     }
   ]
 }

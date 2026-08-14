@@ -5,6 +5,7 @@
   "scripts": {
     "predev": "npm run copies:check",
     "dev": "next dev --port 3100",
+    "dev:check": "next dev --port 3101",
     "prebuild": "npm run copies:check",
     "build": "next build",
     "start": "next start",
