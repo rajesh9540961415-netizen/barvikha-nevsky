@@ -1,4 +1,10 @@
-import { cancelEntry, insertEntries, writeShift } from "./db/actions";
+import {
+  cancelEntry,
+  correctEntries,
+  insertEntries,
+  writeShift,
+} from "./db/actions";
+import { eventKey } from "./events";
 import { readLocal, hasLocalStore, writeLocal } from "./localStore";
 import type { Entry, Shift } from "./types";
 
@@ -26,7 +32,22 @@ import type { Entry, Shift } from "./types";
 export type QueuedOp =
   | { type: "save"; entries: Entry[] }
   | { type: "cancel"; id: string; operatorId: number; operatorName: string }
-  | { type: "shift"; businessDay: string; shift: Shift };
+  | { type: "shift"; businessDay: string; shift: Shift }
+  /**
+   * Правка записи: старое событие отменяется, новое встаёт на его место.
+   *
+   * Одним пунктом очереди, а не отменой и записью подряд: разорванная
+   * пополам правка оставила бы смену либо без этих денег, либо с ними дважды.
+   */
+  | {
+      type: "correct";
+      businessDay: string;
+      /** Что заменяем: метка группы у поделённых, номер записи у обычной. */
+      key: string;
+      entries: Entry[];
+      operatorId: number;
+      operatorName: string;
+    };
 
 export type QueueItem = {
   /** Свой номер — чтобы отличать пункты очереди друг от друга. */
@@ -123,7 +144,12 @@ function looksLikeItem(item: unknown): item is QueueItem {
   if (!item || typeof item !== "object") return false;
   const op = (item as QueueItem).op;
   if (!op || typeof op !== "object") return false;
-  return op.type === "save" || op.type === "cancel" || op.type === "shift";
+  return (
+    op.type === "save" ||
+    op.type === "cancel" ||
+    op.type === "shift" ||
+    op.type === "correct"
+  );
 }
 
 function persist(): void {
@@ -208,6 +234,18 @@ async function send(op: QueuedOp): Promise<void> {
       return cancelEntry(op.id, op.operatorId, op.operatorName);
     case "shift":
       return writeShift(op.businessDay, op.shift);
+    case "correct":
+      // Ответ «не применилось» — не сбой отправки: событие успели поправить
+      // раньше нас. Пункт уходит из очереди, иначе она встала бы навсегда
+      // и вместе с правкой перестали бы уходить следующие чаевые.
+      await correctEntries({
+        businessDay: op.businessDay,
+        key: op.key,
+        fresh: op.entries,
+        operatorId: op.operatorId,
+        operatorName: op.operatorName,
+      });
+      return;
   }
 }
 
@@ -327,7 +365,9 @@ export async function enqueueAndSend(op: QueuedOp): Promise<void> {
 export function pendingEntries(items: QueueItem[], day: string): Entry[] {
   const rows: Entry[] = [];
   for (const item of items) {
-    if (item.op.type !== "save") continue;
+    // Строки правки — такие же ждущие отправки деньги, как и новая запись:
+    // на экране они уже стоят вместо старых, а в базе их ещё нет.
+    if (item.op.type !== "save" && item.op.type !== "correct") continue;
     for (const entry of item.op.entries) {
       if (entry.businessDay === day) rows.push(entry);
     }
@@ -353,15 +393,22 @@ function plural(n: number, one: string, few: string, many: string): string {
 export function pendingSummary(items: QueueItem[]): string {
   let saves = 0;
   let cancels = 0;
+  let corrections = 0;
   let shifts = 0;
   for (const item of items) {
     if (item.op.type === "save") saves += 1;
     else if (item.op.type === "cancel") cancels += 1;
+    else if (item.op.type === "correct") corrections += 1;
     else shifts += 1;
   }
   const parts: string[] = [];
   if (saves > 0) {
     parts.push(`${saves} ${plural(saves, "запись", "записи", "записей")}`);
+  }
+  if (corrections > 0) {
+    parts.push(
+      `${corrections} ${plural(corrections, "правка", "правки", "правок")}`,
+    );
   }
   if (cancels > 0) {
     parts.push(`${cancels} ${plural(cancels, "отмена", "отмены", "отмен")}`);
@@ -379,11 +426,16 @@ export function pendingSummary(items: QueueItem[]): string {
  *   — записи из базы главнее: если запись уже доехала, берём её версию;
  *   — ждущие отправки добавляются, если такой ещё нет;
  *   — отмены из очереди убирают запись из списка, а поделённые — всей группой,
- *     как это делает база.
+ *     как это делает база;
+ *   — правка убирает старое событие целиком и ставит на его место новое.
  *
  * Совпадение ищем по номеру записи. Он придуман браузером до отправки
  * и не меняется, поэтому запись, только что доехавшая до базы, не может
  * посчитаться дважды.
+ *
+ * Очередь разбираем **по порядку** — в том же, в каком она уйдёт в базу.
+ * Иначе правка, сделанная до отмены, могла бы вернуть отменённое на экран,
+ * и человек увидел бы не то, что окажется в базе через минуту.
  */
 export function mergeEntries(
   fromDb: Entry[],
@@ -394,20 +446,36 @@ export function mergeEntries(
   for (const entry of fromDb) {
     if (entry.businessDay === day) byId.set(entry.id, entry);
   }
-  for (const entry of pendingEntries(items, day)) {
-    if (!byId.has(entry.id)) byId.set(entry.id, entry);
-  }
+
+  const add = (entries: Entry[]) => {
+    for (const entry of entries) {
+      if (entry.businessDay === day && !byId.has(entry.id)) {
+        byId.set(entry.id, entry);
+      }
+    }
+  };
 
   for (const item of items) {
-    if (item.op.type !== "cancel") continue;
-    const target = byId.get(item.op.id);
-    if (!target) continue;
-    if (target.splitGroup) {
-      for (const [id, entry] of byId) {
-        if (entry.splitGroup === target.splitGroup) byId.delete(id);
+    const op = item.op;
+    if (op.type === "save") {
+      add(op.entries);
+    } else if (op.type === "cancel") {
+      const target = byId.get(op.id);
+      if (!target) continue;
+      if (target.splitGroup) {
+        for (const [id, entry] of byId) {
+          if (entry.splitGroup === target.splitGroup) byId.delete(id);
+        }
+      } else {
+        byId.delete(op.id);
       }
-    } else {
-      byId.delete(item.op.id);
+    } else if (op.type === "correct") {
+      if (op.businessDay !== day) continue;
+      // Старое событие уходит целиком — вместе с долями, если чаевые делили.
+      for (const [id, entry] of byId) {
+        if (eventKey(entry) === op.key) byId.delete(id);
+      }
+      add(op.entries);
     }
   }
 

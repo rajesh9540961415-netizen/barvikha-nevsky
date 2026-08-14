@@ -35,6 +35,8 @@ type EntryRow = {
   split_group: string | null;
   gross: string | null;
   commission_rate: string;
+  corrects: string | null;
+  deleted_note: string | null;
 };
 
 function toEntry(r: EntryRow): Entry {
@@ -60,7 +62,11 @@ function toEntry(r: EntryRow): Entry {
     createdAt: r.created_at.toISOString(),
     deletedAt: r.deleted_at ? r.deleted_at.toISOString() : null,
     deletedByName: r.deleted_by_name,
+    deletedNote: r.deleted_note,
     splitGroup: r.split_group,
+    // Что заменила эта запись. История по этому полю отличает «поправлено»
+    // от «отменено»: в базе оба случая выглядят одинаково — отменённой строкой.
+    corrects: r.corrects,
   };
 }
 
@@ -161,6 +167,84 @@ export async function cancelEntry(
             )
        )
   `;
+}
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Правка записи смены: старое событие заменяется новым.
+ *
+ * Одной транзакцией: старые строки помечаются отменёнными, новые встают
+ * на их место со ссылкой `corrects`. Если разорвать, смена на секунду
+ * окажется либо без этих денег вовсе, либо с ними дважды — а в эту секунду
+ * кто-нибудь откроет итоги.
+ *
+ * Запись не переписывается на месте намеренно: это денежный документ,
+ * и через год должно быть видно не только «сколько», но и «что было
+ * до того, как поправили, кто поправил и когда».
+ *
+ * Возвращает, применилась ли правка. `false` — событие успели отменить
+ * или поправить раньше (например, управляющий из бэк-офиса), и наши строки
+ * НЕ вставлены: иначе в смене оказались бы две копии одних денег.
+ *
+ * ⚠️ Ошибку здесь не бросаем. Очередь отправки идёт строго по порядку
+ * и на ошибке встаёт целиком — ошибка, которая не пройдёт никогда, заперла бы
+ * очередь, и вместе с правкой перестали бы уходить все следующие чаевые.
+ * Поэтому отказ — это обычный ответ, а не сбой отправки.
+ */
+export async function correctEntries(input: {
+  businessDay: string;
+  /** Что заменяем: метка группы у поделённых, номер записи у обычной. */
+  key: string;
+  fresh: Entry[];
+  operatorId: number;
+  operatorName: string;
+}): Promise<{ applied: boolean }> {
+  if (!UUID.test(input.key) || input.fresh.length === 0) {
+    return { applied: false };
+  }
+  const sql = db();
+
+  return sql.begin(async (tx) => {
+    const gone = await tx<{ id: string }[]>`
+      update entries
+         set deleted_at = now(),
+             deleted_by_id = ${input.operatorId},
+             deleted_by_name = ${input.operatorName}
+       where business_day = ${input.businessDay}
+         and deleted_at is null
+         and coalesce(split_group, id) = ${input.key}::uuid
+      returning id
+    `;
+
+    if (gone.length === 0) {
+      // Отменять было нечего. Либо это повтор отправки — тогда наши строки
+      // уже лежат в базе и делать нечего, — либо событие поправил кто-то
+      // другой, и тогда вставлять наши строки нельзя ни в коем случае.
+      const [mine] = await tx<{ id: string }[]>`
+        select id from entries where id = ${input.fresh[0].id}
+      `;
+      return { applied: Boolean(mine) };
+    }
+
+    for (const e of input.fresh) {
+      await tx`
+        insert into entries (
+          id, business_day, hall_id, hall_title, table_id, table_title,
+          waiter_id, waiter_name, amount, kind, operator_id, operator_name,
+          created_at, split_group, gross, commission_rate, corrects, source
+        ) values (
+          ${e.id}, ${e.businessDay}, ${e.hallId}, ${e.hallTitle},
+          ${e.tableId}, ${e.tableTitle}, ${e.waiterId}, ${e.waiterName},
+          ${e.amount}, ${e.kind}, ${e.operatorId}, ${e.operatorName},
+          ${e.createdAt}, ${e.splitGroup ?? null}, ${e.gross},
+          ${e.commissionRate}, ${input.key}::uuid, 'shift'
+        )
+        on conflict (id) do nothing
+      `;
+    }
+    return { applied: true };
+  });
 }
 
 type QrTipRow = {

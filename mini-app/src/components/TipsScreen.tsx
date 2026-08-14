@@ -19,6 +19,8 @@ import type { Shift } from "@/lib/crew";
 import { EMPTY_SHIFT, getLastShift, getShift, isReady, setShift } from "@/lib/crew";
 import { getManualPeople, getQuickRestoPeople } from "@/lib/people";
 import ShiftHistory from "@/components/ShiftHistory";
+import EntryEditor from "@/components/EntryEditor";
+import { buildEvents } from "@/lib/events";
 import QrTipScreen from "@/components/QrTipScreen";
 import StaffScreen from "@/components/StaffScreen";
 import { COMMISSION_RATE, netAmount, shares, splitShift } from "@/lib/split";
@@ -36,6 +38,7 @@ import { readSnapshot, saveSnapshot } from "@/lib/snapshot";
 import PendingBar from "@/components/PendingBar";
 import {
   cancel,
+  correct,
   distributeQr,
   exportMark,
   listByDay,
@@ -164,6 +167,11 @@ export default function TipsScreen() {
   const [showSummary, setShowSummary] = useState(false);
   const [showStaff, setShowStaff] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
+  /**
+   * Запись, открытая на правку: ключ события — метка группы у поделённых
+   * чаевых, номер записи у обычной. Открывается из истории.
+   */
+  const [editing, setEditing] = useState<string | null>(null);
   const [toast, setToast] = useState<Toast | null>(null);
 
   // Очередь отправки: всё, что сделано, но ещё не доехало до базы.
@@ -318,6 +326,18 @@ export default function TipsScreen() {
       ),
     [fromDb, queue.items, day, cancelledHere],
   );
+
+  /**
+   * Событие, открытое на правку.
+   *
+   * Собирается из живых записей смены, а не из истории: править можно только
+   * то, что сейчас в деньгах. Если запись успели отменить с другого телефона,
+   * здесь окажется пусто — и экран правки просто не откроется.
+   */
+  const editingEvent = useMemo(() => {
+    if (editing === null) return null;
+    return buildEvents(entries).find((e) => e.key === editing) ?? null;
+  }, [editing, entries]);
 
   /** Записи, которые ещё ждут отправки — их помечает история. */
   const waitingEntries = useMemo(
@@ -697,36 +717,87 @@ export default function TipsScreen() {
     }
   }
 
+  /**
+   * Отменяет событие целиком: и обычную запись, и обе доли поделённых чаевых.
+   *
+   * Запись не стирается, а помечается отменённой — след остаётся в истории.
+   * Кто отменил, тоже пишем: в смене работают двое. Без сети отмена ложится
+   * в очередь следом за самой записью и уйдёт после неё — порядок строгий.
+   *
+   * Ошибку наружу отдаём: кто позвал, тот и решает, что сказать. С главного
+   * экрана это всплывающее сообщение, с экрана правки — строка над кнопками.
+   */
+  async function cancelEvent(group: Entry[]) {
+    if (!operator || group.length === 0) return;
+    const sum = group.reduce((acc, e) => acc + e.amount, 0);
+    await cancel(group[0].id, operator.id, operator.name);
+    // Прячем с экрана сразу — и держим спрятанным до конца сеанса.
+    setCancelledHere((prev) => {
+      const next = new Set(prev);
+      for (const e of group) next.add(e.id);
+      return next;
+    });
+    void refresh();
+    setToast({
+      // Показываем сумму события, а не долю одного официанта, иначе отмена
+      // выглядела бы как половинчатая.
+      text: `Отменено: ${group[0].tableTitle ?? "по QR"} · ${formatMoney(sum)}`,
+      bad: false,
+    });
+  }
+
   async function undoLast() {
     const last = entries[0];
-    if (!last || !operator) return;
+    if (!last) return;
     // Поделённые чаевые в списке лежат отдельными строками, но событие было
-    // одно — и отменяется оно целиком. В сообщении показываем сумму гостя,
-    // а не долю одного официанта, иначе отмена выглядела бы как половинчатая.
+    // одно — и отменяется оно целиком.
     const group = last.splitGroup
       ? entries.filter((e) => e.splitGroup === last.splitGroup)
       : [last];
-    const sum = group.reduce((acc, e) => acc + e.amount, 0);
     try {
-      // Запись не стирается, а помечается отменённой — след остаётся
-      // в истории. Кто отменил, тоже пишем: в смене работают двое.
-      // Без сети отмена ложится в очередь следом за самой записью
-      // и уйдёт после неё — порядок в очереди строгий.
-      await cancel(last.id, operator.id, operator.name);
-      // Прячем с экрана сразу — и держим спрятанным до конца сеанса.
-      setCancelledHere((prev) => {
-        const next = new Set(prev);
-        for (const e of group) next.add(e.id);
-        return next;
-      });
-      void refresh();
-      setToast({
-        text: `Отменено: ${last.tableTitle ?? "по QR"} · ${formatMoney(sum)}`,
-        bad: false,
-      });
+      await cancelEvent(group);
     } catch {
       setToast({ text: "Не отменилось — проверьте связь", bad: true });
     }
+  }
+
+  /**
+   * Сохраняет правку записи текущей смены.
+   *
+   * Строки уже собраны экраном правки — там же, где считался предпросмотр
+   * «было / стало»: показать одно, а записать другое денежный экран не должен.
+   * Здесь остаётся отправить их и убрать с экрана то, что они заменяют.
+   */
+  async function saveCorrection(rows: Entry[]) {
+    if (!operator || !editingEvent || rows.length === 0) return;
+    const replaced = editingEvent.rows.map((e) => e.id);
+    await correct({
+      businessDay: day,
+      key: editingEvent.key,
+      entries: rows,
+      operatorId: operator.id,
+      operatorName: operator.name,
+    });
+    // Новые строки показываем сразу, старые прячем до конца сеанса — тем же
+    // способом, что и при отмене. Иначе, когда очередь отдаст правку, а
+    // перечитать базу не выйдет, на экране вернулось бы старое.
+    showLocally(rows);
+    setCancelledHere((prev) => {
+      const next = new Set(prev);
+      for (const id of replaced) next.add(id);
+      return next;
+    });
+    void refresh();
+    setEditing(null);
+    const gross = rows.reduce((sum, e) => sum + (e.gross ?? e.amount), 0);
+    const who = rows.map((e) => e.waiterName).join(" + ");
+    const waiting = queueState().items.length > 0;
+    setToast({
+      text:
+        `Поправлено: ${rows[0].tableTitle ?? "по QR"} · ${formatMoney(gross)} · ${who}` +
+        (waiting ? " · ждёт отправки" : ""),
+      bad: false,
+    });
   }
 
   function renderScreen() {
@@ -783,6 +854,28 @@ export default function TipsScreen() {
       );
     }
 
+    // Правка открывается поверх истории: закрыв её, возвращаемся туда,
+    // откуда пришли. Если событие исчезло — отменили со второго телефона —
+    // экран правки не откроется, и человек увидит историю как есть.
+    if (editingEvent) {
+      return (
+        <EntryEditor
+          event={editingEvent}
+          live={entries}
+          crew={crew}
+          operator={operator}
+          halls={halls}
+          day={day}
+          onClose={() => setEditing(null)}
+          onSave={saveCorrection}
+          onDrop={async () => {
+            await cancelEvent(editingEvent.rows);
+            setEditing(null);
+          }}
+        />
+      );
+    }
+
     if (showHistory) {
       return (
         <ShiftHistory
@@ -793,6 +886,7 @@ export default function TipsScreen() {
           cached={fromDb}
           cancelledHere={cancelledHere}
           onClose={() => setShowHistory(false)}
+          onEdit={setEditing}
         />
       );
     }

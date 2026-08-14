@@ -104,3 +104,26 @@ export async function cancel(
 ): Promise<void> {
   return enqueueAndSend({ type: "cancel", id, operatorId, operatorName });
 }
+
+/**
+ * Правка записи текущей смены.
+ *
+ * Не переписывает строку: старое событие помечается отменённым, новое встаёт
+ * рядом со ссылкой на него. В базе это одна транзакция, в очереди — один пункт:
+ * разорванная пополам правка оставила бы смену либо без этих денег, либо
+ * с ними дважды.
+ *
+ * Поделённые чаевые правятся группой целиком и делятся заново. Иначе, поправив
+ * одну долю с 1250 на 1500, получишь 2750 там, где гость оставил 2500, —
+ * и это расхождение никто никогда не заметит.
+ */
+export async function correct(input: {
+  businessDay: string;
+  /** Что заменяем: метка группы у поделённых, номер записи у обычной. */
+  key: string;
+  entries: Entry[];
+  operatorId: number;
+  operatorName: string;
+}): Promise<void> {
+  return enqueueAndSend({ type: "correct", ...input });
+}

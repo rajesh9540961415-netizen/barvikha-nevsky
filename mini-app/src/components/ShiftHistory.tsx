@@ -2,15 +2,20 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { formatBusinessDay, formatMoney } from "@/lib/businessDay";
+import { buildEvents } from "@/lib/events";
 import { historyByDay } from "@/lib/storage";
 import type { Entry, Kind } from "@/lib/types";
 
 /**
- * История записей за смену — для самопроверки.
+ * История записей за смену — для самопроверки и для правки.
  *
  * Здесь видно то, чего нет больше нигде: когда именно внесли, кто внёс
  * и что отменяли. Отменённые записи показываются перечёркнутыми: они
  * не входят ни в суммы, ни в отчёт, но след о них остаётся.
+ *
+ * Нажатие на запись открывает правку — но только на записи **текущей**
+ * смены. Прошлые дни отсюда листаются и читаются, а правит их бэк-офис:
+ * смена отвечает за свою ночь, управляющий состав — за любой период.
  *
  * Дни листаются стрелками — чтобы посмотреть прошлую смену, не нужно
  * ничего запускать и ни к кому обращаться.
@@ -48,6 +53,14 @@ type Props = {
    */
   cancelledHere: ReadonlySet<string>;
   onClose: () => void;
+  /**
+   * Открыть запись на правку. Ключ события — метка группы у поделённых
+   * чаевых, номер записи у обычной.
+   *
+   * Зовётся только для живых записей текущей смены: прошлые дни
+   * и отменённое отсюда не правятся.
+   */
+  onEdit: (key: string) => void;
 };
 
 /** Сдвиг дня на ±1 без часовых поясов: ключ — просто ГГГГ-ММ-ДД. */
@@ -70,6 +83,7 @@ export default function ShiftHistory({
   cached,
   cancelledHere,
   onClose,
+  onEdit,
 }: Props) {
   const [shown, setShown] = useState(day);
   const [fromDb, setFromDb] = useState<Entry[]>([]);
@@ -142,38 +156,24 @@ export default function ShiftHistory({
    * При отборе по официанту от группы остаётся одна строка: тогда видна только
    * его доля, и подпись честно говорит, что это доля.
    */
-  const events = useMemo(() => {
-    const list: Entry[][] = [];
-    const byGroup = new Map<string, Entry[]>();
-    for (const r of visible) {
-      if (!r.splitGroup) {
-        list.push([r]);
-        continue;
-      }
-      const found = byGroup.get(r.splitGroup);
-      if (found) {
-        found.push(r);
-        continue;
-      }
-      const created = [r];
-      byGroup.set(r.splitGroup, created);
-      list.push(created);
-    }
-    return list;
-  }, [visible]);
+  const events = useMemo(() => buildEvents(visible), [visible]);
 
   /** Отменено — в базе или пока только на этом телефоне. */
-  const isGone = (e: Entry) => Boolean(e.deletedAt) || cancelledHere.has(e.id);
+  const isGone = (ev: (typeof events)[number]) =>
+    Boolean(ev.deletedAt) || cancelledHere.has(ev.rows[0].id);
 
   // Считаем события, а не строки: поделённые чаевые — это одна запись
   // за вечер, а не две, и в шапке должно стоять то же число, которое
   // администратор видит на главном экране.
-  const alive = events.filter((ev) => !isGone(ev[0]));
-  const cancelled = events.length - alive.length;
-  const total = alive.reduce(
-    (sum, ev) => sum + ev.reduce((acc, r) => acc + r.amount, 0),
-    0,
-  );
+  const alive = events.filter((ev) => !isGone(ev));
+  const gone = events.filter((ev) => isGone(ev));
+  // «Отменено» и «поправлено» — разные вещи, и в шапке их складывать нельзя:
+  // отменённые деньги из смены ушли, поправленные остались в новом виде.
+  const replaced = gone.filter((ev) => ev.replacedBy !== null).length;
+  const cancelled = gone.length - replaced;
+  const total = alive.reduce((sum, ev) => sum + ev.amount, 0);
+  /** Записи текущей смены правятся, прошлые — нет. */
+  const editable = shown === day;
 
   function goto(delta: number) {
     setWaiter(null);
@@ -197,6 +197,7 @@ export default function ShiftHistory({
             {formatBusinessDay(shown)} · {alive.length}{" "}
             {plural(alive.length, "запись", "записи", "записей")} ·{" "}
             {formatMoney(total)}
+            {replaced > 0 && ` · поправлено ${replaced}`}
             {cancelled > 0 && ` · отменено ${cancelled}`}
           </div>
         </div>
@@ -231,6 +232,17 @@ export default function ShiftHistory({
             </Chip>
           ))}
         </div>
+      )}
+
+      {/* Про правку говорим подписью, а не оставляем догадываться. Именно
+          на этом споткнулись при проверке 14.08.2026: нажимали на запись,
+          ничего не происходило, и понять почему было неоткуда. */}
+      {events.length > 0 && (
+        <p className="border-b border-line px-4 py-2 text-xs text-fg-muted">
+          {editable
+            ? "Нажмите на запись, чтобы поправить или отменить её."
+            : "Прошлая смена: записи только видны. Поправить их можно в бэк-офисе."}
+        </p>
       )}
 
       {loading === "loading" && (
@@ -268,16 +280,19 @@ export default function ShiftHistory({
       {(loading === "ready" || offlineList) && events.length > 0 && (
         <ul className="divide-y divide-line pb-8">
           {events.map((ev) => {
-            const head = ev[0];
-            const sum = ev.reduce((acc, r) => acc + r.amount, 0);
+            const head = ev.rows[0];
+            const sum = ev.amount;
             // Что оставил гость — до комиссии Сбера. Совпадает с суммой везде,
             // кроме терминала.
-            const grossSum = ev.reduce((acc, r) => acc + (r.gross ?? r.amount), 0);
+            const grossSum = ev.gross;
             const fee = Math.round((head.commissionRate ?? 0) * 100);
-            const split = ev.length > 1;
-            const gone = isGone(head);
-            return (
-              <li key={head.splitGroup ?? head.id} className="px-4 py-2.5">
+            const split = ev.rows.length > 1;
+            const gone = isGone(ev);
+            // Нажимается только живая запись текущей смены. Отменённую править
+            // нечего: её уже нет в деньгах смены, а след должен остаться как есть.
+            const canEdit = editable && !gone;
+            const body = (
+              <>
                 <div className="flex items-baseline justify-between gap-3">
                   <span
                     className={`text-sm ${gone ? "text-fg-muted line-through" : "text-fg"}`}
@@ -288,7 +303,7 @@ export default function ShiftHistory({
                     {head.tableTitle
                       ? `${head.hallTitle} · ${head.tableTitle}`
                       : "по QR"}{" "}
-                    · {ev.map((r) => r.waiterName).join(" + ")}
+                    · {ev.waiters.map((w) => w.name).join(" + ")}
                   </span>
                   <span
                     className={`shrink-0 tabular-nums ${
@@ -323,16 +338,39 @@ export default function ShiftHistory({
                 {split && (
                   <div className="text-xs text-fg-muted">
                     поровну:{" "}
-                    {ev
+                    {ev.rows
                       .map((r) => `${r.waiterName} — ${formatMoney(r.amount)}`)
                       .join(" · ")}
                   </div>
                 )}
+                {/* «Поправлено» и «отменено» в базе выглядят одинаково —
+                    отменённой строкой. Разница в том, встало ли на её место
+                    что-то новое, и на экране это разные вещи. */}
                 {head.deletedAt && (
                   <div className="text-xs text-alert">
-                    отменено в {clock(head.deletedAt)}
+                    {ev.replacedBy ? "поправлено" : "отменено"} в{" "}
+                    {clock(head.deletedAt)}
                     {head.deletedByName ? ` · ${head.deletedByName}` : ""}
                   </div>
+                )}
+                {/* Запись-замена. Что было до правки, видно рядом
+                    перечёркнутой строкой — она никуда не делась. */}
+                {ev.corrects && !gone && (
+                  <div className="text-xs text-fg-muted">поправлено</div>
+                )}
+              </>
+            );
+            return (
+              <li key={ev.key}>
+                {canEdit ? (
+                  <button
+                    onClick={() => onEdit(ev.key)}
+                    className="w-full px-4 py-2.5 text-left active:bg-surface"
+                  >
+                    {body}
+                  </button>
+                ) : (
+                  <div className="px-4 py-2.5">{body}</div>
                 )}
               </li>
             );
