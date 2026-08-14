@@ -1,8 +1,11 @@
 "use server";
 
+import { revalidatePath } from "next/cache";
+
 import quickResto from "@/data/employees.json";
 import { splitOffice, type OfficeEntry } from "../office";
 import type { Employee, Shift } from "../types";
+import { currentManager } from "./managers";
 import { db } from "./sql";
 
 /**
@@ -354,4 +357,101 @@ export async function readPerson(
 
 function round(value: number): number {
   return Math.round(value * 100) / 100;
+}
+
+/* ─── Переименование вписанного руками ───────────────────────────────────
+ *
+ * Зачем. 14.08.2026 владелец заметила несоответствие: в отчёте стоят
+ * «Настя С.», «Алексей Г.», «Лиза П.». Приложение ничего не сокращает —
+ * оно записывает ровно то, что администратор набрал в зале, а набирал он
+ * коротко. Людей этих нет в Quick Resto, поэтому иначе как руками их
+ * и не внести.
+ *
+ * Почему правится и прошлое тоже. Имя человека лежит в двух местах:
+ * в `manual_people` — на будущее, и копией в каждой записи о деньгах
+ * (`entries.waiter_name`). Поправить одно `manual_people` мало: прошлые
+ * записи остались бы со старым именем, и один человек навсегда встал бы
+ * в отчёте двумя строками. Ровно это несоответствие и заметили.
+ *
+ * ⚠️ Деньги при этом не трогаются вовсе. Меняется подпись, а номер человека
+ * (`waiter_id`) и суммы остаются те же — так что это не правка денег,
+ * а исправление имени. Обе таблицы правятся одной сделкой: разойдись они
+ * посередине, человек оказался бы под двумя именами сразу.
+ *
+ * 💡 Заодно это заменяет заплатку в отчёте: `СКЛЕЙКА` в `report_build.py`
+ * склеивала «Лиза Н.» с «Елизаветой Недорезовой» на бумаге. Один способ
+ * вместо двух — переименовать по-настоящему.
+ */
+export async function renameManual(
+  _previous: { ok: boolean; текст: string } | null,
+  form: FormData,
+): Promise<{ ok: boolean; текст: string }> {
+  const manager = await currentManager();
+  if (!manager) return { ok: false, текст: "Войдите заново" };
+  // Имя человека — это то, под чем ему начислены деньги. Правит владелец.
+  if (manager.role !== "owner") {
+    return { ok: false, текст: "Переименовывать может только владелец" };
+  }
+
+  const id = Number(form.get("id"));
+  const имя = String(form.get("name") ?? "").trim().replace(/\s+/g, " ");
+
+  // Номера вписанных руками отрицательны — так они отличаются от кассовых.
+  // Проверка не формальность: положительный номер означал бы попытку
+  // переименовать человека из Quick Resto, а он приезжает из кассы
+  // и был бы переписан обратно при следующей выгрузке.
+  if (!Number.isInteger(id) || id >= 0) {
+    return { ok: false, текст: "Переименовать можно только вписанного руками" };
+  }
+  if (имя.length < 2) return { ok: false, текст: "Слишком короткое имя" };
+
+  const sql = db();
+  try {
+    const итог = await sql.begin(async (tx) => {
+      const занято = await tx`
+        select 1 from manual_people
+         where lower(name) = lower(${имя}) and id <> ${id} limit 1
+      `;
+      if (занято.length > 0) return { ok: false, текст: `«${имя}» уже есть в списке` };
+
+      // Старое имя читаем отдельной строкой, до обновления. Достать его
+      // подзапросом внутри `returning` можно, но это работает по тонкому
+      // правилу о снимке данных — а такое ломается молча и не там, где
+      // писалось. В деньгах людей хитрости не нужны.
+      const прежние = await tx<{ name: string }[]>`
+        select name from manual_people where id = ${id} for update
+      `;
+      if (прежние.length === 0) return { ok: false, текст: "Человек не найден" };
+      const было = прежние[0].name;
+
+      await tx`
+        update manual_people set name = ${имя}, short = ${имя} where id = ${id}
+      `;
+
+      const записи = await tx<{ id: string }[]>`
+        update entries set waiter_name = ${имя}
+         where waiter_id = ${id} returning id
+      `;
+      return {
+        ok: true,
+        текст:
+          `«${было}» теперь «${имя}». ` +
+          `Поправлено записей о деньгах: ${записи.length}. Суммы не тронуты.`,
+      };
+    });
+    if (итог.ok) revalidatePath("/people");
+    return итог;
+  } catch (e) {
+    const err = e as { message?: string };
+    return { ok: false, текст: `База не ответила: ${err.message ?? "неизвестно"}` };
+  }
+}
+
+/** Кого можно переименовать: только вписанные руками, они же с номером ниже нуля. */
+export async function listManualPeople(): Promise<Employee[]> {
+  const sql = db();
+  const rows = await sql<{ id: number; name: string; short: string }[]>`
+    select id, name, short from manual_people order by name
+  `;
+  return rows;
 }

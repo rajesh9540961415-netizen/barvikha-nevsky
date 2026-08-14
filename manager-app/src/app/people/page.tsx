@@ -2,7 +2,8 @@ import Link from "next/link";
 import { Suspense } from "react";
 import PersonPicker from "@/components/PersonPicker";
 import PersonStatsView from "@/components/PersonStats";
-import { listPeople, readPerson } from "@/lib/db/people";
+import ManualPeople from "./ManualPeople";
+import { listPeople, listManualPeople, readPerson } from "@/lib/db/people";
 import { requireManager, signOut } from "@/lib/db/managers";
 import { dayLabel } from "@/lib/format";
 
@@ -56,6 +57,9 @@ export default async function PeoplePage({
   const { from, to } = range(period);
 
   const people = await listPeople();
+  // Переименовывать может только владелец, поэтому и список ему одному:
+  // показать кнопку тому, кто не может ею воспользоваться, — обман.
+  const manual = manager.role === "owner" ? await listManualPeople() : [];
   const id = params.id ? Number(params.id) : null;
   const stats = id !== null ? await readPerson(id, from, to) : null;
 
@@ -98,6 +102,8 @@ export default async function PeoplePage({
       ) : (
         <PersonStatsView stats={stats} />
       )}
+
+      <ManualPeople people={manual} />
     </main>
   );
 }
