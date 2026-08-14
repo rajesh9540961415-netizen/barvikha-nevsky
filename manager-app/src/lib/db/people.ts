@@ -447,11 +447,43 @@ export async function renameManual(
   }
 }
 
-/** Кого можно переименовать: только вписанные руками, они же с номером ниже нуля. */
-export async function listManualPeople(): Promise<Employee[]> {
+/**
+ * Кого можно переименовать: вписанные руками, они же с номером ниже нуля.
+ *
+ * Вместе с именем отдаём, сколько смен за человеком и когда последняя.
+ * Это ответ на вопрос «насколько это срочно»: имя, за которым восемь смен,
+ * чинят иначе, чем имя, мелькнувшее однажды в июле.
+ *
+ * 💡 Денег здесь намеренно нет. Правила их подсчёта живут в `split.ts`
+ * и уже лежат копиями в двух приложениях; третья копия, посчитанная
+ * «на глазок» ради строчки в списке, разошлась бы с ними молча. Поэтому
+ * имя — ссылка на карточку человека, где деньги считаются как везде.
+ */
+export type ManualPerson = Employee & {
+  /** Сколько разных смен за человеком. */
+  shifts: number;
+  /** Последняя смена, в ключах бизнес-дня. null — записей нет вовсе. */
+  lastDay: string | null;
+};
+
+export async function listManualPeople(): Promise<ManualPerson[]> {
   const sql = db();
-  const rows = await sql<{ id: number; name: string; short: string }[]>`
-    select id, name, short from manual_people order by name
+  const rows = await sql<
+    { id: number; name: string; short: string; shifts: string; last_day: string | null }[]
+  >`
+    select p.id, p.name, p.short,
+           (select count(distinct e.business_day) from entries e
+             where e.waiter_id = p.id and e.deleted_at is null) as shifts,
+           (select max(e.business_day) from entries e
+             where e.waiter_id = p.id and e.deleted_at is null) as last_day
+      from manual_people p
+     order by p.name
   `;
-  return rows;
+  return rows.map((r) => ({
+    id: r.id,
+    name: r.name,
+    short: r.short,
+    shifts: Number(r.shifts),
+    lastDay: r.last_day,
+  }));
 }
