@@ -219,16 +219,36 @@ export async function listPendingQrTips(): Promise<QrTip[]> {
 export async function qrTipsState(): Promise<{
   sinceId: number | null;
   newestAt: string | null;
+  сколько: number;
+  самыйМаленькийНомер: number | null;
 }> {
   const sql = db();
-  const [строка] = await sql<{ max_id: string | null; max_at: Date | null }[]>`
-    select max(message_id) as max_id, max(received_at) as max_at from qr_tips
+  const [строка] = await sql<
+    {
+      max_id: string | null;
+      min_id: string | null;
+      max_at: Date | null;
+      сколько: string;
+    }[]
+  >`
+    select max(message_id) as max_id,
+           min(message_id) as min_id,
+           max(received_at) as max_at,
+           count(*)         as "сколько"
+      from qr_tips
   `;
   return {
     // bigint приезжает строкой: обычное число в JavaScript не вместило бы
     // все возможные идентификаторы Telegram без потери точности.
     sinceId: строка?.max_id == null ? null : Number(строка.max_id),
     newestAt: строка?.max_at == null ? null : строка.max_at.toISOString(),
+    // Два поля ниже читателю не нужны, они для разбора. 14.08.2026 выяснилось,
+    // что группу преобразовали в супергруппу и нумерация сообщений началась
+    // заново: у новых поступлений номера меньше, чем у старых. Значит номер
+    // сообщения больше не годится как единственный ключ, и надо знать,
+    // какие номера уже заняты.
+    сколько: Number(строка?.сколько ?? 0),
+    самыйМаленькийНомер: строка?.min_id == null ? null : Number(строка.min_id),
   };
 }
 
