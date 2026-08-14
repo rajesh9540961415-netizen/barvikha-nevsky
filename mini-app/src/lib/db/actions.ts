@@ -322,6 +322,12 @@ export async function qrTipsState(): Promise<{
   newestAt: string | null;
   сколько: number;
   самыйМаленькийНомер: number | null;
+  неразнесённые: {
+    всего: number;
+    сколько: number;
+    /** По бизнес-дням: «2026-08-11» → 1300. */
+    поДням: Record<string, number>;
+  };
 }> {
   const sql = db();
   const [строка] = await sql<
@@ -338,6 +344,34 @@ export async function qrTipsState(): Promise<{
            (select max(received_at) from qr_tips)           as max_at,
            (select count(*) from qr_tips)                   as "сколько"
   `;
+  // Неразнесённые — отдельным запросом и отдельным полем.
+  //
+  // ⚠️ Зачем это здесь. Пока кассир не разнёс поступление, деньги не лежат
+  // ни у кого в записях, и в отчёте их не видно ВОВСЕ. Ноль по QR выглядит
+  // одинаково в двух случаях: «сегодня по QR не платили» и «десять дней
+  // не доезжает». Второй случай в августе 2026 стоил 32 тыс. ₽ и десяти
+  // суток — и заметили его глазами, а не отчётом.
+  //
+  // Поле добавлено к прежнему ответу, а не отдано новым адресом: варшавский
+  // робот спрашивает это же место и читает из ответа только `sinceId`
+  // и `newestAt` через `.get()`. Лишние поля он не замечает.
+  const ожидают = await sql<{ business_day: string; сумма: string; сколько: string }[]>`
+    select business_day, sum(amount) as "сумма", count(*) as "сколько"
+      from qr_tips
+     where distributed_at is null
+     group by business_day
+     order by business_day
+  `;
+  const поДням: Record<string, number> = {};
+  let всего = 0;
+  let штук = 0;
+  for (const о of ожидают) {
+    const сумма = Number(о.сумма);
+    поДням[о.business_day] = сумма;
+    всего += сумма;
+    штук += Number(о.сколько);
+  }
+
   return {
     // bigint приезжает строкой: обычное число в JavaScript не вместило бы
     // все возможные идентификаторы Telegram без потери точности.
@@ -345,6 +379,7 @@ export async function qrTipsState(): Promise<{
     newestAt: строка?.max_at == null ? null : строка.max_at.toISOString(),
     сколько: Number(строка?.сколько ?? 0),
     самыйМаленькийНомер: строка?.min_id == null ? null : Number(строка.min_id),
+    неразнесённые: { всего: Math.round(всего * 100) / 100, сколько: штук, поДням },
   };
 }
 
