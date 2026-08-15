@@ -195,7 +195,7 @@ export async function requireManager(): Promise<Manager> {
 }
 
 /** То же, но пускает только владельца. */
-async function требоватьВладельца(): Promise<Manager> {
+export async function требоватьВладельца(): Promise<Manager> {
   const manager = await requireManager();
   if (manager.role !== "owner") redirect("/");
   return manager;

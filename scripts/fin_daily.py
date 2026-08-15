@@ -67,13 +67,23 @@ def gaps_report():
     if not bal.exists():
         return
     reg = json.loads((DATA / "registry.json").read_text(encoding="utf-8"))
-    names, unconfirmed = {}, set()
+    names, молчать = {}, set()
     for e in reg["entities"]:
         for a in e["accounts"]:
             if a["number"]:
                 names[a["number"]] = (e["short"], a.get("role") or a["type"])
+                # Счёт с неподтверждённым номером: вопрос не к выписке,
+                # а к самому номеру.
                 if a.get("статус") == "требует подтверждения":
-                    unconfirmed.add(a["number"])
+                    молчать.add(a["number"])
+                # Закрытый счёт новых дней не добавит никогда, и «хвост»
+                # по нему будет расти вечно. Это не пропуск, а конец истории.
+                if a.get("закрыт"):
+                    молчать.add(a["number"])
+                # Выписка, которой владелец сознательно не берёт. Требовать её
+                # каждое утро — врать про пропуск там, где решение принято.
+                if a.get("выписка_не_нужна"):
+                    молчать.add(a["number"])
 
     days = defaultdict(set)
     for b in csv.DictReader(bal.open(encoding="utf-8")):
@@ -83,9 +93,9 @@ def gaps_report():
     # Счёт, по которому нет ни одного дня, в разбор ниже не попадёт: у него нет
     # ни первого дня, ни последнего, вычитать не из чего. Пустота при этом
     # выглядит как порядок — поэтому такие счета показываем отдельно.
-    # Счета с неподтверждённым номером сюда не берём: там вопрос не к выписке,
-    # а к самому номеру, и ежедневно напоминать о нём нечестно.
-    empty = sorted(acc for acc in names if acc not in days and acc not in unconfirmed)
+    # Счета из «молчать» сюда не берём: напоминать о них каждое утро нечестно —
+    # там либо вопрос не к выписке, либо решение уже принято.
+    empty = sorted(acc for acc in names if acc not in days and acc not in молчать)
 
     # Дыра бывает двух видов: пропущенный день внутри периода и «хвост» —
     # когда выписку давно не выгружали и данных после какой-то даты просто нет.
@@ -93,6 +103,8 @@ def gaps_report():
     yesterday = date.today() - timedelta(days=1)
     problems, tails = [], []
     for acc, ds in days.items():
+        if acc in молчать:
+            continue
         lo, hi = min(ds), max(ds)
         missing = sorted({lo + timedelta(n) for n in range((hi - lo).days + 1)} - ds)
         if missing:
@@ -199,13 +211,20 @@ def main():
         print("\nДЕНЬГИ НА СЧЕТАХ")
         import json
         reg = json.loads((DATA / "registry.json").read_text(encoding="utf-8"))
-        names = {}
+        names, закрытые = {}, set()
         for e in reg["entities"]:
             for a in e["accounts"]:
                 if a["number"]:
                     names[a["number"]] = (e["short"], a["type"], a.get("role", ""))
+                    if a.get("закрыт"):
+                        закрытые.add(a["number"])
         total_oper = 0.0
         for num, b in sorted(last.items()):
+            # Остаток закрытого счёта — история, а не деньги. Показать его
+            # среди живых значит завысить оборотные средства на сумму,
+            # которой давно нет.
+            if num in закрытые:
+                continue
             short, typ, role = names.get(num, ("?", "?", ""))
             tag = "резерв на налоги" if role == "tax_reserve" else typ
             print(f"   {short:<12} {tag:<18} {M(float(b['closing'])):>13}   на {b['date']}")

@@ -30,12 +30,18 @@ export default async function Home() {
           <Link href="/people" className="text-sand underline">
             Сотрудники
           </Link>
-          {/* Доступом распоряжается только владелец: право завести человека —
-              это право впустить его к деньгам. Решение владельца 14.08.2026. */}
+          {/* Финансы и доступ — только владельцу. Обороты, вознаграждение
+              собственнику и право впустить человека к деньгам управляющему
+              не нужны. Решения владельца 14.08 и 15.08.2026. */}
           {manager.role === "owner" && (
-            <Link href="/access" className="text-sand underline">
-              Доступ
-            </Link>
+            <>
+              <Link href="/finance" className="text-sand underline">
+                Финансы
+              </Link>
+              <Link href="/access" className="text-sand underline">
+                Доступ
+              </Link>
+            </>
           )}
           <Link href="/password" className="text-fg-muted underline">
             пароль

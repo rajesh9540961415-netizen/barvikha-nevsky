@@ -298,3 +298,87 @@ create table if not exists shift_changes (
 
 create index if not exists shift_changes_day_idx
   on shift_changes (business_day, at desc);
+
+-- ─────────────────────────────────────────────────────────────────────────
+-- РАЗДЕЛ «ФИНАНСЫ» БЭК-ОФИСА. План: plans/2026-08-15-razdel-finansy.md
+-- ─────────────────────────────────────────────────────────────────────────
+--
+-- ⚠️ Таблицы нужны бэк-офису, а описаны здесь — потому что схема общая
+-- и `npm run copies` копирует её ОТСЮДА в бэк-офис, а не наоборот.
+-- Правка в manager-app/scripts/schema.sql будет молча затёрта при первой же
+-- сборке: `prebuild` вызывает проверку копий. Проверено 15.08.2026, дважды.
+--
+-- Приложение смены этими таблицами не пользуется вовсе, и это нормально:
+-- схема одна на общую базу, а не на приложение.
+--
+-- Форма — ДДС, решение владельца 15.08.2026: расходы стоят по дням, а не
+-- свалены в месяц, и на этом ритме строится план платежей.
+--
+-- Данные приходят снаружи, адресом /api/finance/import бэк-офиса. Иначе
+-- не выходит: выписки приезжают в почту владельца, то есть на её Мак,
+-- а с Мака до этой базы не достучаться — VPN incy перехватывает соединения.
+-- Тот же приём год работает на QR-чаевых, см. api/qr-tips/route.ts.
+
+-- Одна строка = один платёж. Плоско, без вложенности: так же лежат данные
+-- в bank_classified.csv, и разбирать их по дороге незачем.
+create table if not exists fin_operations (
+  id             bigserial     primary key,
+  day            text          not null,        -- ГГГГ-ММ-ДД
+  source         text          not null check (source in ('bank', 'cash')),
+  entity         text,                          -- юрлицо: mav / ip_shalaeva / ...
+  account        text,                          -- счёт; у наличных пусто
+  direction      text          not null check (direction in ('in', 'out')),
+  amount         numeric(14,2) not null,
+  counterparty   text,
+  article        text,                          -- статья расхода, одна из 20
+  -- Род платежа из fin_classify.py:
+  --   external   — настоящий расход или поступление
+  --   internal   — перекладывание денег между своими счетами
+  --   withdrawal — вывод собственнику
+  --
+  -- ⚠️ Нужен отдельным полем. В форме владельца «Расходы» и «Без
+  -- вознаграждения» — разные колонки, и разница между ними ровно
+  -- withdrawal. Через пустую статью это не вывести: у неопознанного
+  -- расхода статья тоже пустая, и он слился бы с переводами.
+  op_class       text,
+  purpose        text,
+  doc_no         text,
+  why            text,                          -- почему размечено именно так
+  -- Ключ повтора. Отправили те же строки дважды — база их не удвоила.
+  --
+  -- ⚠️ Без этого первая же повторная отправка тихо удвоит расходы месяца,
+  -- и заметить это по суммам почти невозможно: они просто станут больше.
+  -- Ключ считает бэк-офис, а не отправитель: правило защиты должно жить
+  -- рядом с ограничением, которое его держит.
+  dedup_key      text          not null unique,
+  loaded_at      timestamptz   not null default now()
+);
+
+create index if not exists fin_operations_day_idx
+  on fin_operations (day);
+create index if not exists fin_operations_article_idx
+  on fin_operations (article, day);
+
+-- День целиком: то, что в файле владельца стоит верхним блоком.
+create table if not exists fin_days (
+  day             text          primary key,     -- ГГГГ-ММ-ДД
+  revenue_card    numeric(14,2),
+  revenue_cash    numeric(14,2),
+  tables_count    integer,
+  checks_count    integer,
+  balance_total   numeric(14,2),                 -- деньги на счетах на конец дня
+  updated_at      timestamptz   not null default now()
+);
+
+-- Докуда доведён каждый источник.
+--
+-- ⚠️ Отдельной таблицей, а не «последней датой в fin_operations». Последняя
+-- дата отвечает на вопрос «когда был последний платёж», а нужен ответ
+-- на другой — «докуда мы вообще смотрели». Три дня без наличных расходов
+-- это не пробел, а просто три дня без расходов; экран, построенный
+-- на последней дате, пугал бы пропуском, которого нет.
+create table if not exists fin_sources (
+  source      text        primary key,           -- 'bank' / 'cash'
+  filled_to   text        not null,              -- ГГГГ-ММ-ДД, докуда данные
+  updated_at  timestamptz not null default now()
+);
