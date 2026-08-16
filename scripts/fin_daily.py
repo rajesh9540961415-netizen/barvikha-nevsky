@@ -182,7 +182,7 @@ def main():
     if cls.exists():
         rows = list(csv.DictReader(cls.open(encoding="utf-8")))
         last_bank = max((r["date"] for r in rows), default="—")
-        ext = wd = 0.0
+        ext = wd = loan = 0.0
         for r in rows:
             if r["direction"] != "out":
                 continue
@@ -193,9 +193,18 @@ def main():
                 ext += float(r["amount"])
             elif r["class"] == "withdrawal":
                 wd += float(r["amount"])
+            elif r["class"] == "loan":
+                loan += float(r["amount"])
         print("\nРАСХОДЫ С НАЧАЛА МЕСЯЦА (банк)")
         print(f"   операционные     {M(ext):>13}")
         print(f"   вывод собственнику {M(wd):>11}")
+        # ⚠️ Строка появилась 16.08.2026 вместе с родом «loan». Без неё займы
+        # между площадками исчезали бы и отсюда: этот блок знал только про
+        # external и withdrawal, а незнакомый род молча не попадает никуда.
+        # Ровно так 1 500 000 ₽ и пропали с экрана — второй раз наступать
+        # на это в утренней сводке не будем.
+        if loan:
+            print(f"   заимствования    {M(loan):>13}  ← между площадками, не расход")
         print(f"   сальдо к выручке {M(tot_mtd - ext):>13}")
         if last_bank != "—" and last_bank < today.isoformat():
             print(f"   ⚠️  выписка загружена по {last_bank}, отстаёт от кассы")

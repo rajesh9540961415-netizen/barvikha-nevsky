@@ -35,7 +35,26 @@ def load_registry():
     return reg, entities, by_account
 
 
-def classify(row, reg, by_account):
+def other_site_accounts(reg):
+    """Счета чужой площадки — те, у кого в справочнике `в_учёт_невского: false`.
+
+    ⚠️ Берём флагом из справочника, а не номером в коде. Номер этого счёта
+    уже один раз сочли опечаткой и удалили (08.08.2026), а потом вернули —
+    правило, прибитое к цифре, пережило бы такую историю молча и неверно.
+    """
+    счета = {a["number"] for e in reg["entities"] for a in e["accounts"]
+             if a.get("number") and a.get("в_учёт_невского") is False}
+    # Тот же счёт назван и в правилах, отдельным ключом с пояснением
+    # «молча исчезают из отчёта, требуется отдельная подсветка». Берём оба
+    # источника: справочник правится руками, и запись в одном месте
+    # без записи в другом — обычное дело.
+    названный = (reg.get("rules") or {}).get("moscow_account")
+    if названный:
+        счета.add(названный)
+    return счета
+
+
+def classify(row, reg, by_account, other_sites=frozenset()):
     """Возвращает (id юрлица, тип счёта, класс операции, пояснение)."""
     ent, acc_type = by_account.get(row["account"], (None, "unknown"))
     rules = reg["rules"]
@@ -49,6 +68,21 @@ def classify(row, reg, by_account):
 
     inn = (row.get("inn") or "").strip()
     purpose = (row.get("purpose") or "").lower()
+
+    # Заимствования между площадками. Решение владельца 15.08.2026: движения
+    # между невским и московским счетами ИП Шалаевой — заём и возврат займа,
+    # а не расход и не внутренний перевод.
+    #
+    # ⚠️ Стоит ВЫШЕ проверки на свой ИНН, и в этом весь смысл. Московский счёт
+    # принадлежит тому же ИП, поэтому по ИНН он неизбежно попадал во «внутренние
+    # переводы», а те экран пропускает целиком — 1 500 000 ₽ от 22.07.2026 просто
+    # не было видно нигде. Владелец заметила пропажу 16.08.2026 и была права.
+    #
+    # 💡 Отдельный класс, а не «external», потому что это и не расход тоже:
+    # деньги ушли на свою же вторую площадку и могут вернуться. Но показать
+    # их надо — иначе тишина выдаётся за отсутствие движения.
+    if (row.get("counter_account") or "") in other_sites:
+        return ent, acc_type, "loan", "заимствование между площадками"
 
     if inn and inn in rules["internal_inn"]:
         return ent, acc_type, "internal", "контрагент — своё же юрлицо"
@@ -70,10 +104,11 @@ def main():
     if not src.exists():
         raise SystemExit("Нет data/dds/bank_transactions.csv — сначала запустите bank_import.py")
 
+    other_sites = other_site_accounts(reg)
     rows = list(csv.DictReader(src.open(encoding="utf-8")))
     out = []
     for r in rows:
-        ent, acc_type, cls, why = classify(r, reg, by_account)
+        ent, acc_type, cls, why = classify(r, reg, by_account, other_sites)
         r = dict(r)
         r.update({"entity": ent or "?", "account_type": acc_type, "class": cls, "why": why})
         out.append(r)
