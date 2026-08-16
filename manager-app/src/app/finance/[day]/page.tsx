@@ -1,4 +1,5 @@
 import Link from "next/link";
+import Nav from "@/components/Nav";
 import { notFound } from "next/navigation";
 import { финансыЗаДень } from "@/lib/db/finance";
 import { dayLabel, money, weekday } from "@/lib/format";
@@ -49,7 +50,9 @@ export default async function ДеньФинансов({
   const месяц = день.slice(0, 7);
 
   return (
-    <main className="mx-auto max-w-5xl px-6 py-8">
+    <>
+      <Nav раздел="finance" />
+        <main className="mx-auto max-w-5xl px-6 py-8">
       <header className="flex items-baseline justify-between">
         <div>
           <h1 className="text-2xl font-medium">{dayLabel(день)}</h1>
@@ -163,6 +166,7 @@ export default async function ДеньФинансов({
         ))
       )}
     </main>
+    </>
   );
 }
 

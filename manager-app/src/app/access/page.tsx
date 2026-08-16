@@ -1,3 +1,4 @@
+import Nav from "@/components/Nav";
 import { listAccess } from "@/lib/db/managers";
 import AccessScreen from "./AccessScreen";
 
@@ -11,5 +12,10 @@ export const dynamic = "force-dynamic";
  */
 export default async function AccessPage() {
   const people = await listAccess();
-  return <AccessScreen people={people} />;
+  return (
+    <>
+      <Nav раздел="access" />
+      <AccessScreen people={people} />
+    </>
+  );
 }

@@ -1,10 +1,11 @@
 import Link from "next/link";
+import Nav from "@/components/Nav";
 import { Suspense } from "react";
 import PersonPicker from "@/components/PersonPicker";
 import PersonStatsView from "@/components/PersonStats";
 import ManualPeople from "./ManualPeople";
 import { listPeople, listManualPeople, readPerson } from "@/lib/db/people";
-import { requireManager, signOut } from "@/lib/db/managers";
+import { requireManager } from "@/lib/db/managers";
 import { dayLabel } from "@/lib/format";
 
 export const dynamic = "force-dynamic";
@@ -64,22 +65,14 @@ export default async function PeoplePage({
   const stats = id !== null ? await readPerson(id, from, to) : null;
 
   return (
-    <main className="mx-auto max-w-5xl px-6 py-8">
-      <header className="flex items-baseline justify-between gap-4">
-        <div>
-          <Link href="/" className="text-sm text-fg-muted underline">
-            ‹ все смены
-          </Link>
-          <h1 className="mt-1 text-2xl font-medium">Сотрудники</h1>
-          <p className="mt-1 text-sm text-fg-muted">
-            {dayLabel(from)} — {dayLabel(to)}
-          </p>
-        </div>
-        <form action={signOut} className="text-sm text-fg-muted">
-          {manager.name} ·{" "}
-          {manager.role === "owner" ? "владелец" : "управляющий"}{" "}
-          <button className="underline">выйти</button>
-        </form>
+    <>
+      <Nav раздел="people" />
+      <main className="mx-auto max-w-5xl px-6 py-8">
+      <header>
+        <h1 className="text-2xl font-medium">Сотрудники</h1>
+        <p className="mt-1 text-sm text-fg-muted">
+          {dayLabel(from)} — {dayLabel(to)}
+        </p>
       </header>
 
       <div className="mt-6">
@@ -105,5 +98,6 @@ export default async function PeoplePage({
 
       <ManualPeople people={manual} />
     </main>
+    </>
   );
 }

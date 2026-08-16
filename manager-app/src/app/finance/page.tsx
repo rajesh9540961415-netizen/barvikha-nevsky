@@ -1,4 +1,5 @@
 import Link from "next/link";
+import Nav from "@/components/Nav";
 import { финансыЗаМесяц, type ДоляЮрлица } from "@/lib/db/finance";
 import { money } from "@/lib/format";
 
@@ -76,7 +77,9 @@ export default async function FinancePage({
     `/finance?месяц=${месяц}${ю ? `&юрлицо=${encodeURIComponent(ю)}` : ""}`;
 
   return (
-    <main className="mx-auto max-w-[1600px] px-6 py-8">
+    <>
+      <Nav раздел="finance" />
+      <main className="mx-auto max-w-[1600px] px-6 py-8">
       <header className="flex items-baseline justify-between">
         <div>
           <h1 className="text-2xl font-medium">Финансы · {названиеМесяца(месяц)}</h1>
@@ -84,15 +87,15 @@ export default async function FinancePage({
             Движение денежных средств: что пришло, что ушло, по дням
           </p>
         </div>
+        {/* Только соседние месяцы. Ссылка на другие разделы теперь в шапке —
+            держать её ещё и здесь значило бы иметь два разных пути к одному
+            и тому же и ни одного очевидного. */}
         <div className="flex items-baseline gap-5">
           <Link href={`/finance?месяц=${сдвиг(месяц, -1)}`} className="text-sand underline">
             ← {названиеМесяца(сдвиг(месяц, -1))}
           </Link>
           <Link href={`/finance?месяц=${сдвиг(месяц, 1)}`} className="text-sand underline">
             {названиеМесяца(сдвиг(месяц, 1))} →
-          </Link>
-          <Link href="/" className="text-fg-muted underline">
-            смены
           </Link>
         </div>
       </header>
@@ -277,7 +280,8 @@ export default async function FinancePage({
           )}
         </>
       )}
-    </main>
+      </main>
+    </>
   );
 }
 

@@ -1,8 +1,8 @@
-import Link from "next/link";
+import Nav from "@/components/Nav";
 import { notFound } from "next/navigation";
 import ShiftScreen from "@/components/ShiftScreen";
 import { readDay } from "@/lib/db/corrections";
-import { requireManager, signOut } from "@/lib/db/managers";
+import { requireManager } from "@/lib/db/managers";
 import { dayLabel, weekday } from "@/lib/format";
 
 export const dynamic = "force-dynamic";
@@ -12,34 +12,23 @@ export default async function ShiftPage({
 }: {
   params: Promise<{ day: string }>;
 }) {
-  const manager = await requireManager();
+  await requireManager();
 
   const { day } = await params;
   const data = await readDay(day);
   if (!data) notFound();
 
   return (
-    <main className="mx-auto max-w-5xl px-6 py-8">
-      <header className="flex items-baseline justify-between gap-4">
-        <div>
-          <Link href="/" className="text-sm text-fg-muted underline">
-            ‹ все смены
-          </Link>
-          <Link href="/people" className="ml-4 text-sm text-sand underline">
-            сотрудники
-          </Link>
-          <h1 className="mt-1 text-2xl font-medium">
-            {dayLabel(day)}
-            <span className="ml-2 text-base font-normal text-fg-muted">
-              {weekday(day)}
-            </span>
-          </h1>
-        </div>
-        <form action={signOut} className="text-sm text-fg-muted">
-          {manager.name} ·{" "}
-          {manager.role === "owner" ? "владелец" : "управляющий"}{" "}
-          <button className="underline">выйти</button>
-        </form>
+    <>
+      <Nav раздел="tips" />
+      <main className="mx-auto max-w-5xl px-6 py-8">
+      <header>
+        <h1 className="text-2xl font-medium">
+          {dayLabel(day)}
+          <span className="ml-2 text-base font-normal text-fg-muted">
+            {weekday(day)}
+          </span>
+        </h1>
       </header>
 
       <ShiftScreen data={data} />
@@ -50,5 +39,6 @@ export default async function ShiftPage({
         ни владелец.
       </p>
     </main>
+    </>
   );
 }

@@ -44,9 +44,6 @@ export default function AccessScreen({ people }: { people: AccessPerson[] }) {
           <h1 className="text-2xl font-medium">Доступ в бэк-офис</h1>
           <p className="mt-1 text-fg-muted">Кто может заходить и править деньги</p>
         </div>
-        <Link href="/" className="text-fg-muted underline">
-          к сменам
-        </Link>
       </header>
 
       {/* ── Завести человека ─────────────────────────────────────────── */}

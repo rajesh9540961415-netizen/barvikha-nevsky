@@ -1,4 +1,5 @@
 import Link from "next/link";
+import Nav from "@/components/Nav";
 import { notFound } from "next/navigation";
 import { статьяЗаМесяц } from "@/lib/db/finance";
 import { money } from "@/lib/format";
@@ -43,7 +44,9 @@ export default async function СтатьяФинансов({
   const д = await статьяЗаМесяц(месяц, статья);
 
   return (
-    <main className="mx-auto max-w-4xl px-6 py-8">
+    <>
+      <Nav раздел="finance" />
+        <main className="mx-auto max-w-4xl px-6 py-8">
       <header className="flex items-baseline justify-between">
         <div>
           <h1 className="text-2xl font-medium">{статья}</h1>
@@ -118,5 +121,6 @@ export default async function СтатьяФинансов({
         </>
       )}
     </main>
+    </>
   );
 }
