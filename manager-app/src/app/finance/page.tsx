@@ -215,6 +215,10 @@ export default async function FinancePage({
                   <th className="sticky left-0 z-10 min-w-56 whitespace-nowrap bg-ink py-2 pr-4 text-left font-normal">
                     статья
                   </th>
+                  {/* ⚠️ «За месяц» закреплён справа, как статья слева, — прокручиваются
+                      только дни между ними. Владелец 16.08.2026: чтобы увидеть итог,
+                      приходилось пролистывать весь календарь, а итог как раз то,
+                      ради чего в таблицу и заходят. */}
                   {/* Число дня — ссылка на разбор этого дня по контрагентам.
                       Это и есть блок 3 формы владельца, который в Excel
                       приходится искать глазами. */}
@@ -225,7 +229,7 @@ export default async function FinancePage({
                       </Link>
                     </th>
                   ))}
-                  <th className="min-w-36 whitespace-nowrap px-2 py-2 pl-6 font-normal">за месяц</th>
+                  <th className="sticky right-0 z-20 min-w-36 whitespace-nowrap border-l border-line bg-ink px-2 py-2 pl-6 font-normal">за месяц</th>
                 </tr>
               </thead>
               <tbody>
@@ -270,7 +274,7 @@ export default async function FinancePage({
                           : ""}
                       </td>
                     ))}
-                    <td className="whitespace-nowrap px-2 py-2 pl-6 tabular-nums text-fg">
+                    <td className="sticky right-0 z-10 whitespace-nowrap border-l border-line bg-ink px-2 py-2 pl-6 tabular-nums text-fg">
                       {money(с.итог)}
                     </td>
                   </tr>
@@ -287,7 +291,7 @@ export default async function FinancePage({
                             : ""}
                         </td>
                       ))}
-                      <td className="whitespace-nowrap px-2 py-1.5 pl-6 text-xs tabular-nums">
+                      <td className="sticky right-0 z-10 whitespace-nowrap border-l border-line bg-ink px-2 py-1.5 pl-6 text-xs tabular-nums">
                         {money(к.итог)}
                       </td>
                     </tr>
@@ -321,7 +325,7 @@ export default async function FinancePage({
                       </td>
                     );
                   })}
-                  <td className="whitespace-nowrap px-2 py-2 pl-6 tabular-nums">{money(д.итоги.расходы)}</td>
+                  <td className="sticky right-0 z-20 whitespace-nowrap border-l border-line bg-ink px-2 py-2 pl-6 tabular-nums">{money(д.итоги.расходы)}</td>
                 </tr>
               </tfoot>
             </table>

@@ -4,6 +4,7 @@ import {
   saveFinance,
   saveFinanceSource,
   type ВходящаяВыручка,
+  type ВходящийОстаток,
   type ВходящаяОперация,
   type ВходящийДень,
   type Замена,
@@ -156,6 +157,35 @@ function разобратьВыручку(сырое: unknown): Входящая
   };
 }
 
+/**
+ * Остаток на счёте за день.
+ *
+ * ⚠️ Счёт обязателен: остаток без счёта — это остаток непонятно чего,
+ * и на экране он выглядел бы данными, не будучи ими.
+ */
+function разобратьОстаток(сырое: unknown): ВходящийОстаток | string {
+  if (typeof сырое !== "object" || сырое === null) return "остаток должен быть объектом";
+  const о = сырое as Record<string, unknown>;
+
+  if (typeof о.day !== "string" || !ДЕНЬ.test(о.day)) {
+    return `у остатка day должен быть вида 2026-08-14, а пришло «${String(о.day)}»`;
+  }
+  const account = текст(о.account);
+  if (account === null) {
+    return `у остатка за ${о.day} не указан счёт — непонятно, чей это остаток`;
+  }
+
+  return {
+    day: о.day,
+    account,
+    entity: текст(о.entity),
+    opening: число(о.opening),
+    debit: число(о.debit),
+    credit: число(о.credit),
+    closing: число(о.closing),
+  };
+}
+
 export async function POST(request: Request) {
   const отказ = отказПоФинансовомуКлючу(request);
   if (отказ) return отказ;
@@ -175,6 +205,7 @@ export async function POST(request: Request) {
   const сырыеОперации = Array.isArray(т.operations) ? т.operations : [];
   const сырыеДни = Array.isArray(т.days) ? т.days : [];
   const сыраяВыручка = Array.isArray(т.revenue) ? т.revenue : [];
+  const сырыеОстатки = Array.isArray(т.balances) ? т.balances : [];
 
   // ⚠️ Всё или ничего: одна кривая строка отвергает всю пачку. Принять
   // остальные значило бы записать неполный день и не сказать об этом —
@@ -204,6 +235,15 @@ export async function POST(request: Request) {
       return Response.json({ ok: false, причина: разобрано }, { status: 400 });
     }
     выручка.push(разобрано);
+  }
+
+  const остатки: ВходящийОстаток[] = [];
+  for (const сырое of сырыеОстатки) {
+    const разобрано = разобратьОстаток(сырое);
+    if (typeof разобрано === "string") {
+      return Response.json({ ok: false, причина: разобрано }, { status: 400 });
+    }
+    остатки.push(разобрано);
   }
 
   if (операции.length === 0 && дни.length === 0) {
@@ -251,7 +291,7 @@ export async function POST(request: Request) {
   }
 
   try {
-    const итог = await saveFinance(операции, дни, замена, выручка);
+    const итог = await saveFinance(операции, дни, замена, выручка, остатки);
 
     // Отметка «докуда доведён источник» — только если её прислали явно.
     // Вывести её из самих строк нельзя: три дня без наличных расходов —

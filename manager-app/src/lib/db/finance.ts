@@ -85,6 +85,23 @@ export type ВходящаяВыручка = {
   checksCount: number | null;
 };
 
+/**
+ * Остаток на счёте за день: сколько было, сколько стало.
+ *
+ * ⚠️ Приходит из той же выписки, что и платежи, но живёт отдельно: остаток
+ * бывает у счёта, а не у заведения. Пара «списано/поступило» нужна для
+ * проверки — начало плюс поступило минус списано обязано дать конец.
+ */
+export type ВходящийОстаток = {
+  day: string;
+  account: string;
+  entity: string | null;
+  opening: number | null;
+  debit: number | null;
+  credit: number | null;
+  closing: number | null;
+};
+
 export type ИтогПриёма = {
   принято: number;
   добавлено: number;
@@ -105,6 +122,8 @@ export type ИтогПриёма = {
   дней: number;
   /** Сколько строк выручки по юрлицам записано. */
   выручки: number;
+  /** Сколько строк остатков по счетам записано. */
+  остатков: number;
   /** Сколько наличных строк стёрто заменой. Ноль, если замены не просили. */
   убрано: number;
 };
@@ -121,6 +140,7 @@ export async function saveFinance(
   дни: ВходящийДень[],
   замена?: Замена,
   выручка: ВходящаяВыручка[] = [],
+  остатки: ВходящийОстаток[] = [],
 ): Promise<ИтогПриёма> {
   const sql = db();
   let добавлено = 0;
@@ -211,6 +231,26 @@ export async function saveFinance(
           updated_at   = now()
       `;
     }
+
+    // Остатки переписываем целиком, как и дни: выписку за тот же день могут
+    // прислать заново, и свежая версия вернее прежней. Ключ — день и счёт.
+    for (const о of остатки) {
+      await tx`
+        insert into fin_balances (
+          day, account, entity, opening, debit, credit, closing
+        ) values (
+          ${о.day}, ${о.account}, ${о.entity},
+          ${о.opening}, ${о.debit}, ${о.credit}, ${о.closing}
+        )
+        on conflict (day, account) do update set
+          entity     = excluded.entity,
+          opening    = excluded.opening,
+          debit      = excluded.debit,
+          credit     = excluded.credit,
+          closing    = excluded.closing,
+          updated_at = now()
+      `;
+    }
   });
 
   return {
@@ -220,6 +260,7 @@ export async function saveFinance(
     ужеБыло: операции.length - добавлено - обновлено,
     дней: дни.length,
     выручки: выручка.length,
+    остатков: остатки.length,
     убрано,
   };
 }
@@ -738,8 +779,21 @@ export type ГруппаДня = {
   пришло: number;
 };
 
+/** Строка остатка на экране дня: подпись счёта и движение по нему. */
+export type ОстатокСчёта = {
+  счёт: string;
+  подпись: string;
+  наНачало: number | null;
+  списано: number | null;
+  поступило: number | null;
+  наКонец: number | null;
+  /** Начало + поступило − списано ≠ конец. Показать красным, а не молчать. */
+  неСходится: boolean;
+};
+
 export type ФинансовыйДень = {
   день: string;
+  остатки: ОстатокСчёта[];
   группы: ГруппаДня[];
   ушло: number;
   /**
@@ -785,6 +839,14 @@ export async function финансыЗаДень(день: string): Promise<Фи
     { revenue_card: string | null; revenue_cash: string | null;
       checks_count: number | null }[]
   >`select revenue_card, revenue_cash, checks_count from fin_days where day = ${день}`;
+
+  const остаткиБазы = await sql<
+    { account: string; entity: string | null; opening: string | null;
+      debit: string | null; credit: string | null; closing: string | null }[]
+  >`select account, entity, opening, debit, credit, closing
+      from fin_balances
+     where day = ${день}
+     order by account`;
 
   const группы = new Map<string, ГруппаДня>();
   let ушло = 0, пришло = 0, расходы = 0, переводы = 0;
@@ -843,8 +905,26 @@ export async function финансыЗаДень(день: string): Promise<Фи
   const безнал = деньБазы?.revenue_card == null ? null : Number(деньБазы.revenue_card);
   const нал = деньБазы?.revenue_cash == null ? null : Number(деньБазы.revenue_cash);
 
+  const ч = (v: string | null) => (v === null ? null : Number(v));
+  const остатки: ОстатокСчёта[] = остаткиБазы.map((о) => {
+    const наНачало = ч(о.opening), списано = ч(о.debit);
+    const поступило = ч(о.credit), наКонец = ч(о.closing);
+    // Проверка арифметики банка прямо на экране. Обычно сходится; когда нет —
+    // это либо битая выписка, либо день загружен наполовину, и знать об этом
+    // надо раньше, чем начнёшь верить цифрам.
+    const считаемо = [наНачало, списано, поступило, наКонец].every((v) => v !== null);
+    return {
+      счёт: о.account,
+      подпись: `${ЮРЛИЦА[о.entity ?? ""] ?? о.entity ?? "счёт"} …${о.account.slice(-4)}`,
+      наНачало, списано, поступило, наКонец,
+      неСходится: считаемо
+        && Math.abs(наНачало! + поступило! - списано! - наКонец!) > 0.01,
+    };
+  });
+
   return {
     день,
+    остатки,
     группы: порядок,
     ушло,
     расходы,

@@ -97,7 +97,7 @@ try {
   const НУЖНЫ = [
     "entries", "shifts", "manual_people", "qr_tips",
     "managers", "manager_logins", "shift_changes",
-    "fin_operations", "fin_days", "fin_revenue", "fin_sources",
+    "fin_operations", "fin_days", "fin_revenue", "fin_balances", "fin_sources",
   ];
   const есть = await sql`
     select table_name from information_schema.tables

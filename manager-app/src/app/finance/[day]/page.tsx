@@ -98,6 +98,50 @@ export default async function ДеньФинансов({
         <Число подпись="Пришло на счета" сумма={д.пришло} />
       </div>
 
+      {/* Остатки по счетам: сколько было утром, сколько стало вечером.
+          Владелец 16.08.2026 спросила, видим ли мы остаток на начало дня —
+          оказалось, что банк присылает его с мая 2024, мы разбираем,
+          и никуда не показываем. Теперь показываем: по одной строке итога
+          не видно, откуда деньги взялись и куда делись. */}
+      {д.остатки.length > 0 && (
+        <div className="mt-6 overflow-x-auto">
+          <table className="w-full border-collapse text-right text-sm">
+            <thead className="text-fg-muted">
+              <tr className="border-b border-line">
+                <th className="py-2 pr-4 text-left font-normal">счёт</th>
+                <th className="px-3 py-2 font-normal">на начало дня</th>
+                <th className="px-3 py-2 font-normal">поступило</th>
+                <th className="px-3 py-2 font-normal">списано</th>
+                <th className="py-2 pl-3 font-normal">на конец дня</th>
+              </tr>
+            </thead>
+            <tbody>
+              {д.остатки.map((о) => (
+                <tr key={о.счёт} className="border-b border-line/40">
+                  <td className="py-2 pr-4 text-left">
+                    {о.подпись}
+                    {о.неСходится && (
+                      <span
+                        className="ml-2 text-alert"
+                        title="Начало плюс поступило минус списано не даёт конец. Либо выписка неполная, либо день загружен наполовину."
+                      >
+                        не сходится ←
+                      </span>
+                    )}
+                  </td>
+                  <td className="px-3 py-2 tabular-nums text-fg-muted">{о.наНачало === null ? "—" : money(о.наНачало)}</td>
+                  <td className="px-3 py-2 tabular-nums">
+                    {о.поступило ? <span className="text-sand">+{money(о.поступило)}</span> : "—"}
+                  </td>
+                  <td className="px-3 py-2 tabular-nums">{о.списано ? money(о.списано) : "—"}</td>
+                  <td className="py-2 pl-3 font-medium tabular-nums">{о.наКонец === null ? "—" : money(о.наКонец)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
       {д.пусто ? (
         <p className="mt-8 text-fg-muted">
           В этот день движений по счетам не было. Это не то же самое, что
