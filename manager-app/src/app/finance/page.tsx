@@ -174,44 +174,30 @@ export default async function FinancePage({
             <div className="mt-5 border-b border-line pb-5">
               <div className="text-sm text-fg-muted">
                 Деньги на расчётных счетах
-                {д.остаткиНаДень && ` · на ${д.остаткиНаДень.slice(8)}.${д.остаткиНаДень.slice(5, 7)}`}
+                {д.остаткиНаДень &&
+                  ` · на начало дня ${д.остаткиНаДень.slice(8)}.${д.остаткиНаДень.slice(5, 7)}`}
               </div>
-              {/* ⚠️ ОБА числа подписаны, и большое тоже. Владелец 16.08.2026:
-                  «в чём разница между началом дня и общими деньгами?» — и была
-                  права: крупная сумма стояла вовсе без подписи и читалась как
-                  «просто деньги». Число без подписи читатель истолкует сам,
-                  и не обязательно так, как задумано. */}
+              {/* Только остаток на начало дня — решение владельца 16.08.2026,
+                  остаток на конец убран совсем.
+
+                  ⚠️ Дата в подписи обязательна. Число само по себе не говорит,
+                  чьё это утро: остаток на начало ПОСЛЕДНЕГО ЗАГРУЖЕННОГО дня —
+                  не то же самое, что остаток на начало сегодняшнего. Пока
+                  выписка отстаёт на день, это разные суммы, и подпись
+                  единственное, что их различает. */}
               <div className="mt-3 flex flex-wrap gap-x-12 gap-y-4">
                 {д.остатки.map((о) => (
                   <div key={о.подпись}>
                     <div className="text-xs text-fg-muted">{о.подпись}</div>
-                    <div className="mt-1 flex items-baseline gap-2">
-                      <span className="text-xs text-fg-muted">утром было</span>
-                      <span className="tabular-nums text-fg-muted">
-                        {о.наНачало === null ? "—" : money(о.наНачало)}
-                      </span>
-                    </div>
-                    <div className="flex items-baseline gap-2">
-                      <span className="text-xs text-fg-muted">вечером стало</span>
-                      <span className="text-lg tabular-nums">
-                        {о.наКонец === null ? "—" : money(о.наКонец)}
-                      </span>
+                    <div className="text-lg tabular-nums">
+                      {о.наНачало === null ? "—" : money(о.наНачало)}
                     </div>
                   </div>
                 ))}
                 <div className="border-l border-line pl-12">
                   <div className="text-xs text-fg-muted">всего оборотных</div>
-                  <div className="mt-1 flex items-baseline gap-2">
-                    <span className="text-xs text-fg-muted">утром было</span>
-                    <span className="tabular-nums text-fg-muted">
-                      {money(д.остатки.reduce((s, о) => s + (о.наНачало ?? 0), 0))}
-                    </span>
-                  </div>
-                  <div className="flex items-baseline gap-2">
-                    <span className="text-xs text-fg-muted">вечером стало</span>
-                    <span className="text-lg tabular-nums text-sand">
-                      {money(д.остатки.reduce((s, о) => s + (о.наКонец ?? 0), 0))}
-                    </span>
+                  <div className="text-lg tabular-nums text-sand">
+                    {money(д.остатки.reduce((s, о) => s + (о.наНачало ?? 0), 0))}
                   </div>
                 </div>
               </div>
