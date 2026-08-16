@@ -117,7 +117,7 @@ def банковские(месяц: str | None) -> list[dict]:
         sys.exit(f"✗ Нет {файл}. Сначала: python3 scripts/fin_classify.py")
 
     sys.path.insert(0, str(ROOT / "scripts"))
-    from fin_articles import article, build_dictionary  # noqa: E402
+    from fin_articles import article, build_dictionary, transfer_detail  # noqa: E402
 
     словарь = build_dictionary()
 
@@ -137,6 +137,54 @@ def банковские(месяц: str | None) -> list[dict]:
         # деньги известно ровно всё; неизвестно было только имя строки.
         # Владелец увидела 4 100 000 ₽ вывода под видом неопознанного
         # и справедливо спросила, что это.
+        основа = {
+            "day": день,
+            "source": "bank",
+            "entity": r.get("entity") or None,
+            "account": r.get("account") or None,
+            "direction": r.get("direction") or "out",
+            "counterparty": r.get("counterparty") or None,
+            "purpose": r.get("purpose") or None,
+            "docNo": r.get("doc_no") or None,
+        }
+        сумма = float(r.get("amount") or 0)
+
+        # Платёж, за которым стоит несколько наших счетов, раскрываем
+        # на составляющие — так он разнесён в «Фин. своде», и свод здесь
+        # главнее выписки.
+        #
+        # ⚠️ Выписка знает только «сколько ушло», а «за что» знает владелец.
+        # 16.08.2026 я вывел 182 260 ₽ заново из выписки и назвал заёмом,
+        # хотя разбор лежал готовым в двух местах сразу — в своде и в словаре
+        # TRANSFER_DETAIL. Первичка отвечает на вопрос «что и когда»,
+        # свод — на вопрос «куда отнести»; спорят они редко, и прав свод.
+        части = transfer_detail(r) if r.get("direction") == "out" else None
+        if части:
+            # Самопроверка: части обязаны сойтись с платежом. Не сошлись —
+            # останавливаемся. Разойдись они молча, месяц стал бы больше
+            # или меньше на разницу, и увидеть это по суммам нельзя.
+            собрано = sum(ч[2] for ч in части)
+            if abs(собрано - сумма) > 0.01:
+                sys.exit(
+                    f"✗ Расшифровка платежа {день} №{r.get('doc_no')} "
+                    f"не сходится: части дают {собрано:,.2f}, "
+                    f"а платёж {сумма:,.2f}. Отправка отменена."
+                    .replace(",", " ")
+                )
+            # Сам платёж всё равно отправляем — родом «split», чтобы экран
+            # его пропустил. Если бы мы его просто не слали, прежняя строка
+            # осталась бы в базе лежать как есть, и месяц посчитался бы
+            # дважды: и платёж, и его части.
+            строки.append({**основа, "amount": сумма, "article": None,
+                           "opClass": "split",
+                           "why": "раскрыт на составляющие, см. части ниже"})
+            for кому, статья_части, сколько in части:
+                строки.append({**основа, "amount": сколько,
+                               "counterparty": кому, "article": статья_части,
+                               "opClass": "external",
+                               "why": f"часть платежа №{r.get('doc_no')} от {день}"})
+            continue
+
         статья = None
         if r.get("direction") == "out":
             род = r.get("class")
@@ -146,20 +194,9 @@ def банковские(месяц: str | None) -> list[dict]:
                 статья = ВЫВОД
             elif род == "loan":
                 статья = ЗАИМСТВОВАНИЯ
-        строки.append({
-            "day": день,
-            "source": "bank",
-            "entity": r.get("entity") or None,
-            "account": r.get("account") or None,
-            "direction": r.get("direction") or "out",
-            "amount": float(r.get("amount") or 0),
-            "counterparty": r.get("counterparty") or None,
-            "article": статья,
-            "opClass": r.get("class") or None,
-            "purpose": r.get("purpose") or None,
-            "docNo": r.get("doc_no") or None,
-            "why": r.get("why") or None,
-        })
+        строки.append({**основа, "amount": сумма, "article": статья,
+                       "opClass": r.get("class") or None,
+                       "why": r.get("why") or None})
     return строки
 
 
