@@ -179,6 +179,7 @@ function разобратьОстаток(сырое: unknown): Входящий
     day: о.day,
     account,
     entity: текст(о.entity),
+    accountType: текст(о.accountType),
     opening: число(о.opening),
     debit: число(о.debit),
     credit: число(о.credit),

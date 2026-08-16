@@ -216,12 +216,13 @@ def остатки(месяц: str | None) -> list[dict]:
     if not файл.exists():
         return []
 
-    чей = {}
+    чей, тип = {}, {}
     справочник = json.loads((DDS / "registry.json").read_text(encoding="utf-8"))
     for e in справочник["entities"]:
         for a in e["accounts"]:
             if a.get("number"):
                 чей[a["number"]] = e["id"]
+                тип[a["number"]] = a.get("type")
 
     строки = []
     for r in csv.DictReader(файл.open(encoding="utf-8")):
@@ -233,6 +234,7 @@ def остатки(месяц: str | None) -> list[dict]:
             "day": день,
             "account": r.get("account") or "",
             "entity": чей.get(r.get("account", "")),
+            "accountType": тип.get(r.get("account", "")),
             "opening": число("opening"),
             "debit": число("debit"),
             "credit": число("credit"),

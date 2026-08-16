@@ -96,6 +96,8 @@ export type ВходящийОстаток = {
   day: string;
   account: string;
   entity: string | null;
+  /** settlement — расчётный, deposit — копилка. Приходит из справочника. */
+  accountType: string | null;
   opening: number | null;
   debit: number | null;
   credit: number | null;
@@ -237,13 +239,14 @@ export async function saveFinance(
     for (const о of остатки) {
       await tx`
         insert into fin_balances (
-          day, account, entity, opening, debit, credit, closing
+          day, account, entity, account_type, opening, debit, credit, closing
         ) values (
-          ${о.day}, ${о.account}, ${о.entity},
+          ${о.day}, ${о.account}, ${о.entity}, ${о.accountType},
           ${о.opening}, ${о.debit}, ${о.credit}, ${о.closing}
         )
         on conflict (day, account) do update set
-          entity     = excluded.entity,
+          entity       = excluded.entity,
+          account_type = excluded.account_type,
           opening    = excluded.opening,
           debit      = excluded.debit,
           credit     = excluded.credit,
@@ -437,6 +440,13 @@ export type ДоляЮрлица = {
   нетДанных?: boolean;
 };
 
+/** Остаток на расчётном счёте за последний загруженный день месяца. */
+export type ОстатокНаСчёте = {
+  подпись: string;
+  наНачало: number | null;
+  наКонец: number | null;
+};
+
 export type ФинансовыйМесяц = {
   месяц: string;
   дни: string[];
@@ -457,6 +467,9 @@ export type ФинансовыйМесяц = {
   /** Кто выбран сейчас. `null` — все. */
   выбрано: string | null;
   источники: { source: string; filledTo: string }[];
+  /** Деньги на расчётных счетах и день, на который они посчитаны. */
+  остатки: ОстатокНаСчёте[];
+  остаткиНаДень: string | null;
   пусто: boolean;
 };
 
@@ -497,6 +510,23 @@ export async function финансыЗаМесяц(
 
   const источники = await sql<{ source: string; filled_to: string }[]>`
     select source, filled_to from fin_sources order by source`;
+
+  // Остатки — только расчётные счета и только за последний загруженный день
+  // месяца. ⚠️ Депозиты сюда не берём: это копилка на налоги, а не оборотные
+  // деньги, и показать их рядом значило бы завысить то, чем можно платить.
+  // Тип счёта берём колонкой из справочника, а не по первым цифрам номера:
+  // «40 — расчётный, 42 — депозит» правило банковское, не наше.
+  const остаткиБазы = await sql<
+    { day: string; account: string; entity: string | null;
+      opening: string | null; closing: string | null }[]
+  >`select day, account, entity, opening, closing
+      from fin_balances
+     where day like ${месяц + "-%"}
+       and coalesce(account_type, 'settlement') = 'settlement'
+       and day = (select max(day) from fin_balances
+                   where day like ${месяц + "-%"}
+                     and coalesce(account_type, 'settlement') = 'settlement')
+     order by account`;
 
   // Дни месяца берём календарём, а не из данных: день без единого платежа
   // тоже должен быть столбцом, иначе таблица врёт про длину месяца.
@@ -652,6 +682,12 @@ export async function финансыЗаМесяц(
     ктоЕсть,
     выбрано: юрлицо ?? null,
     источники: источники.map((и) => ({ source: и.source, filledTo: и.filled_to })),
+    остатки: остаткиБазы.map((о) => ({
+      подпись: `${ЮРЛИЦА[о.entity ?? ""] ?? о.entity ?? "счёт"} …${о.account.slice(-4)}`,
+      наНачало: о.opening === null ? null : Number(о.opening),
+      наКонец: о.closing === null ? null : Number(о.closing),
+    })),
+    остаткиНаДень: остаткиБазы[0]?.day ?? null,
     пусто: операции.length === 0,
   };
 }
