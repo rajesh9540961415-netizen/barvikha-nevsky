@@ -110,7 +110,25 @@ KEL_HINT = re.compile(r"кальян|колб", re.I)
 KEL_FROM = "2026-05"          # раньше отдельной статьи не существовало
 # По карте контрагентом значится банк, а магазин спрятан в назначении —
 # поэтому связь ловим по тексту платежа, а не по имени контрагента.
-OWNER_PURPOSE = {"MEGAFON": "ПО/Услуги"}
+# Связь. ⚠️ Двух МегаФонов, а не один, и статьи у них РАЗНЫЕ — так в своде:
+#
+#   3 000 ₽ на карте ООО «МАВ»      → «Прочие расходы», подписано «Связь (МегаФон)»
+#     750 ₽ на карте ИП Хисамова    → «ПО/Услуги», это служебная линия
+#
+# История правки 16.08.2026. Сначала здесь стояло сплошное «ПО/Услуги» —
+# без даты и без ссылки на владельца, в отличие от соседних строк, то есть
+# никто этого не решал. Сверка со сводом нашла расхождение на 3 000 ₽,
+# я перевёл всё в «Прочие расходы» — и сверка тут же нашла обратное
+# расхождение на 750 ₽ в двух месяцах сразу. Ровно за этим она и нужна:
+# поймала не только исходную ошибку, но и мою собственную перекрутку.
+#
+# 💡 Отсюда правило шире случая: **одинаковое назначение платежа не значит
+# одинаковую статью.** Разделять приходится по юрлицу — по тексту платежа
+# эти два МегаФона неотличимы.
+OWNER_PURPOSE_ПО_ЮРЛИЦУ = {
+    ("MEGAFON", "ip_khisamov"): "ПО/Услуги",
+}
+OWNER_PURPOSE = {"MEGAFON": "Прочие расходы"}
 
 STOP = {"ооо", "ип", "ао", "зао", "пао", "оао", "компания", "россии",
         "банк", "москва", "спб"}
@@ -178,6 +196,11 @@ def article(row, keydict):
     for frag, art in OWNER.items():
         if re.search(r"\b" + re.escape(frag) + r"\b", name_low):
             return art, f"решение владельца: {frag}"
+    # Сначала правила, различающие юрлицо: они точнее общего. Иначе общее
+    # правило сработало бы первым и частный случай никогда не выстрелил.
+    for (frag, ent), art in OWNER_PURPOSE_ПО_ЮРЛИЦУ.items():
+        if frag in p.upper() and row.get("entity") == ent:
+            return art, f"решение владельца: {frag.lower()} у {ent}"
     for frag, art in OWNER_PURPOSE.items():
         if frag in p.upper():
             return art, f"решение владельца: {frag.lower()}"
@@ -342,6 +365,71 @@ def acquiring(month):
     return t
 
 
+def articles_for_month(month, rows=None, keydict=None):
+    """Статьи расходов месяца: банк + наличные + эквайринг.
+
+    Возвращает (agg, unknown, src).
+
+    ⚠️ Вынесено в функцию 16.08.2026, когда появилась сверка со сводом.
+    Расчёт должен быть ОДИН на всех потребителей: посчитай сверка статьи
+    своим кодом — и она сверяла бы свод не с тем, что уходит в бэк-офис,
+    а со своим представлением о нём. Такая сверка молчала бы ровно тогда,
+    когда ошибка есть в общем месте, — то есть в самом опасном случае.
+    """
+    if keydict is None:
+        keydict = build_dictionary()
+    if rows is None:
+        rows = list(csv.DictReader((DATA / "bank_classified.csv").open(encoding="utf-8")))
+
+    agg = defaultdict(float)
+    src = Counter()
+    unknown = []
+    for r in rows:
+        if (r["date"][:7] != month or r["direction"] != "out"
+                or r["class"] != "external"):
+            continue
+        amount = float(r["amount"])
+
+        # Платёж-возмещение раскрываем на составляющие. ⚠️ Без этого он
+        # попадал в «не размечено» целиком: article() нарочно возвращает
+        # по нему пустую статью, чтобы не приписать все деньги одному
+        # получателю. Разбор при этом лежал рядом, в TRANSFER_DETAIL,
+        # и не использовался — 16.08.2026 из-за этого 182 260 ₽ за июль
+        # не попадали в статьи ни здесь, ни в отправке в бэк-офис.
+        части = transfer_detail(r)
+        if части:
+            if abs(sum(ч[2] for ч in части) - amount) > 0.01:
+                unknown.append((amount, r["counterparty"],
+                                "расшифровка не сходится с платежом"))
+                continue
+            for _, art_части, сумма_части in части:
+                agg[art_части] += сумма_части
+            src["расшифровка"] += 1
+            continue
+
+        art, how = article(r, keydict)
+        if art:
+            agg[art] += amount
+            src[how.split(":")[0]] += 1
+        else:
+            unknown.append((amount, r["counterparty"], r["purpose"][:60]))
+
+    # Возврат покупки по карте — не расход. Уменьшаем ту же статью, иначе
+    # расходы завышены: за 2026 год возвратов набралось около 15 тыс. ₽.
+    for r in rows:
+        if (r["date"][:7] != month or r["direction"] != "in"
+                or not CARD.search(r["purpose"])): continue
+        a, _ = article(r, keydict)
+        if a: agg[a] -= float(r["amount"])
+
+    ca, cu = cash_articles(month)
+    for k, v in ca.items():
+        agg[k] += v
+    unknown += cu
+    agg["Комиссия"] += acquiring(month)
+    return agg, unknown, src
+
+
 def main():
     months = sys.argv[1:] or ["2026-04", "2026-05", "2026-06"]
     keydict = build_dictionary()
@@ -349,34 +437,7 @@ def main():
     M = lambda v: f"{v:,.2f}".replace(",", " ")
 
     for month in months:
-        agg = defaultdict(float)
-        src = Counter()
-        unknown = []
-        for r in rows:
-            if (r["date"][:7] != month or r["direction"] != "out"
-                    or r["class"] != "external"):
-                continue
-            art, how = article(r, keydict)
-            amount = float(r["amount"])
-            if art:
-                agg[art] += amount
-                src[how.split(":")[0]] += 1
-            else:
-                unknown.append((amount, r["counterparty"], r["purpose"][:60]))
-
-        # Возврат покупки по карте — не расход. Уменьшаем ту же статью, иначе
-        # расходы завышены: за 2026 год возвратов набралось около 15 тыс. ₽.
-        for r in rows:
-            if (r["date"][:7] != month or r["direction"] != "in"
-                    or not CARD.search(r["purpose"])): continue
-            a, _ = article(r, keydict)
-            if a: agg[a] -= float(r["amount"])
-
-        ca, cu = cash_articles(month)
-        for k, v in ca.items():
-            agg[k] += v
-        unknown += cu
-        agg["Комиссия"] += acquiring(month)
+        agg, unknown, src = articles_for_month(month, rows, keydict)
 
         print(f"\n{'═' * 66}\n  СТАТЬИ РАСХОДОВ — {month}   (банк + наличные + эквайринг)\n{'═' * 66}")
         for a in ARTICLES:
