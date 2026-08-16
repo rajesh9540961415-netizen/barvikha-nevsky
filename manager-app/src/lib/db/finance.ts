@@ -356,10 +356,25 @@ const СТАТЬИ = [
  */
 export const НЕ_ОПОЗНАНО = "Не опознано";
 
+/** Контрагент внутри раскрытой статьи: те же дни, но по одному получателю. */
+export type СтрокаКонтрагента = {
+  контрагент: string;
+  поДням: Record<string, number>;
+  итог: number;
+};
+
 export type СтрокаСтатьи = {
   статья: string;
   поДням: Record<string, number>;
   итог: number;
+  /**
+   * Контрагенты статьи по дням. Пусто, если статья не раскрыта.
+   *
+   * Владелец 16.08.2026: отдельная страница со статьёй показывает суммы
+   * за месяц, но теряет главное — в какой день кому платили. Раскрытие
+   * прямо в таблице сохраняет и то, и другое.
+   */
+  контрагенты: СтрокаКонтрагента[];
   /** Статьи нет в списке порядка — показать отдельно, а не потерять. */
   неизвестная: boolean;
   /** Статью не смогли определить вовсе. Отдельная беда, отдельная строка. */
@@ -413,14 +428,16 @@ export type ФинансовыйМесяц = {
 export async function финансыЗаМесяц(
   месяц: string,
   юрлицо?: string | null,
+  раскрыть: string[] = [],
 ): Promise<ФинансовыйМесяц> {
   await требоватьВладельца();
   const sql = db();
 
   const операции = await sql<
     { day: string; article: string | null; op_class: string | null;
-      direction: string; amount: string; entity: string | null; source: string }[]
-  >`select day, article, op_class, direction, amount, entity, source
+      direction: string; amount: string; entity: string | null; source: string;
+      counterparty: string | null }[]
+  >`select day, article, op_class, direction, amount, entity, source, counterparty
       from fin_operations
      where day like ${месяц + "-%"}`;
 
@@ -449,6 +466,8 @@ export async function финансыЗаМесяц(
 
   const поСтатьям = new Map<string, Record<string, number>>();
   const расходыЮрлиц = new Map<string, number>();
+  const нужноРаскрыть = new Set(раскрыть);
+  const раскрытие = new Map<string, Map<string, Record<string, number>>>();
   let расходы = 0, вывод = 0, заимствования = 0;
 
   for (const о of операции) {
@@ -489,6 +508,18 @@ export async function финансыЗаМесяц(
     const строка = поСтатьям.get(статья) ?? {};
     строка[о.day] = (строка[о.day] ?? 0) + сумма;
     поСтатьям.set(статья, строка);
+
+    // Раскрытие статьи — те же дни, но по контрагентам. Считаем из тех же
+    // строк, что и саму статью: второй запрос дал бы второй способ посчитать
+    // одно и то же, и сумма раскрытия могла бы разойтись с самой статьёй.
+    if (нужноРаскрыть.has(статья)) {
+      const кто = о.counterparty?.trim() || "без контрагента";
+      const поКонтрагентам = раскрытие.get(статья) ?? new Map<string, Record<string, number>>();
+      const дни = поКонтрагентам.get(кто) ?? {};
+      дни[о.day] = (дни[о.day] ?? 0) + сумма;
+      поКонтрагентам.set(кто, дни);
+      раскрытие.set(статья, поКонтрагентам);
+    }
   }
 
   // Порядок: сначала известные статьи как в форме владельца, потом статьи
@@ -503,9 +534,18 @@ export async function финансыЗаМесяц(
 
   const строки: СтрокаСтатьи[] = [...известные, ...прочие, ...хвост].map((статья) => {
     const поДням = поСтатьям.get(статья) ?? {};
+    // Контрагенты — по убыванию суммы: наверху те, о ком спрашивают чаще.
+    const контрагенты: СтрокаКонтрагента[] = [...(раскрытие.get(статья) ?? new Map())]
+      .map(([контрагент, дни]) => ({
+        контрагент,
+        поДням: дни,
+        итог: Object.values(дни).reduce((s: number, v) => s + (v as number), 0),
+      }))
+      .sort((a, b) => b.итог - a.итог);
     return {
       статья,
       поДням,
+      контрагенты,
       итог: Object.values(поДням).reduce((s, v) => s + v, 0),
       неизвестная: !СТАТЬИ.includes(статья) && статья !== НЕ_ОПОЗНАНО,
       неопознанная: статья === НЕ_ОПОЗНАНО,

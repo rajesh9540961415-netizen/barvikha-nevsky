@@ -1,3 +1,4 @@
+import { Fragment } from "react";
 import Link from "next/link";
 import Nav from "@/components/Nav";
 import { финансыЗаМесяц, type ДоляЮрлица } from "@/lib/db/finance";
@@ -9,6 +10,11 @@ const МЕСЯЦЫ = [
   "январь", "февраль", "март", "апрель", "май", "июнь",
   "июль", "август", "сентябрь", "октябрь", "ноябрь", "декабрь",
 ];
+
+/** Якорь строки: только латиница и цифры — в id кириллица и косая черта ни к чему. */
+function кусокАдреса(статья: string): string {
+  return "s" + Array.from(статья).reduce((h, c) => (h * 31 + c.codePointAt(0)!) % 1e9, 7);
+}
 
 function названиеМесяца(месяц: string): string {
   const [год, м] = месяц.split("-").map(Number);
@@ -58,7 +64,18 @@ export default async function FinancePage({
   const месяц = /^\d{4}-\d{2}$/.test(параметры.месяц ?? "") ? параметры.месяц! : поумолчанию;
   const юрлицо = параметры.юрлицо || null;
 
-  const д = await финансыЗаМесяц(месяц, юрлицо);
+  // Какие статьи раскрыты — в самом адресе, а не в памяти браузера.
+  //
+  // 💡 Так раскрытая таблица переживает обновление страницы, ложится
+  // в закладку и отправляется ссылкой. Держи мы это состояние на клиенте,
+  // экран пришлось бы делать клиентским целиком — ради галочки, которая
+  // и так прекрасно выражается адресом.
+  const раскрыто = (параметры.раскрыть ?? "")
+    .split(",")
+    .map((с) => decodeURIComponent(с.trim()))
+    .filter(Boolean);
+
+  const д = await финансыЗаМесяц(месяц, юрлицо, раскрыто);
 
   const наличные = д.источники.find((и) => и.source === "cash");
   const банк = д.источники.find((и) => и.source === "bank");
@@ -74,7 +91,23 @@ export default async function FinancePage({
   // Ссылка сохраняет месяц: переключая юрлицо, владелец остаётся в том же
   // месяце, а не улетает в текущий.
   const ссылка = (ю: string | null) =>
-    `/finance?месяц=${месяц}${ю ? `&юрлицо=${encodeURIComponent(ю)}` : ""}`;
+    `/finance?месяц=${месяц}${ю ? `&юрлицо=${encodeURIComponent(ю)}` : ""}` +
+    (раскрыто.length ? `&раскрыть=${раскрыто.map(encodeURIComponent).join(",")}` : "");
+
+  /** Адрес, в котором эта статья раскрыта или, наоборот, свёрнута. */
+  const переключить = (статья: string) => {
+    const стало = раскрыто.includes(статья)
+      ? раскрыто.filter((с) => с !== статья)
+      : [...раскрыто, статья];
+    return (
+      `/finance?месяц=${месяц}` +
+      (юрлицо ? `&юрлицо=${encodeURIComponent(юрлицо)}` : "") +
+      (стало.length ? `&раскрыть=${стало.map(encodeURIComponent).join(",")}` : "") +
+      // Возврат к той же строке: без якоря длинная таблица после нажатия
+      // прыгает в начало, и владелец теряет место, куда смотрела.
+      `#${кусокАдреса(статья)}`
+    );
+  };
 
   return (
     <>
@@ -196,8 +229,11 @@ export default async function FinancePage({
                 </tr>
               </thead>
               <tbody>
-                {д.строки.map((с) => (
-                  <tr key={с.статья} className="border-b border-line/40">
+                {д.строки.map((с) => {
+                  const раскрыта = раскрыто.includes(с.статья);
+                  return (
+                  <Fragment key={с.статья}>
+                  <tr id={кусокАдреса(с.статья)} className="border-b border-line/40">
                     <td
                       className={`sticky left-0 z-10 min-w-56 whitespace-nowrap bg-ink py-2 pr-4 text-left ${
                         с.неизвестная || с.неопознанная ? "text-alert" : ""
@@ -210,14 +246,19 @@ export default async function FinancePage({
                             : undefined
                       }
                     >
-                      {/* Статья — ссылка на разбор по контрагентам. Просьба
-                          владельца 16.08.2026: в форме этого разреза нет,
-                          и «кому именно 1,2 млн» приходится искать глазами
-                          по выписке. */}
+                      {/* ⚠️ Статья РАСКРЫВАЕТСЯ на месте, а не уводит на другую
+                          страницу. Владелец 16.08.2026: отдельная страница
+                          показывает суммы за месяц и теряет главное — в какой
+                          день кому платили. Здесь контрагенты встают теми же
+                          столбцами дней, и обе вещи видны разом. */}
                       <Link
-                        href={`/finance/article?месяц=${месяц}&статья=${encodeURIComponent(с.статья)}`}
+                        href={переключить(с.статья)}
+                        scroll={false}
                         className="hover:text-sand hover:underline"
                       >
+                        <span className="inline-block w-3 text-fg-muted">
+                          {раскрыта ? "▾" : "▸"}
+                        </span>{" "}
                         {с.статья}
                       </Link>
                       {(с.неизвестная || с.неопознанная) && " ←"}
@@ -233,7 +274,41 @@ export default async function FinancePage({
                       {money(с.итог)}
                     </td>
                   </tr>
-                ))}
+
+                  {раскрыта && с.контрагенты.map((к) => (
+                    <tr key={с.статья + "|" + к.контрагент} className="border-b border-line/20 text-fg-muted">
+                      <td className="sticky left-0 z-10 min-w-56 bg-ink py-1.5 pr-4 pl-6 text-left text-xs">
+                        {к.контрагент}
+                      </td>
+                      {д.дни.map((день) => (
+                        <td key={день} className="px-2 py-1.5 text-xs tabular-nums">
+                          {к.поДням[день]
+                            ? Math.round(к.поДням[день]).toLocaleString("ru-RU")
+                            : ""}
+                        </td>
+                      ))}
+                      <td className="whitespace-nowrap px-2 py-1.5 pl-6 text-xs tabular-nums">
+                        {money(к.итог)}
+                      </td>
+                    </tr>
+                  ))}
+
+                  {раскрыта && (
+                    <tr className="border-b border-line/40">
+                      <td colSpan={д.дни.length + 2} className="py-1.5 pl-6 text-left text-xs text-fg-muted">
+                        контрагентов {с.контрагенты.length} ·{" "}
+                        <Link
+                          href={`/finance/article?месяц=${месяц}&статья=${encodeURIComponent(с.статья)}`}
+                          className="underline hover:text-sand"
+                        >
+                          открыть страницей — там же разбивка по юрлицам
+                        </Link>
+                      </td>
+                    </tr>
+                  )}
+                  </Fragment>
+                  );
+                })}
               </tbody>
               <tfoot>
                 <tr className="border-t border-line font-medium">
