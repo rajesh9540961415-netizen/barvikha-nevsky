@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { финансыЗаМесяц } from "@/lib/db/finance";
+import { финансыЗаМесяц, type ДоляЮрлица } from "@/lib/db/finance";
 import { money } from "@/lib/format";
 
 export const dynamic = "force-dynamic";
@@ -33,6 +33,12 @@ function короткийДень(день: string): string {
  * в месяц. Из этого ритма строится план платежей — видно, что 10-е зарплата,
  * 15-е и 25-е аренда, 28-е налоги.
  *
+ * 16.08.2026 по просьбе владельца верх переделан: вместо пяти плиток подряд —
+ * два блока, выручка и расходы, каждый с разбивкой по юрлицам. «Поступления
+ * по банку», «Без вознаграждения» и «Вознаграждение» убраны: первое — деньги
+ * в пути, а не заработок, вторые два владелец решила вынести отдельной
+ * страницей.
+ *
  * Право смотреть спрашивается не здесь, а внутри `финансыЗаМесяц`: страница
  * может забыть спросить, а данные — нет. Тот же приём, что у экрана доступа.
  *
@@ -49,11 +55,25 @@ export default async function FinancePage({
   const сейчас = new Date();
   const поумолчанию = `${сейчас.getFullYear()}-${String(сейчас.getMonth() + 1).padStart(2, "0")}`;
   const месяц = /^\d{4}-\d{2}$/.test(параметры.месяц ?? "") ? параметры.месяц! : поумолчанию;
+  const юрлицо = параметры.юрлицо || null;
 
-  const д = await финансыЗаМесяц(месяц);
+  const д = await финансыЗаМесяц(месяц, юрлицо);
 
   const наличные = д.источники.find((и) => и.source === "cash");
   const банк = д.источники.find((и) => и.source === "bank");
+
+  const расходыВсего = д.расходыПоЮрлицам.reduce((s, ю) => s + ю.сумма, 0);
+  const выручкаВрозь = д.выручкаПоЮрлицам.reduce((s, ю) => s + ю.сумма, 0);
+  // Разбивка обязана складываться в итог. Итог берётся из fin_days, разбивка
+  // из fin_revenue — это два разных источника, и молчаливое расхождение между
+  // ними означало бы, что одна касса попала в один и не попала в другой.
+  const выручкаНеСходится =
+    д.выручкаПоЮрлицам.length > 0 && Math.abs(выручкаВрозь - д.итоги.выручка) > 1;
+
+  // Ссылка сохраняет месяц: переключая юрлицо, владелец остаётся в том же
+  // месяце, а не улетает в текущий.
+  const ссылка = (ю: string | null) =>
+    `/finance?месяц=${месяц}${ю ? `&юрлицо=${encodeURIComponent(ю)}` : ""}`;
 
   return (
     <main className="mx-auto max-w-[1600px] px-6 py-8">
@@ -98,15 +118,41 @@ export default async function FinancePage({
         </p>
       ) : (
         <>
-          <div className="mt-6 flex flex-wrap gap-x-10 gap-y-2 border-y border-line py-4">
-            <Итог подпись="Выручка" сумма={д.итоги.выручка} />
-            <Итог подпись="Поступления по банку" сумма={д.итоги.поступления} />
-            <Итог подпись="Расходы" сумма={д.итоги.расходы} />
-            <Итог подпись="Без вознаграждения" сумма={д.итоги.безВознаграждения} главный />
-            <Итог подпись="Вознаграждение" сумма={д.итоги.вознаграждение} />
+          <div className="mt-6 grid gap-x-16 gap-y-6 border-y border-line py-5 sm:grid-cols-2">
+            <Блок
+              подпись="Выручка"
+              итог={д.итоги.выручка}
+              доли={д.выручкаПоЮрлицам}
+              главный
+            />
+            <Блок подпись="Расходы" итог={расходыВсего} доли={д.расходыПоЮрлицам} />
           </div>
 
-          <div className="mt-6 overflow-x-auto">
+          {выручкаНеСходится && (
+            <p className="mt-3 text-sm text-alert">
+              Разбивка выручки по юрлицам даёт {money(выручкаВрозь)}, а всего
+              за месяц {money(д.итоги.выручка)}. Состав не сходится с итогом —
+              значит какая-то касса попала в один расчёт и не попала в другой.
+            </p>
+          )}
+
+          {/* Переключатель юрлиц. Меняет только таблицу ниже: блоки сверху
+              остаются целыми, иначе не с чем было бы сверить часть. */}
+          {д.ктоЕсть.length > 1 && (
+            <div className="mt-6 flex flex-wrap items-baseline gap-x-2 text-sm">
+              <span className="text-fg-muted">Расходы:</span>
+              <Кнопка href={ссылка(null)} выбрана={!д.выбрано}>
+                все
+              </Кнопка>
+              {д.ктоЕсть.map((к) => (
+                <Кнопка key={к.ключ} href={ссылка(к.ключ)} выбрана={д.выбрано === к.ключ}>
+                  {к.подпись}
+                </Кнопка>
+              ))}
+            </div>
+          )}
+
+          <div className="mt-4 overflow-x-auto">
             <table className="border-collapse text-right text-sm">
               <thead className="text-fg-muted">
                 <tr className="border-b border-line">
@@ -141,7 +187,16 @@ export default async function FinancePage({
                             : undefined
                       }
                     >
-                      {с.статья}
+                      {/* Статья — ссылка на разбор по контрагентам. Просьба
+                          владельца 16.08.2026: в форме этого разреза нет,
+                          и «кому именно 1,2 млн» приходится искать глазами
+                          по выписке. */}
+                      <Link
+                        href={`/finance/article?месяц=${месяц}&статья=${encodeURIComponent(с.статья)}`}
+                        className="hover:text-sand hover:underline"
+                      >
+                        {с.статья}
+                      </Link>
                       {(с.неизвестная || с.неопознанная) && " ←"}
                     </td>
                     {д.дни.map((день) => (
@@ -174,6 +229,16 @@ export default async function FinancePage({
             </table>
           </div>
 
+          {д.выбрано && (
+            <p className="mt-3 text-sm text-fg-muted">
+              Показаны расходы только по одному юрлицу — {money(д.итоги.расходы)}{" "}
+              из {money(расходыВсего)} за месяц.{" "}
+              <Link href={ссылка(null)} className="text-sand underline">
+                показать все
+              </Link>
+            </p>
+          )}
+
           {д.строки.some((с) => с.неопознанная) && (
             <p className="mt-4 text-sm text-alert">
               «Не опознано» — платежи, статью которых определить не удалось.
@@ -196,21 +261,66 @@ export default async function FinancePage({
   );
 }
 
-function Итог({
+/**
+ * Итог месяца с разбивкой по юрлицам.
+ *
+ * ⚠️ Строка «нет данных» пишется словами, а не нулём. У ИП Шалаевой выписки
+ * за август не загружены — ноль там читался бы как «ничего не тратила»,
+ * и это была бы уверенная ложь.
+ */
+function Блок({
   подпись,
-  сумма,
+  итог,
+  доли,
   главный,
 }: {
   подпись: string;
-  сумма: number;
+  итог: number;
+  доли: ДоляЮрлица[];
   главный?: boolean;
 }) {
   return (
     <div>
-      <div className="text-sm text-fg-muted">{подпись}</div>
-      <div className={`tabular-nums ${главный ? "text-lg text-sand" : "text-lg"}`}>
-        {money(сумма)}
+      <div className="flex items-baseline justify-between gap-6 border-b border-line/40 pb-1">
+        <span className="text-sm text-fg-muted">{подпись}</span>
+        <span className={`tabular-nums text-lg ${главный ? "text-sand" : ""}`}>
+          {money(итог)}
+        </span>
       </div>
+      <dl className="mt-2 space-y-1 text-sm">
+        {доли.map((ю) => (
+          <div key={ю.юрлицо} className="flex items-baseline justify-between gap-6">
+            <dt className="text-fg-muted">{ю.подпись}</dt>
+            <dd className={`tabular-nums ${ю.нетДанных ? "text-alert" : ""}`}>
+              {ю.нетДанных ? "нет данных" : money(ю.сумма)}
+            </dd>
+          </div>
+        ))}
+        {доли.length === 0 && (
+          <div className="text-fg-muted">разбивки по юрлицам за этот месяц нет</div>
+        )}
+      </dl>
     </div>
+  );
+}
+
+function Кнопка({
+  href,
+  выбрана,
+  children,
+}: {
+  href: string;
+  выбрана: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <Link
+      href={href}
+      className={`rounded px-2 py-0.5 ${
+        выбрана ? "bg-sand/20 text-sand" : "text-fg-muted hover:text-sand"
+      }`}
+    >
+      {children}
+    </Link>
   );
 }

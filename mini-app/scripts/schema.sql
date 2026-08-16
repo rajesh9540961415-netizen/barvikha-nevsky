@@ -370,6 +370,25 @@ create table if not exists fin_days (
   updated_at      timestamptz   not null default now()
 );
 
+-- Выручка того же дня, но врозь по юрлицам.
+--
+-- ⚠️ Отдельной таблицей, а не колонками в fin_days. Юрлиц сейчас два с кассами,
+-- было одно до 07.07.2026 и будет иначе через полгода — колонки пришлось бы
+-- заводить под каждое. Строка на пару «день + юрлицо» переживает это молча.
+--
+-- ⚠️ И это НЕ дубль fin_days: там выручка заведения целиком, здесь её состав.
+-- Складывать одно из другого экран не станет — итог берётся из fin_days,
+-- разбивка отсюда. Если они разойдутся, это видно сразу, а не сглаживается.
+create table if not exists fin_revenue (
+  day           text          not null,          -- ГГГГ-ММ-ДД
+  entity        text          not null,          -- mav / ip_shalaeva / …
+  revenue_card  numeric(14,2),
+  revenue_cash  numeric(14,2),
+  checks_count  integer,
+  updated_at    timestamptz   not null default now(),
+  primary key (day, entity)
+);
+
 -- Докуда доведён каждый источник.
 --
 -- ⚠️ Отдельной таблицей, а не «последней датой в fin_operations». Последняя

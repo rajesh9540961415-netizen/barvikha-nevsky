@@ -87,18 +87,33 @@ try {
 
   await sql.unsafe(readFileSync(join(here, "schema.sql"), "utf8"));
 
+  // ⚠️ Список полный нарочно, вместе с финансовыми таблицами. Проверка стоит
+  // перед запуском (`db-setup && npm start` в Dockerfile) ровно затем, чтобы
+  // приложение не поднялось с неполной схемой и не упало потом на живом
+  // экране. Таблицу, которой в списке нет, эта проверка не сторожит вовсе —
+  // 16.08.2026 так и было: четыре fin_-таблицы отсутствовали в списке,
+  // и недостающая обнаружилась бы только глазами владельца.
   const where = schema ?? "public";
-  const [{ count }] = await sql`
-    select count(*) from information_schema.tables
+  const НУЖНЫ = [
+    "entries", "shifts", "manual_people", "qr_tips",
+    "managers", "manager_logins", "shift_changes",
+    "fin_operations", "fin_days", "fin_revenue", "fin_sources",
+  ];
+  const есть = await sql`
+    select table_name from information_schema.tables
      where table_schema = ${where}
-       and table_name in ('entries', 'shifts', 'manual_people',
-                          'qr_tips', 'managers', 'manager_logins',
-                          'shift_changes')
+       and table_name in ${sql(НУЖНЫ)}
   `;
-  console.log(`✓ Схема на месте: ${count} из 7 таблиц`);
+  console.log(`✓ Схема на месте: ${есть.length} из ${НУЖНЫ.length} таблиц`);
 
-  if (Number(count) !== 7) {
-    console.error("✗ Таблиц меньше, чем должно быть. Дальше идти нельзя.");
+  if (есть.length !== НУЖНЫ.length) {
+    // Называем недостающие поимённо: «таблиц меньше» заставляет искать руками,
+    // а список сразу говорит, чего ждать от следующей выкладки.
+    const найдено = new Set(есть.map((т) => т.table_name));
+    console.error(
+      `✗ Не хватает таблиц: ${НУЖНЫ.filter((т) => !найдено.has(т)).join(", ")}.`,
+    );
+    console.error("  Дальше идти нельзя: приложение упадёт на первом же экране.");
     process.exit(1);
   }
 } catch (e) {
