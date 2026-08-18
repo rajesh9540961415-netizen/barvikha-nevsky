@@ -55,7 +55,17 @@ export default function ShiftCrew({
   const [open, setOpen] = useState<string | null>(
     initial.crew.length === 0 ? "crew" : null,
   );
-  const [adding, setAdding] = useState(false);
+  /**
+   * В каком разделе сейчас вписывают человека руками.
+   *
+   * Раньше вписать можно было только в официантах, и человек попадал в состав
+   * зала — даже если выходил администратором. Из-за этого Елизавету
+   * Недорезову, которой нет в кассе, приходилось заводить официантом, а потом
+   * убирать; вместе с ней из выгрузок пропадало её имя, и деньги становились
+   * безымянными. Теперь вписать можно в любой роли, и в зал человек при этом
+   * не попадает.
+   */
+  const [addingIn, setAddingIn] = useState<string | null>(null);
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -104,14 +114,22 @@ export default function ShiftCrew({
     }));
   }
 
-  async function add() {
+  async function add(section: string) {
     const before = manual.map((p) => p.id);
     const next = await addManualPerson(name);
     onManualChange(next);
     const fresh = next.find((p) => !before.includes(p.id));
-    if (fresh) setShift((s) => ({ ...s, crew: [...s.crew, fresh.id] }));
+    if (fresh) {
+      // Куда именно вписали, туда человек и попадает. В зал — только если
+      // вписывали в зал: у официантов состав влияет на долю кассира.
+      if (section === "crew") toggleCrew(fresh.id);
+      else if (section === "hostess") toggleHostess(fresh.id);
+      else if (section === "operator" || section === "admin" || section === "cashier") {
+        pick(section, fresh.id);
+      }
+    }
     setName("");
-    setAdding(false);
+    setAddingIn(null);
   }
 
   async function drop(person: Employee) {
@@ -186,44 +204,14 @@ export default function ShiftCrew({
           </>
         )}
 
-        <div className="px-4 pt-3">
-          {adding ? (
-            <div className="flex gap-2">
-              <input
-                autoFocus
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && add()}
-                placeholder="Максим, стажёр"
-                className="min-w-0 flex-1 rounded-xl border border-line bg-surface px-3 py-3 text-sm outline-none placeholder:text-fg-muted focus:border-sand"
-              />
-              <button
-                onClick={add}
-                disabled={!name.trim()}
-                className="rounded-xl bg-sand px-4 text-sm text-ink disabled:bg-surface disabled:text-fg-muted"
-              >
-                Добавить
-              </button>
-              <button
-                onClick={() => {
-                  setAdding(false);
-                  setName("");
-                }}
-                aria-label="Отмена"
-                className="rounded-xl border border-line px-3 text-fg-muted"
-              >
-                ✕
-              </button>
-            </div>
-          ) : (
-            <button
-              onClick={() => setAdding(true)}
-              className="w-full rounded-xl border border-dashed border-line py-3 text-sm text-fg-muted active:bg-surface"
-            >
-              + Кого нет в списке
-            </button>
-          )}
-        </div>
+        <AddPerson
+          section="crew"
+          openIn={addingIn}
+          name={name}
+          onName={setName}
+          onOpen={setAddingIn}
+          onAdd={add}
+        />
       </Section>
 
       <Section
@@ -236,6 +224,14 @@ export default function ShiftCrew({
           people={everyone}
           selected={shift.operator}
           onPick={(id) => pick("operator", id)}
+        />
+        <AddPerson
+          section="operator"
+          openIn={addingIn}
+          name={name}
+          onName={setName}
+          onOpen={setAddingIn}
+          onAdd={add}
         />
       </Section>
 
@@ -251,6 +247,14 @@ export default function ShiftCrew({
           selected={shift.admin}
           onPick={(id) => pick("admin", id)}
         />
+        <AddPerson
+          section="admin"
+          openIn={addingIn}
+          name={name}
+          onName={setName}
+          onOpen={setAddingIn}
+          onAdd={add}
+        />
       </Section>
 
       <Section
@@ -264,6 +268,14 @@ export default function ShiftCrew({
           people={everyone}
           selected={shift.cashier}
           onPick={(id) => pick("cashier", id)}
+        />
+        <AddPerson
+          section="cashier"
+          openIn={addingIn}
+          name={name}
+          onName={setName}
+          onOpen={setAddingIn}
+          onAdd={add}
         />
       </Section>
 
@@ -281,6 +293,14 @@ export default function ShiftCrew({
           people={everyone}
           selected={shift.hostess}
           onToggle={toggleHostess}
+        />
+        <AddPerson
+          section="hostess"
+          openIn={addingIn}
+          name={name}
+          onName={setName}
+          onOpen={setAddingIn}
+          onAdd={add}
         />
       </Section>
 
@@ -330,6 +350,72 @@ export default function ShiftCrew({
             достаточно открыть приложение. */}
         <p className="pt-3 text-center text-xs text-fg-muted">сборка {BUILD}</p>
       </div>
+    </div>
+  );
+}
+
+/**
+ * «Кого нет в списке» — вписать человека прямо здесь.
+ *
+ * Стоит в каждом разделе, а не только у официантов: администратора или
+ * кассира, которых нет в кассе Quick Resto, раньше приходилось заводить
+ * официантом. Человек попадал в зал, менял долю кассира и путал отчёт,
+ * а убрать его оттуда значило потерять его имя в выгрузках.
+ */
+function AddPerson({
+  section,
+  openIn,
+  name,
+  onName,
+  onOpen,
+  onAdd,
+}: {
+  section: string;
+  openIn: string | null;
+  name: string;
+  onName: (v: string) => void;
+  onOpen: (v: string | null) => void;
+  onAdd: (section: string) => void;
+}) {
+  const open = openIn === section;
+  return (
+    <div className="px-4 pt-3">
+      {open ? (
+        <div className="flex gap-2">
+          <input
+            autoFocus
+            value={name}
+            onChange={(e) => onName(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && onAdd(section)}
+            placeholder="Максим, стажёр"
+            className="min-w-0 flex-1 rounded-xl border border-line bg-surface px-3 py-3 text-sm outline-none placeholder:text-fg-muted focus:border-sand"
+          />
+          <button
+            onClick={() => onAdd(section)}
+            disabled={!name.trim()}
+            className="rounded-xl bg-sand px-4 text-sm text-ink disabled:bg-surface disabled:text-fg-muted"
+          >
+            Добавить
+          </button>
+          <button
+            onClick={() => {
+              onOpen(null);
+              onName("");
+            }}
+            aria-label="Отмена"
+            className="rounded-xl border border-line px-3 text-fg-muted"
+          >
+            ✕
+          </button>
+        </div>
+      ) : (
+        <button
+          onClick={() => onOpen(section)}
+          className="w-full rounded-xl border border-dashed border-line py-3 text-sm text-fg-muted active:bg-surface"
+        >
+          + Кого нет в списке
+        </button>
+      )}
     </div>
   );
 }

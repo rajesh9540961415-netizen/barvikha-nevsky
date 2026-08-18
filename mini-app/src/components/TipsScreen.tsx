@@ -452,6 +452,26 @@ export default function TipsScreen() {
 
   async function saveShift(next: Shift) {
     try {
+      // Имена едут вместе с составом. Иначе смена хранит одни номера, а имя
+      // ищется в справочнике — и человек, убранный из дописанных вручную,
+      // превращается в безымянные деньги. За август 2026 так выпало
+      // 44 998,72 ₽ по девяти сменам.
+      const справочник = [...everyone, ...getHookahPeople()];
+      const names: Record<string, string> = { ...(next.names ?? {}) };
+      const назван = [
+        ...next.crew,
+        ...next.hostess,
+        ...next.hookah,
+        next.operator,
+        next.admin,
+        next.cashier,
+      ];
+      for (const id of назван) {
+        if (id === null) continue;
+        const кто = справочник.find((p) => p.id === id);
+        if (кто) names[String(id)] = кто.name;
+      }
+      next = { ...next, names };
       // Уходит через очередь: без сети состав всё равно сохранится на телефоне
       // и доедет позже, а вечер можно начинать сразу.
       await setShift(day, next);

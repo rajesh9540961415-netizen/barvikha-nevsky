@@ -466,3 +466,15 @@ alter table entries add column if not exists contour text not null default 'hall
 -- а номера обе кассы выдают из одного ряда и однажды столкнутся.
 alter table shifts add column if not exists hostess integer[] not null default '{}';
 alter table shifts add column if not exists hookah  integer[] not null default '{}';
+
+-- Имена людей смены рядом с их номерами.
+--
+-- Состав хранит номера, а имя ищется по справочнику кассы и по дописанным
+-- вручную. Человека убрали из дописанных — смена осталась с номером без
+-- имени: деньги есть, получатель безымянный. За август 2026 так выпало
+-- 44 998,72 ₽ по девяти сменам, и увидели это только сверкой с таблицей
+-- управляющей компании.
+--
+-- Записи о чаевых от этого защищены с самого начала: они хранят имя внутри
+-- себя. Состав смены теперь тоже.
+alter table shifts add column if not exists names jsonb not null default '{}'::jsonb;

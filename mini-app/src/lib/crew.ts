@@ -35,6 +35,7 @@ export const EMPTY_SHIFT: Shift = {
   cashier: null,
   hostess: [],
   hookah: [],
+  names: {},
 };
 
 export async function getShift(businessDay: string): Promise<Shift> {

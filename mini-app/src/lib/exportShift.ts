@@ -77,8 +77,14 @@ export function buildExport(
   everyone: Employee[],
 ): ShiftExport {
   const s = splitShift(entries, crew, day);
+  // Сначала справочник, потом имена, сохранённые вместе со сменой.
+  // Второе важнее первого по надёжности: справочник меняется, а смена —
+  // документ, и в нём записано, кто работал В ТОТ ВЕЧЕР.
   const nameOf = (id: number | null) =>
-    everyone.find((p) => p.id === id)?.name ?? null;
+    (id === null
+      ? null
+      : everyone.find((p) => p.id === id)?.name ?? shift.names?.[String(id)]) ??
+    null;
 
   // Хостес — из общего списка зала и дописанных руками, кальянщики — из кассы
   // ИП Шалаевой. Расчёт добирает и тех, кого в составе смены уже нет, но
