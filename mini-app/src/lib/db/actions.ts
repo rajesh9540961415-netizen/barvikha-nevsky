@@ -474,6 +474,7 @@ type ShiftRow = {
   crew: number[];
   operator_id: number | null;
   admin_id: number | null;
+  admin2_id: number | null;
   cashier_id: number | null;
   hostess: number[] | null;
   hookah: number[] | null;
@@ -485,6 +486,7 @@ function toShift(r: ShiftRow): Shift {
     crew: r.crew,
     operator: r.operator_id,
     admin: r.admin_id,
+    admin2: r.admin2_id ?? null,
     cashier: r.cashier_id,
     // У смен до 18.08.2026 этих столбцов не было: пусто значит «никого».
     hostess: r.hostess ?? [],
@@ -552,12 +554,12 @@ export async function writeShift(
   const sql = db();
   await sql`
     insert into shifts (
-      business_day, crew, operator_id, admin_id, cashier_id, hostess, hookah,
-      names
+      business_day, crew, operator_id, admin_id, admin2_id, cashier_id,
+      hostess, hookah, names
     )
     values (
       ${businessDay}, ${shift.crew}, ${shift.operator},
-      ${shift.admin}, ${shift.cashier},
+      ${shift.admin}, ${shift.admin2 ?? null}, ${shift.cashier},
       ${shift.hostess ?? []}, ${shift.hookah ?? []},
       ${sql.json(shift.names ?? {})}
     )
@@ -565,6 +567,7 @@ export async function writeShift(
       crew = excluded.crew,
       operator_id = excluded.operator_id,
       admin_id = excluded.admin_id,
+      admin2_id = excluded.admin2_id,
       cashier_id = excluded.cashier_id,
       hostess = excluded.hostess,
       hookah = excluded.hookah,

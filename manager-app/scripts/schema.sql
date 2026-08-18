@@ -478,3 +478,12 @@ alter table shifts add column if not exists hookah  integer[] not null default '
 -- Записи о чаевых от этого защищены с самого начала: они хранят имя внутри
 -- себя. Состав смены теперь тоже.
 alter table shifts add column if not exists names jsonb not null default '{}'::jsonb;
+
+-- Второй администратор смены.
+--
+-- С августа 2026 смену администратора делят надвое: работают по очереди.
+-- Доля администратора делится пополам между ними — так считали на бумаге
+-- (5 августа 2026: 2 812 и 2 812, копейка в копейку).
+--
+-- Пусто в обычную смену: тогда вся доля уходит одному, как и раньше.
+alter table shifts add column if not exists admin2_id integer;

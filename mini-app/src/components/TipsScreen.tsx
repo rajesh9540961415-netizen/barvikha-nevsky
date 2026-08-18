@@ -1075,6 +1075,7 @@ export default function TipsScreen() {
           entries={entries}
           crew={crew}
           side={sideSplit}
+          shift={shift}
           // Итоги считаются вместе с неотправленным — иначе сумма была бы
           // меньше настоящей. Но сказать, что часть ещё не в базе, надо.
           waiting={waitingSummary}

@@ -1,8 +1,9 @@
 "use client";
 
 import { formatBusinessDay, formatMoney } from "@/lib/businessDay";
-import { THRESHOLD, splitShift } from "@/lib/split";
+import { THRESHOLD, adminShares, splitShift } from "@/lib/split";
 import type { SideSplit } from "@/lib/split";
+import type { Shift } from "@/lib/types";
 import type { Employee, Entry } from "@/lib/types";
 import { BUILD } from "@/lib/version";
 
@@ -38,6 +39,8 @@ type Props = {
   exporting: boolean;
   /** Хостес и кальянный бар: считаются рядом, ни с кем не делятся. */
   side: Record<"hostess" | "hookah", SideSplit>;
+  /** Состав смены — нужен, чтобы знать, сколько администраторов. */
+  shift?: Shift;
 };
 
 export default function ShiftSummary({
@@ -45,6 +48,7 @@ export default function ShiftSummary({
   entries,
   crew,
   side,
+  shift,
   waiting,
   onClose,
   onHistory,
@@ -58,6 +62,7 @@ export default function ShiftSummary({
   // и кальянный бар. Если бы здесь она была только зальной, два экрана
   // показывали бы разные итоги за один вечер — и объяснить это было бы нечем.
   const sideTotal = side.hostess.total + side.hookah.total;
+  const админов = shift ? [shift.admin, shift.admin2].filter((x) => x !== null).length : 1;
 
   /**
    * Сходится ли разложенное по блокам с тем, что записали за вечер.
@@ -167,7 +172,21 @@ export default function ShiftSummary({
       )}
 
       <div className="px-4 pt-3">
-        <Row label="Администратору" value={s.adminTotal} />
+        {/* Администраторов может быть двое: смену делят надвое, доля —
+            пополам. Показываем каждому его половину, а не общую сумму:
+            человек смотрит сюда, чтобы узнать СВОИ деньги. */}
+        {админов > 1 ? (
+          adminShares(s.adminTotal, админов).map((доля, i) => (
+            <Row
+              key={i}
+              label={`Администратору ${i + 1}`}
+              value={доля}
+              note={i === 0 ? "смену делили надвое, доля пополам" : undefined}
+            />
+          ))
+        ) : (
+          <Row label="Администратору" value={s.adminTotal} />
+        )}
         <Row
           label="Кассиру"
           value={s.cashierTotal}

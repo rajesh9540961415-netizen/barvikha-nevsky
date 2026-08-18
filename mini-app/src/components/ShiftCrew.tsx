@@ -82,7 +82,7 @@ export default function ShiftCrew({
     }));
   }
 
-  function pick(role: "operator" | "admin" | "cashier", id: number) {
+  function pick(role: "operator" | "admin" | "admin2" | "cashier", id: number) {
     setShift((s) => ({ ...s, [role]: s[role] === id ? null : id }));
   }
 
@@ -124,7 +124,12 @@ export default function ShiftCrew({
       // вписывали в зал: у официантов состав влияет на долю кассира.
       if (section === "crew") toggleCrew(fresh.id);
       else if (section === "hostess") toggleHostess(fresh.id);
-      else if (section === "operator" || section === "admin" || section === "cashier") {
+      else if (
+        section === "operator" ||
+        section === "admin" ||
+        section === "admin2" ||
+        section === "cashier"
+      ) {
         pick(section, fresh.id);
       }
     }
@@ -140,6 +145,7 @@ export default function ShiftCrew({
       hostess: s.hostess.filter((x) => x !== person.id),
       operator: s.operator === person.id ? null : s.operator,
       admin: s.admin === person.id ? null : s.admin,
+      admin2: s.admin2 === person.id ? null : s.admin2,
       cashier: s.cashier === person.id ? null : s.cashier,
     }));
   }
@@ -249,6 +255,35 @@ export default function ShiftCrew({
         />
         <AddPerson
           section="admin"
+          openIn={addingIn}
+          name={name}
+          onName={setName}
+          onOpen={setAddingIn}
+          onAdd={add}
+        />
+      </Section>
+
+      {/* Второй администратор — только когда смену делят надвое. Строка
+          стоит всегда, но обычный вечер её не замечает: «нет» и «нет».
+          Доля делится пополам между двумя, кассир при этом всегда один. */}
+      <Section
+        title="Второй администратор"
+        hint={
+          shift.admin2 === null
+            ? "если смену делили надвое"
+            : "доля администратора делится пополам"
+        }
+        summary={nameOf(everyone, shift.admin2) ?? "нет"}
+        open={open === "admin2"}
+        onToggle={() => setOpen(open === "admin2" ? null : "admin2")}
+      >
+        <RolePicker
+          people={everyone}
+          selected={shift.admin2}
+          onPick={(id) => pick("admin2", id)}
+        />
+        <AddPerson
+          section="admin2"
           openIn={addingIn}
           name={name}
           onName={setName}

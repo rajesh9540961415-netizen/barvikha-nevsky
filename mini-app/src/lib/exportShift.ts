@@ -1,6 +1,6 @@
 import type { Shift } from "./crew";
 import { getHookahPeople } from "./people";
-import { HOOKAH_POT_ID, splitShift, splitSide } from "./split";
+import { HOOKAH_POT_ID, adminShares, splitShift, splitSide } from "./split";
 import type { Employee, Entry } from "./types";
 
 /**
@@ -39,7 +39,19 @@ export type ShiftExport = {
      */
     accrued: number;
   }[];
+  /**
+   * Администратор смены. Оставлено ради совместимости: отчёт читает это поле
+   * с 01.08.2026. Когда администраторов двое, здесь стоит ПЕРВЫЙ и его
+   * половина — полную сумму смены брать надо из `admins`.
+   */
   admin: { name: string | null; amount: number };
+  /**
+   * Все администраторы смены с их долями. Один — список из одного.
+   *
+   * Отдельным списком, а не двумя полями: доля делится пополам, и сумма
+   * по списку обязана сходиться с отчислением смены при любом их числе.
+   */
+  admins: { name: string | null; amount: number }[];
   cashier: { name: string | null; amount: number };
   /**
    * Хостес и кальянный бар — два котла, которые ни с кем не делятся.
@@ -89,6 +101,13 @@ export function buildExport(
   // Хостес — из общего списка зала и дописанных руками, кальянщики — из кассы
   // ИП Шалаевой. Расчёт добирает и тех, кого в составе смены уже нет, но
   // записи на них есть: спрятать настоящие деньги нельзя.
+  // Администраторов может быть двое: смену делят надвое и работают по
+  // очереди. Доля делится пополам — решение владельца 18.08.2026.
+  const админы = [shift.admin, shift.admin2].filter(
+    (id): id is number => id !== null && id !== undefined,
+  );
+  const доли = adminShares(s.adminTotal, админы.length || 1);
+
   const hostessPeople = everyone.filter((p) => shift.hostess.includes(p.id));
   const hookahPeople = getHookahPeople().filter(
     // Общий котёл бара в составе смены не отмечается, но получателем быть
@@ -131,7 +150,8 @@ export function buildExport(
       service: w.service,
       accrued: w.accrued,
     })),
-    admin: { name: nameOf(shift.admin), amount: s.adminTotal },
+    admin: { name: nameOf(админы[0] ?? null), amount: доли[0] ?? 0 },
+    admins: админы.map((id, i) => ({ name: nameOf(id), amount: доли[i] })),
     cashier: { name: nameOf(shift.cashier), amount: s.cashierTotal },
     hostess: side("hostess", hostessPeople),
     hookah: side("hookah", hookahPeople),

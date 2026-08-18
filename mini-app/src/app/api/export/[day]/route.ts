@@ -40,6 +40,7 @@ const ПУСТАЯ_СМЕНА: Shift = {
   crew: [],
   operator: null,
   admin: null,
+  admin2: null,
   cashier: null,
   hostess: [],
   hookah: [],
