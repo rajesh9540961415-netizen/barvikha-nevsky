@@ -59,6 +59,24 @@ export default function ShiftSummary({
   // показывали бы разные итоги за один вечер — и объяснить это было бы нечем.
   const sideTotal = side.hostess.total + side.hookah.total;
 
+  /**
+   * Сходится ли разложенное по блокам с тем, что записали за вечер.
+   *
+   * Деньги могут потеряться между блоками, и молча: запись, приписанная
+   * человеку, которого нет ни в официантах смены, ни в хостес, ни в баре,
+   * не попадёт никуда. Так бывает, если состав смены поправили ПОСЛЕ ввода —
+   * убрали человека, а его записи остались.
+   *
+   * Проверено 18.08.2026 на своей базе: 2 000 ₽ исчезли из всех блоков,
+   * и ни один экран об этом не сказал. Считаем вторым путём — прямо
+   * по записям — и, если не сошлось, говорим вслух. Ноль сюда не пишем:
+   * строка, которая висит всегда, перестаёт быть сигналом.
+   */
+  const recorded = entries
+    .filter((e) => e.kind !== "staff")
+    .reduce((sum, e) => sum + e.amount, 0);
+  const lost = Math.round((recorded - s.totalEarned - sideTotal) * 100) / 100;
+
   return (
     <div className="flex min-h-dvh flex-col pb-8">
       <header className="flex items-center gap-3 border-b border-line px-4 py-2.5">
@@ -135,6 +153,18 @@ export default function ShiftSummary({
           )}
         </div>
       </div>
+
+      {lost !== 0 && (
+        <div className="mx-4 mt-3 rounded-xl border border-alert bg-alert/10 px-3 py-2">
+          <div className="text-sm text-fg">
+            Не разложено по блокам: {formatMoney(lost)}
+          </div>
+          <div className="text-xs text-fg-muted">
+            эти деньги записаны, но приписаны тому, кого нет ни в официантах,
+            ни в хостес, ни в кальянном баре — проверьте состав смены
+          </div>
+        </div>
+      )}
 
       <div className="px-4 pt-3">
         <Row label="Администратору" value={s.adminTotal} />
@@ -376,11 +406,34 @@ function SidePart({ title, calc }: { title: string; calc: SideSplit }) {
                 <span className="text-base">{r.payeeName}</span>
                 <span className="tabular-nums">{formatMoney(r.total)}</span>
               </div>
+              {/* Показываем только то, что было. «Наличные 0 ₽» рядом
+                  с сервисным сбором — не информация, а шум. */}
               <div className="text-xs text-fg-muted">
-                наличные {formatMoney(r.cash)}
-                {r.qr > 0 && ` · QR ${formatMoney(r.qr)}`}
-                {r.service > 0 && ` · сбор ${formatMoney(r.service)}`}
+                {[
+                  r.cash > 0 && `наличные ${formatMoney(r.cash)}`,
+                  r.qr > 0 && `QR ${formatMoney(r.qr)}`,
+                  r.service > 0 && `сбор ${formatMoney(r.service)}`,
+                ]
+                  .filter(Boolean)
+                  .join(" · ")}
               </div>
+              {/* Питание — единственное, что уменьшает выплату хостес.
+                  Показываем отдельной строкой: иначе «на руки» окажется
+                  меньше начисленного без единого объяснения. */}
+              {r.staff > 0 && (
+                <>
+                  <div className="mt-1 flex justify-between text-sm">
+                    <span className="text-fg-muted">удержано за питание</span>
+                    <span className="tabular-nums text-fg-muted">
+                      −{formatMoney(r.staff)}
+                    </span>
+                  </div>
+                  <div className="flex justify-between text-sm">
+                    <span className="text-fg-muted">на руки</span>
+                    <span className="tabular-nums">{formatMoney(r.net)}</span>
+                  </div>
+                </>
+              )}
             </div>
           ))}
       </div>

@@ -647,6 +647,11 @@ export default function TipsScreen() {
    */
   async function addStaff(amount: number, waiter: Employee) {
     if (!operator) return;
+    // Обед хостес принадлежит её котлу, а не залу: иначе он вычелся бы
+    // из зальных денег, где этого человека нет вовсе, и просто пропал.
+    const contour: Contour = shift.hostess.includes(waiter.id)
+      ? "hostess"
+      : "hall";
     const entry: Entry = {
       id: crypto.randomUUID(),
       hallId: null,
@@ -659,6 +664,7 @@ export default function TipsScreen() {
       gross: amount,
       commissionRate: 0,
       kind: "staff",
+      contour,
       operatorId: operator.id,
       operatorName: operator.name,
       createdAt: new Date().toISOString(),
@@ -1007,8 +1013,22 @@ export default function TipsScreen() {
     if (showStaff) {
       return (
         <StaffScreen
-          crew={crew}
-          split={splitShift(entries, crew, day).waiters}
+          // Хостес едят так же, как официанты, и вычет у них такой же
+          // (решение владельца 18.08.2026). Кальянщиков здесь нет: другое
+          // юрлицо, заведение не кормит их за счёт чаевых.
+          crew={[...crew, ...hostessPeople]}
+          eaten={(id) =>
+            splitShift(entries, crew, day).waiters.find((w) => w.waiterId === id)
+              ?.staff ??
+            sideSplit.hostess.rows.find((r) => r.payeeId === id)?.staff ??
+            0
+          }
+          payout={(id) =>
+            splitShift(entries, crew, day).waiters.find((w) => w.waiterId === id)
+              ?.net ??
+            sideSplit.hostess.rows.find((r) => r.payeeId === id)?.net ??
+            0
+          }
           onCancel={() => setShowStaff(false)}
           onConfirm={addStaff}
         />

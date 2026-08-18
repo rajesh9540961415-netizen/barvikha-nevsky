@@ -3,7 +3,6 @@
 import { useState } from "react";
 import { formatMoney } from "@/lib/businessDay";
 import type { Employee } from "@/lib/types";
-import type { WaiterSplit } from "@/lib/split";
 
 /**
  * Питание сотрудников — вычет из выплаты.
@@ -16,6 +15,10 @@ import type { WaiterSplit } from "@/lib/split";
  * Он и сегодня считает эти вычеты в конце смены — просто нигде их
  * не сохраняет. Здесь та же работа, но цифры остаются: попадают в итоги,
  * в отчёт, и никто не забудет вычесть.
+ *
+ * С 18.08.2026 сюда попадают и хостес: у них питание вычитается так же,
+ * как у официантов (решение владельца). Кальянщиков здесь нет и быть
+ * не должно — они у ИП Шалаевой, заведение не кормит их за счёт чаевых.
  */
 
 const KEYS = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "00", "0", "⌫"];
@@ -24,17 +27,20 @@ const KEYS = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "00", "0", "⌫"];
 const MAX_AMOUNT = 50_000;
 
 type Props = {
-  /** Официанты смены — из их выплаты и вычитается питание. */
+  /** Кто мог поесть: официанты смены и хостес. */
   crew: Employee[];
-  /** Уже посчитанное по каждому: сколько заработал и сколько проел. */
-  split: WaiterSplit[];
+  /** Сколько человек уже проел за смену — чтобы не внести обед дважды. */
+  eaten: (id: number) => number;
+  /** Сколько ему причитается на руки сейчас, до этого вычета. */
+  payout: (id: number) => number;
   onCancel: () => void;
   onConfirm: (amount: number, waiter: Employee) => Promise<void>;
 };
 
 export default function StaffScreen({
   crew,
-  split,
+  eaten,
+  payout,
   onCancel,
   onConfirm,
 }: Props) {
@@ -48,7 +54,7 @@ export default function StaffScreen({
   const ready = amount > 0 && waiter !== null && !saving;
 
   /** Что у человека уже записано — чтобы не вносить обед дважды. */
-  const already = (id: number) => split.find((w) => w.waiterId === id)?.staff ?? 0;
+  const already = eaten;
 
   function press(key: string) {
     setFailed(false);
@@ -73,7 +79,7 @@ export default function StaffScreen({
     }
   }
 
-  const chosen = waiter ? split.find((w) => w.waiterId === waiter.id) : null;
+
 
   return (
     <div className="flex min-h-dvh flex-col">
@@ -96,9 +102,9 @@ export default function StaffScreen({
         </span>
         {/* Сразу видно, что останется человеку: вычет может увести в минус,
             и узнать об этом лучше до записи, а не в конце смены. */}
-        {chosen && amount > 0 && (
+        {waiter && amount > 0 && (
           <span className="text-xs text-fg-muted">
-            {chosen.waiterName}: на руки {formatMoney(chosen.net - amount)}
+            {waiter.short}: на руки {formatMoney(payout(waiter.id) - amount)}
           </span>
         )}
       </div>

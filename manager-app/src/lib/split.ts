@@ -371,8 +371,22 @@ export type PayeeSplit = {
   service: number;
   /** Чаевые без сервисного сбора — наличные и QR. */
   tips: number;
-  /** Всё, что человек получил за смену. Начислено ему столько же. */
+  /**
+   * Всё, что человек получил за смену. Начислено ему столько же:
+   * отчислений здесь нет ни у кого.
+   */
   total: number;
+  /**
+   * Сколько проел за смену — вычет, а не доход.
+   *
+   * У хостес питание вычитается так же, как у официантов: решение владельца
+   * 18.08.2026, вопрос закрыт. У кальянного бара его быть не может — другое
+   * юрлицо, заведение не кормит их за счёт чаевых, и на экране питания
+   * кальянщиков нет вовсе.
+   */
+  staff: number;
+  /** Начислено минус питание — столько человек получает на руки. */
+  net: number;
 };
 
 export type SideSplit = {
@@ -381,8 +395,19 @@ export type SideSplit = {
   totalQr: number;
   totalService: number;
   totalTips: number;
-  /** Весь контур за смену. Ровно столько уходит людям — ничего не удержано. */
+  /**
+   * Весь контур за смену: столько начислено людям.
+   *
+   * Отчислений здесь нет — ни администратору, ни кассиру. Питание в эту
+   * сумму тоже не входит: это встречная покупка сотрудника у заведения,
+   * и в отчёт она не идёт (решение владельца 08.08.2026). Сколько выйдет
+   * на руки после обедов — в `totalNet`.
+   */
   total: number;
+  /** Удержано за питание по всему контуру. У кальянного бара всегда ноль. */
+  totalStaff: number;
+  /** Начислено минус питание. */
+  totalNet: number;
 };
 
 /**
@@ -424,6 +449,10 @@ export function splitSide(
     const qr = by("qr");
     const service = by("service");
     const tips = money(cash + qr);
+    // Питание вычитается из того, что человек получил. Может увести в минус —
+    // тогда так и показываем: обнулять значит скрыть долг, как и у официантов.
+    const staff = by("staff");
+    const total = money(tips + service);
 
     return {
       payeeId,
@@ -432,7 +461,9 @@ export function splitSide(
       qr,
       service,
       tips,
-      total: money(tips + service),
+      total,
+      staff,
+      net: money(total - staff),
     };
   });
 
@@ -448,5 +479,7 @@ export function splitSide(
     totalService: sum((r) => r.service),
     totalTips: sum((r) => r.tips),
     total: sum((r) => r.total),
+    totalStaff: sum((r) => r.staff),
+    totalNet: sum((r) => r.net),
   };
 }
