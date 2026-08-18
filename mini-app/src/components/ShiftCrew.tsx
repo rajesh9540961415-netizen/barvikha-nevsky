@@ -40,6 +40,21 @@ export default function ShiftCrew({
   onCancel,
 }: Props) {
   const [shift, setShift] = useState<Shift>(initial);
+  /**
+   * Какой раздел раскрыт. Одновременно только один.
+   *
+   * Людей в кассе стало 23, а списков на экране шесть — официанты, три роли,
+   * хостес и кальянный бар. Развёрнутые разом, они дают экран в несколько
+   * телефонов длиной, и собрать смену становится работой с прокруткой,
+   * а не с людьми. Поэтому разделы свёрнуты, и в строке каждого видно,
+   * кто уже выбран, — раскрывать нужно только то, что меняешь.
+   *
+   * При входе раскрыты официанты и только если смену ещё не собрали:
+   * вечер начинается с них. Пришли поправить готовую смену — всё сложено.
+   */
+  const [open, setOpen] = useState<string | null>(
+    initial.crew.length === 0 ? "crew" : null,
+  );
   const [adding, setAdding] = useState(false);
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
@@ -126,115 +141,162 @@ export default function ShiftCrew({
         <div>
           <h1 className="text-lg">Кто на смене</h1>
           <p className="text-xs text-fg-muted">
-            смена · {formatBusinessDay(day)} · отметьте официантов
+            смена · {formatBusinessDay(day)} · нажмите строку, чтобы раскрыть
           </p>
         </div>
       </header>
 
-      <div className="grid grid-cols-2 gap-2 px-4">
-        {FROM_QUICK_RESTO.map((p) => (
-          <PersonButton
-            key={p.id}
-            person={p}
-            on={shift.crew.includes(p.id)}
-            onToggle={() => toggleCrew(p.id)}
-          />
-        ))}
-      </div>
-
-      {manual.length > 0 && (
-        <>
-          <div className="px-4 pb-1.5 pt-4 text-xs text-fg-muted">
-            дописаны вручную
-          </div>
-          <div className="grid grid-cols-2 gap-2 px-4">
-            {manual.map((p) => (
-              <PersonButton
-                key={p.id}
-                person={p}
-                on={shift.crew.includes(p.id)}
-                onToggle={() => toggleCrew(p.id)}
-                onRemove={() => drop(p)}
-              />
-            ))}
-          </div>
-        </>
-      )}
-
-      <div className="px-4 pt-3">
-        {adding ? (
-          <div className="flex gap-2">
-            <input
-              autoFocus
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && add()}
-              placeholder="Максим, стажёр"
-              className="min-w-0 flex-1 rounded-xl border border-line bg-surface px-3 py-3 text-sm outline-none placeholder:text-fg-muted focus:border-sand"
+      <Section
+        title="Официанты"
+        summary={
+          shift.crew.length === 0
+            ? "никого"
+            : `${shift.crew.length} ${plural(shift.crew.length, "человек", "человека", "человек")}`
+        }
+        open={open === "crew"}
+        onToggle={() => setOpen(open === "crew" ? null : "crew")}
+      >
+        <div className="grid grid-cols-2 gap-2 px-4">
+          {FROM_QUICK_RESTO.map((p) => (
+            <PersonButton
+              key={p.id}
+              person={p}
+              on={shift.crew.includes(p.id)}
+              onToggle={() => toggleCrew(p.id)}
             />
-            <button
-              onClick={add}
-              disabled={!name.trim()}
-              className="rounded-xl bg-sand px-4 text-sm text-ink disabled:bg-surface disabled:text-fg-muted"
-            >
-              Добавить
-            </button>
-            <button
-              onClick={() => {
-                setAdding(false);
-                setName("");
-              }}
-              aria-label="Отмена"
-              className="rounded-xl border border-line px-3 text-fg-muted"
-            >
-              ✕
-            </button>
-          </div>
-        ) : (
-          <button
-            onClick={() => setAdding(true)}
-            className="w-full rounded-xl border border-dashed border-line py-3 text-sm text-fg-muted active:bg-surface"
-          >
-            + Кого нет в списке
-          </button>
+          ))}
+        </div>
+
+        {manual.length > 0 && (
+          <>
+            <div className="px-4 pb-1.5 pt-4 text-xs text-fg-muted">
+              дописаны вручную
+            </div>
+            <div className="grid grid-cols-2 gap-2 px-4">
+              {manual.map((p) => (
+                <PersonButton
+                  key={p.id}
+                  person={p}
+                  on={shift.crew.includes(p.id)}
+                  onToggle={() => toggleCrew(p.id)}
+                  onRemove={() => drop(p)}
+                />
+              ))}
+            </div>
+          </>
         )}
-      </div>
 
-      <RolePicker
-        title="кто вносит записи"
-        people={everyone}
-        selected={shift.operator}
-        onPick={(id) => pick("operator", id)}
-      />
-      <RolePicker
-        title="администратор смены — ему уходят 20 %"
-        people={everyone}
-        selected={shift.admin}
-        onPick={(id) => pick("admin", id)}
-      />
-      <RolePicker
-        title={`кассир смены — ему уходит доля от ${formatMoney(cashierPool(day))}`}
-        people={everyone}
-        selected={shift.cashier}
-        onPick={(id) => pick("cashier", id)}
-      />
+        <div className="px-4 pt-3">
+          {adding ? (
+            <div className="flex gap-2">
+              <input
+                autoFocus
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && add()}
+                placeholder="Максим, стажёр"
+                className="min-w-0 flex-1 rounded-xl border border-line bg-surface px-3 py-3 text-sm outline-none placeholder:text-fg-muted focus:border-sand"
+              />
+              <button
+                onClick={add}
+                disabled={!name.trim()}
+                className="rounded-xl bg-sand px-4 text-sm text-ink disabled:bg-surface disabled:text-fg-muted"
+              >
+                Добавить
+              </button>
+              <button
+                onClick={() => {
+                  setAdding(false);
+                  setName("");
+                }}
+                aria-label="Отмена"
+                className="rounded-xl border border-line px-3 text-fg-muted"
+              >
+                ✕
+              </button>
+            </div>
+          ) : (
+            <button
+              onClick={() => setAdding(true)}
+              className="w-full rounded-xl border border-dashed border-line py-3 text-sm text-fg-muted active:bg-surface"
+            >
+              + Кого нет в списке
+            </button>
+          )}
+        </div>
+      </Section>
 
-      {/* Хостес и кальянный бар. Стоят ниже официантов и ролей намеренно:
-          вечер начинается с зала, а эти два списка чаще всего вчерашние.
-          Их деньги не делятся ни с кем — об этом сказано прямо в подписи,
-          чтобы администратор не искал объяснений в отчёте. */}
-      <MultiPicker
-        title="хостес — её чаевые не делятся ни с кем"
-        people={everyone}
-        selected={shift.hostess}
-        onToggle={toggleHostess}
-      />
-      <MultiPicker
-        title="кальянный бар — из кассы ИП Шалаевой, чаевые не делятся"
-        people={FROM_SHALAEVA}
-        selected={shift.hookah}
-        onToggle={toggleHookah}
-      />
+      <Section
+        title="Кто вносит записи"
+        summary={nameOf(everyone, shift.operator) ?? "не выбран"}
+        open={open === "operator"}
+        onToggle={() => setOpen(open === "operator" ? null : "operator")}
+      >
+        <RolePicker
+          people={everyone}
+          selected={shift.operator}
+          onPick={(id) => pick("operator", id)}
+        />
+      </Section>
+
+      <Section
+        title="Администратор смены"
+        hint="ему уходят 20 % с заработка официантов"
+        summary={nameOf(everyone, shift.admin) ?? "не выбран"}
+        open={open === "admin"}
+        onToggle={() => setOpen(open === "admin" ? null : "admin")}
+      >
+        <RolePicker
+          people={everyone}
+          selected={shift.admin}
+          onPick={(id) => pick("admin", id)}
+        />
+      </Section>
+
+      <Section
+        title="Кассир смены"
+        hint={`ему уходит доля от ${formatMoney(cashierPool(day))}`}
+        summary={nameOf(everyone, shift.cashier) ?? "не выбран"}
+        open={open === "cashier"}
+        onToggle={() => setOpen(open === "cashier" ? null : "cashier")}
+      >
+        <RolePicker
+          people={everyone}
+          selected={shift.cashier}
+          onPick={(id) => pick("cashier", id)}
+        />
+      </Section>
+
+      {/* Хостес и кальянный бар — ниже ролей намеренно: вечер начинается
+          с зала. Их деньги не делятся ни с кем, и сказано об этом прямо
+          в строке, чтобы администратор не искал объяснений в отчёте. */}
+      <Section
+        title="Хостес"
+        hint="её чаевые не делятся ни с кем"
+        summary={listOf(everyone, shift.hostess)}
+        open={open === "hostess"}
+        onToggle={() => setOpen(open === "hostess" ? null : "hostess")}
+      >
+        <MultiPicker
+          people={everyone}
+          selected={shift.hostess}
+          onToggle={toggleHostess}
+        />
+      </Section>
+
+      <Section
+        title="Кальянный бар"
+        hint="касса ИП Шалаевой, чаевые не делятся"
+        summary={listOf(FROM_SHALAEVA, shift.hookah)}
+        open={open === "hookah"}
+        onToggle={() => setOpen(open === "hookah" ? null : "hookah")}
+      >
+        <MultiPicker
+          people={FROM_SHALAEVA}
+          selected={shift.hookah}
+          onToggle={toggleHookah}
+        />
+      </Section>
 
       <div className="mt-auto border-t border-line px-4 py-3">
         <button
@@ -272,20 +334,80 @@ export default function ShiftCrew({
   );
 }
 
-function RolePicker({
+/**
+ * Сворачивающийся раздел.
+ *
+ * Раскрыт всегда один: на телефоне шесть развёрнутых списков по 23 человека
+ * дают экран длиной в несколько экранов, и собрать смену становится работой
+ * с прокруткой. В свёрнутом виде строка сама отвечает на главный вопрос —
+ * кто выбран, — и открывать её нужно, только чтобы поменять.
+ */
+function Section({
   title,
+  hint,
+  summary,
+  open,
+  onToggle,
+  children,
+}: {
+  title: string;
+  hint?: string;
+  summary: string;
+  open: boolean;
+  onToggle: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="border-b border-line">
+      <button
+        onClick={onToggle}
+        className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left active:bg-surface"
+      >
+        <span className="min-w-0">
+          <span className="block text-sm text-fg">{title}</span>
+          {hint && <span className="block text-xs text-fg-muted">{hint}</span>}
+        </span>
+        <span className="flex shrink-0 items-center gap-2">
+          <span className="max-w-36 truncate text-xs text-fg-muted">
+            {summary}
+          </span>
+          <span
+            className={`text-lg leading-none text-fg-muted ${open ? "rotate-90" : ""}`}
+          >
+            ›
+          </span>
+        </span>
+      </button>
+      {open && <div className="pb-4">{children}</div>}
+    </div>
+  );
+}
+
+/** Имя выбранного — для свёрнутой строки. */
+function nameOf(people: Employee[], id: number | null): string | null {
+  if (id === null) return null;
+  return people.find((p) => p.id === id)?.short ?? `№${id}`;
+}
+
+/** Кого выбрали, через запятую. Пусто — так и говорим. */
+function listOf(people: Employee[], ids: number[]): string {
+  if (ids.length === 0) return "никого";
+  return ids
+    .map((id) => people.find((p) => p.id === id)?.short ?? `№${id}`)
+    .join(", ");
+}
+
+function RolePicker({
   people,
   selected,
   onPick,
 }: {
-  title: string;
   people: Employee[];
   selected: number | null;
   onPick: (id: number) => void;
 }) {
   return (
     <>
-      <div className="px-4 pb-1.5 pt-5 text-xs text-fg-muted">{title}</div>
       <div className="flex flex-wrap gap-2 px-4">
         {people.map((p) => {
           const on = p.id === selected;
@@ -316,19 +438,16 @@ function RolePicker({
  * означал бы флаг в каждом вызове и ошибку в том, который писали позже.
  */
 function MultiPicker({
-  title,
   people,
   selected,
   onToggle,
 }: {
-  title: string;
   people: Employee[];
   selected: number[];
   onToggle: (id: number) => void;
 }) {
   return (
     <>
-      <div className="px-4 pb-1.5 pt-5 text-xs text-fg-muted">{title}</div>
       <div className="flex flex-wrap gap-2 px-4">
         {people.map((p) => {
           const on = selected.includes(p.id);
@@ -385,4 +504,13 @@ function PersonButton({
       )}
     </div>
   );
+}
+
+/** «4 человека», «21 человек» — в свёрнутой строке официантов. */
+function plural(n: number, one: string, few: string, many: string): string {
+  const mod10 = n % 10;
+  const mod100 = n % 100;
+  if (mod10 === 1 && mod100 !== 11) return one;
+  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return few;
+  return many;
 }
