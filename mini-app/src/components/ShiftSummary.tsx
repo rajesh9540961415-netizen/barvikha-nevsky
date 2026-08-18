@@ -2,6 +2,7 @@
 
 import { formatBusinessDay, formatMoney } from "@/lib/businessDay";
 import { THRESHOLD, splitShift } from "@/lib/split";
+import type { SideSplit } from "@/lib/split";
 import type { Employee, Entry } from "@/lib/types";
 import { BUILD } from "@/lib/version";
 
@@ -35,12 +36,15 @@ type Props = {
   exported: { at: string; by: string } | null;
   /** Идёт сборка отчёта — кнопка занята. */
   exporting: boolean;
+  /** Хостес и кальянный бар: считаются рядом, ни с кем не делятся. */
+  side: Record<"hostess" | "hookah", SideSplit>;
 };
 
 export default function ShiftSummary({
   day,
   entries,
   crew,
+  side,
   waiting,
   onClose,
   onHistory,
@@ -50,6 +54,10 @@ export default function ShiftSummary({
 }: Props) {
   const s = splitShift(entries, crew, day);
   const paying = s.waiters.filter((w) => w.aboveThreshold).length;
+  // Внизу главного экрана стоит сумма ВСЕХ полученных денег, включая хостес
+  // и кальянный бар. Если бы здесь она была только зальной, два экрана
+  // показывали бы разные итоги за один вечер — и объяснить это было бы нечем.
+  const sideTotal = side.hostess.total + side.hookah.total;
 
   return (
     <div className="flex min-h-dvh flex-col pb-8">
@@ -107,6 +115,24 @@ export default function ShiftSummary({
             <span className="text-fg-muted">сервисный сбор</span>
             <span className="tabular-nums">{formatMoney(s.totalService)}</span>
           </div>
+
+          {sideTotal > 0 && (
+            <>
+              <div className="mt-3 flex justify-between border-t border-line pt-2.5 text-sm">
+                <span className="text-fg-muted">хостес и кальянный бар</span>
+                <span className="tabular-nums">{formatMoney(sideTotal)}</span>
+              </div>
+              <div className="text-xs text-fg-muted">
+                эти деньги не делятся: ни администратору, ни кассиру
+              </div>
+              <div className="mt-2 flex justify-between text-base">
+                <span className="text-fg-muted">всего за смену</span>
+                <span className="tabular-nums">
+                  {formatMoney(s.totalEarned + sideTotal)}
+                </span>
+              </div>
+            </>
+          )}
         </div>
       </div>
 
@@ -172,6 +198,13 @@ export default function ShiftSummary({
           </div>
         )}
       </div>
+
+      {sideTotal > 0 && (
+        <>
+          <SidePart title="хостес" calc={side.hostess} />
+          <SidePart title="кальянный бар" calc={side.hookah} />
+        </>
+      )}
 
       <div className="px-4 pb-1.5 pt-5 text-xs text-fg-muted">по официантам</div>
       <div className="flex flex-col gap-2 px-4">
@@ -315,6 +348,44 @@ function Line({ label, value }: { label: string; value: number }) {
 function clock(iso: string): string {
   const d = new Date(iso);
   return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+}
+
+/**
+ * Блок хостес или кальянного бара.
+ *
+ * Строк меньше, чем у официанта, и намеренно: у этих денег нет ни порога,
+ * ни долей, ни комиссии — показывать нечего, кроме того, чем оставили.
+ * Пустой блок не рисуем вовсе: место на экране дороже симметрии.
+ */
+function SidePart({ title, calc }: { title: string; calc: SideSplit }) {
+  if (calc.total === 0) return null;
+  return (
+    <>
+      <div className="flex items-baseline justify-between px-4 pb-1.5 pt-5">
+        <span className="text-xs text-fg-muted">{title}</span>
+        <span className="text-xs tabular-nums text-fg-muted">
+          {formatMoney(calc.total)}
+        </span>
+      </div>
+      <div className="flex flex-col gap-2 px-4">
+        {calc.rows
+          .filter((r) => r.total > 0)
+          .map((r) => (
+            <div key={r.payeeId} className="rounded-xl bg-surface p-3.5">
+              <div className="flex items-baseline justify-between">
+                <span className="text-base">{r.payeeName}</span>
+                <span className="tabular-nums">{formatMoney(r.total)}</span>
+              </div>
+              <div className="text-xs text-fg-muted">
+                наличные {formatMoney(r.cash)}
+                {r.qr > 0 && ` · QR ${formatMoney(r.qr)}`}
+                {r.service > 0 && ` · сбор ${formatMoney(r.service)}`}
+              </div>
+            </div>
+          ))}
+      </div>
+    </>
+  );
 }
 
 function plural(n: number, one: string, few: string, many: string): string {

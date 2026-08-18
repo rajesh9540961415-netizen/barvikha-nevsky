@@ -41,6 +41,8 @@ const ПУСТАЯ_СМЕНА: Shift = {
   operator: null,
   admin: null,
   cashier: null,
+  hostess: [],
+  hookah: [],
 };
 
 export async function GET(

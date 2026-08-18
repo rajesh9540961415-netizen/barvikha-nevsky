@@ -17,8 +17,8 @@
  * и что при этом записывается в след — дело того приложения, которое правит.
  */
 
-import { COMMISSION_RATE, netAmount, shares } from "./split";
-import type { Entry, Kind } from "./types";
+import { COMMISSION_RATE, contourOf, netAmount, shares } from "./split";
+import type { Contour, Entry, Kind } from "./types";
 
 /**
  * Запись в том виде, в каком её хватает для сборки событий.
@@ -51,6 +51,8 @@ export type ShiftEvent<T extends EventRow = EventRow> = {
   key: string;
   rows: T[];
   kind: Kind;
+  /** Чьи деньги: зала, хостес или кальянного бара. */
+  contour: Contour;
   /** Сколько оставил гость — до комиссии, по всему событию. */
   gross: number;
   /** Сколько дошло до официантов — после комиссии. */
@@ -96,6 +98,7 @@ export function buildEvents<T extends EventRow>(rows: T[]): ShiftEvent<T>[] {
       key,
       rows: group,
       kind: first.kind,
+      contour: contourOf(first as unknown as Entry),
       // Суммы складываем по строкам: у поделённых чаевых событие — это
       // сумма долей, а не сумма одной из них.
       gross: round(group.reduce((s, r) => s + (r.gross ?? r.amount), 0)),
@@ -134,6 +137,14 @@ export function buildEvents<T extends EventRow>(rows: T[]): ShiftEvent<T>[] {
 /** Что можно поменять в событии. */
 export type Draft = {
   kind: Kind;
+  /**
+   * Котёл. Правка его не меняет — он переезжает из исходной записи как есть.
+   *
+   * Иначе поправленные чаевые хостес стали бы зальными и начали делиться
+   * с администратором и кассиром: на экране правки не изменилось бы ничего,
+   * а деньги у людей — изменились бы.
+   */
+  contour: Contour;
   /** Сумма, которую оставил гость — до комиссии. Её и вводят. */
   gross: number;
   hallId: number | null;
@@ -147,6 +158,7 @@ export type Draft = {
 export function draftOf(event: ShiftEvent): Draft {
   return {
     kind: event.kind,
+    contour: event.contour,
     gross: event.gross,
     hallId: event.hallId,
     hallTitle: event.hallTitle,
@@ -156,10 +168,19 @@ export function draftOf(event: ShiftEvent): Draft {
   };
 }
 
-/** У QR и питания стола нет: гость платит по чеку, а не за столом. */
-export function needsTable(kind: Kind): boolean {
+/**
+ * У QR и питания стола нет: гость платит по чеку, а не за столом.
+ *
+ * У хостес и кальянного бара стола нет ни при каком виде денег: хостес
+ * благодарят на выходе, а кальянному бару за стол зала не платят.
+ */
+export function needsTable(kind: Kind, contour: Contour = "hall"): boolean {
+  if (contour !== "hall") return false;
   return kind === "cash" || kind === "terminal" || kind === "service";
 }
+
+/** Чем платят хостес и кальянному бару. Терминала у них нет. */
+export const SIDE_KINDS: Kind[] = ["cash", "qr", "service"];
 
 /**
  * Что не так с черновиком. Пусто — значит можно сохранять.
@@ -182,8 +203,12 @@ export function draftError(draft: Draft): string | null {
   if (draft.kind === "staff" && draft.waiterIds.length > 1) {
     return "Питание делить между людьми нельзя: это личный вычет";
   }
-  if (needsTable(draft.kind) && draft.tableId === null) {
+  if (needsTable(draft.kind, draft.contour) && draft.tableId === null) {
     return "Выберите стол";
+  }
+  if (draft.contour !== "hall" && !SIDE_KINDS.includes(draft.kind)) {
+    // Терминала у хостес и бара нет, питание — вычет у сотрудника зала.
+    return "Такой вид денег у хостес и кальянного бара не бывает";
   }
   return null;
 }
@@ -237,7 +262,7 @@ export function rowsFromDraft(draft: Draft, t: RowTemplate): DraftRow[] {
   const net = netAmount(draft.gross, draft.kind);
   const parts = shares(net, draft.waiterIds.length);
   const grossParts = shares(draft.gross, draft.waiterIds.length);
-  const table = needsTable(draft.kind);
+  const table = needsTable(draft.kind, draft.contour);
 
   return draft.waiterIds.map((waiterId, i) => ({
     id: crypto.randomUUID(),
@@ -252,6 +277,7 @@ export function rowsFromDraft(draft: Draft, t: RowTemplate): DraftRow[] {
     gross: grossParts[i],
     commissionRate: COMMISSION_RATE[draft.kind],
     kind: draft.kind,
+    contour: draft.contour,
     operatorId: t.operatorId,
     operatorName: t.operatorName,
     createdAt: t.createdAt,

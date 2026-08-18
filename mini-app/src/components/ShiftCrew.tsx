@@ -4,8 +4,10 @@ import { useState } from "react";
 import { formatBusinessDay, formatMoney } from "@/lib/businessDay";
 import { cashierPool } from "@/lib/split";
 import type { Shift } from "@/lib/crew";
+import { HOOKAH_POT_ID } from "@/lib/split";
 import {
   addManualPerson,
+  getHookahPeople,
   getQuickRestoPeople,
   removeManualPerson,
 } from "@/lib/people";
@@ -13,6 +15,11 @@ import type { Employee } from "@/lib/types";
 import { BUILD } from "@/lib/version";
 
 const FROM_QUICK_RESTO = getQuickRestoPeople();
+
+// Кальянщики из кассы ИП Шалаевой. Общий котёл бара («Весь бар») идёт
+// первым в getHookahPeople, но в составе смены ему не место: это получатель
+// денег, а не человек, который вышел работать.
+const FROM_SHALAEVA = getHookahPeople().filter((p) => p.id !== HOOKAH_POT_ID);
 
 type Props = {
   day: string;
@@ -43,6 +50,7 @@ export default function ShiftCrew({
   function toggleCrew(id: number) {
     setShift((s) => ({
       ...s,
+      hostess: s.hostess.filter((x) => x !== id),
       crew: s.crew.includes(id)
         ? s.crew.filter((x) => x !== id)
         : [...s.crew, id],
@@ -51,6 +59,34 @@ export default function ShiftCrew({
 
   function pick(role: "operator" | "admin" | "cashier", id: number) {
     setShift((s) => ({ ...s, [role]: s[role] === id ? null : id }));
+  }
+
+  /**
+   * Хостес этого вечера.
+   *
+   * Отметив человека хостес, убираем его из официантов — и наоборот. Быть
+   * и тем, и другим одновременно нельзя не из строгости: деньги хостес
+   * не делятся ни с кем, а зальные делятся, и человек в обоих списках
+   * попал бы в знаменатель доли кассира, оставаясь при этом вне котла.
+   * Такую ошибку на экране не видно — видно только в деньгах, через месяц.
+   */
+  function toggleHostess(id: number) {
+    setShift((s) => ({
+      ...s,
+      crew: s.crew.filter((x) => x !== id),
+      hostess: s.hostess.includes(id)
+        ? s.hostess.filter((x) => x !== id)
+        : [...s.hostess, id],
+    }));
+  }
+
+  function toggleHookah(id: number) {
+    setShift((s) => ({
+      ...s,
+      hookah: s.hookah.includes(id)
+        ? s.hookah.filter((x) => x !== id)
+        : [...s.hookah, id],
+    }));
   }
 
   async function add() {
@@ -66,7 +102,9 @@ export default function ShiftCrew({
   async function drop(person: Employee) {
     onManualChange(await removeManualPerson(person.id));
     setShift((s) => ({
+      ...s,
       crew: s.crew.filter((x) => x !== person.id),
+      hostess: s.hostess.filter((x) => x !== person.id),
       operator: s.operator === person.id ? null : s.operator,
       admin: s.admin === person.id ? null : s.admin,
       cashier: s.cashier === person.id ? null : s.cashier,
@@ -181,6 +219,23 @@ export default function ShiftCrew({
         onPick={(id) => pick("cashier", id)}
       />
 
+      {/* Хостес и кальянный бар. Стоят ниже официантов и ролей намеренно:
+          вечер начинается с зала, а эти два списка чаще всего вчерашние.
+          Их деньги не делятся ни с кем — об этом сказано прямо в подписи,
+          чтобы администратор не искал объяснений в отчёте. */}
+      <MultiPicker
+        title="хостес — её чаевые не делятся ни с кем"
+        people={everyone}
+        selected={shift.hostess}
+        onToggle={toggleHostess}
+      />
+      <MultiPicker
+        title="кальянный бар — из кассы ИП Шалаевой, чаевые не делятся"
+        people={FROM_SHALAEVA}
+        selected={shift.hookah}
+        onToggle={toggleHookah}
+      />
+
       <div className="mt-auto border-t border-line px-4 py-3">
         <button
           disabled={!ready}
@@ -238,6 +293,49 @@ function RolePicker({
             <button
               key={p.id}
               onClick={() => onPick(p.id)}
+              className={`rounded-lg border px-3 py-2 text-sm ${
+                on
+                  ? "border-sand bg-sand/10 text-fg"
+                  : "border-line bg-surface text-fg-muted active:bg-surface-2"
+              }`}
+            >
+              {p.short}
+            </button>
+          );
+        })}
+      </div>
+    </>
+  );
+}
+
+/**
+ * Выбор нескольких человек: хостес и кальянщики.
+ *
+ * Отдельно от RolePicker, где выбирается ровно один: там нажатие снимает
+ * прежний выбор, здесь — добавляет к списку. Один компонент на оба случая
+ * означал бы флаг в каждом вызове и ошибку в том, который писали позже.
+ */
+function MultiPicker({
+  title,
+  people,
+  selected,
+  onToggle,
+}: {
+  title: string;
+  people: Employee[];
+  selected: number[];
+  onToggle: (id: number) => void;
+}) {
+  return (
+    <>
+      <div className="px-4 pb-1.5 pt-5 text-xs text-fg-muted">{title}</div>
+      <div className="flex flex-wrap gap-2 px-4">
+        {people.map((p) => {
+          const on = selected.includes(p.id);
+          return (
+            <button
+              key={p.id}
+              onClick={() => onToggle(p.id)}
               className={`rounded-lg border px-3 py-2 text-sm ${
                 on
                   ? "border-sand bg-sand/10 text-fg"

@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import TablePicker from "@/components/TablePicker";
 import { formatMoney } from "@/lib/businessDay";
 import {
+  SIDE_KINDS,
   draftError,
   draftOf,
   needsTable,
@@ -47,7 +48,17 @@ type Props = {
   event: ShiftEvent<Entry>;
   /** Живые записи смены — по ним считается «было / стало». */
   live: Entry[];
+  /** Официанты смены: по ним считается порог 1300 ₽ и доли. */
   crew: Employee[];
+  /**
+   * Кому можно приписать эту запись.
+   *
+   * У зальной записи это официанты смены, у хостес — хостес этого вечера,
+   * у кальянного бара — кальянщики и общий котёл. Отдельно от `crew`
+   * намеренно: список получателей и состав зала — разные вещи, и подставив
+   * сюда зал, правка чаевых кальянщика молча предложила бы официантов.
+   */
+  people: Employee[];
   /** Кто правит: тот, кто отмечен вносящим записи в этой смене. */
   operator: Employee;
   halls: Hall[];
@@ -63,6 +74,7 @@ export default function EntryEditor({
   event,
   live,
   crew,
+  people,
   operator,
   halls,
   day,
@@ -71,6 +83,10 @@ export default function EntryEditor({
   onDrop,
 }: Props) {
   const was = useMemo(() => draftOf(event), [event]);
+
+  /** Котёл записи. Правка его не меняет — он и определяет, что можно менять. */
+  const contour = event.contour;
+  const kinds = contour === "hall" ? KINDS : SIDE_KINDS;
 
   /**
    * Набранная сумма. Пока не трогали клавиатуру — пусто, и в дело идёт сумма
@@ -109,8 +125,9 @@ export default function EntryEditor({
       tableId: table.tableId,
       tableTitle: table.tableTitle,
       waiterIds: ids,
+      contour,
     }),
-    [kind, gross, table, ids],
+    [kind, gross, table, ids, contour],
   );
   const problem = draftError(draft);
 
@@ -135,9 +152,9 @@ export default function EntryEditor({
       // Зачем поправили, в смене не спрашиваем: след и так остаётся —
       // кто, когда, что было, что стало. Решение владельца 14.08.2026.
       note: null,
-      nameOf: (id) => crew.find((w) => w.id === id)?.name ?? `№${id}`,
+      nameOf: (id) => people.find((w) => w.id === id)?.name ?? `№${id}`,
     }).map((row) => ({ ...row, operatorId: operator.id }));
-  }, [problem, draft, day, event.createdAt, event.key, crew, operator]);
+  }, [problem, draft, day, event.createdAt, event.key, people, operator]);
 
   const money = (rows: Entry[]) =>
     rows.filter((e) => e.kind !== "staff").reduce((sum, e) => sum + e.amount, 0);
@@ -299,7 +316,7 @@ export default function EntryEditor({
       <div className="px-4 pb-3">
         <div className="mb-1.5 text-xs text-fg-muted">вид денег</div>
         <div className="flex flex-wrap gap-1.5">
-          {KINDS.map((k) => (
+          {kinds.map((k) => (
             <button
               key={k}
               onClick={() => {
@@ -318,7 +335,7 @@ export default function EntryEditor({
         </div>
 
         {/* У QR и питания стола нет: гость платил по чеку, а не за столом. */}
-        {needsTable(kind) && (
+        {needsTable(kind, contour) && (
           <button
             onClick={() => setPicking(true)}
             className="mt-2.5 w-full rounded-lg border border-line bg-surface px-3 py-2 text-left text-sm active:bg-surface-2"
@@ -336,12 +353,18 @@ export default function EntryEditor({
         <div className="mb-1.5 mt-3 flex items-baseline justify-between gap-2">
           <span className="text-xs text-fg-muted">
             {ids.length === 0
-              ? "выберите официанта"
+              ? contour === "hall"
+                ? "выберите официанта"
+                : "выберите, кому"
               : ids.length === 1
-                ? "официант"
+                ? contour === "hall"
+                  ? "официант"
+                  : contour === "hookah"
+                    ? "кальянный бар"
+                    : "хостес"
                 : `делим поровну на ${ids.length}`}
           </span>
-          {crew.length > 1 && (
+          {people.length > 1 && (
             <button
               onClick={() => {
                 setFailed(false);
@@ -363,7 +386,7 @@ export default function EntryEditor({
           )}
         </div>
         <div className="flex flex-wrap gap-2">
-          {crew.map((w) => {
+          {people.map((w) => {
             const on = ids.includes(w.id);
             return (
               <button
@@ -383,7 +406,7 @@ export default function EntryEditor({
         {fresh.length > 1 && (
           <div className="mt-2 text-xs text-fg-muted">
             {fresh
-              .map((r) => `${shortOf(crew, r.waiterId)} — ${formatMoney(r.amount)}`)
+              .map((r) => `${shortOf(people, r.waiterId)} — ${formatMoney(r.amount)}`)
               .join(" · ")}
           </div>
         )}

@@ -209,6 +209,8 @@ export async function readPerson(
       operator_id: number | null;
       admin_id: number | null;
       cashier_id: number | null;
+      hostess: number[] | null;
+      hookah: number[] | null;
     }[]
   >`
     select * from shifts where business_day between ${from} and ${to}
@@ -230,6 +232,8 @@ export async function readPerson(
       operator: s.operator_id,
       admin: s.admin_id,
       cashier: s.cashier_id,
+      hostess: s.hostess ?? [],
+      hookah: s.hookah ?? [],
     });
   }
 

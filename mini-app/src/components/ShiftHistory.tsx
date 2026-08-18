@@ -297,12 +297,18 @@ export default function ShiftHistory({
                   <span
                     className={`text-sm ${gone ? "text-fg-muted line-through" : "text-fg"}`}
                   >
-                    {/* У чаевых по QR ни зала, ни стола нет: гость платил
-                        по чеку. Пишем откуда пришло, чтобы строка не
-                        начиналась с пустоты. */}
-                    {head.tableTitle
-                      ? `${head.hallTitle} · ${head.tableTitle}`
-                      : "по QR"}{" "}
+                    {/* Ни зала, ни стола не бывает у трёх случаев, и они
+                        разные: чаевые по QR (гость платил по чеку), хостес
+                        и кальянный бар. Написать всем «по QR» значит
+                        назвать деньги чужим именем в единственном месте,
+                        где смена себя проверяет. */}
+                    {ev.contour === "hookah"
+                      ? "кальянный бар"
+                      : ev.contour === "hostess"
+                        ? "хостес"
+                        : head.tableTitle
+                          ? `${head.hallTitle} · ${head.tableTitle}`
+                          : "по QR"}{" "}
                     · {ev.waiters.map((w) => w.name).join(" + ")}
                   </span>
                   <span

@@ -1,6 +1,6 @@
 "use server";
 
-import type { Employee, Entry, Kind, QrTip, Shift } from "../types";
+import type { Contour, Employee, Entry, Kind, QrTip, Shift } from "../types";
 import { db } from "./sql";
 
 /**
@@ -37,6 +37,7 @@ type EntryRow = {
   commission_rate: string;
   corrects: string | null;
   deleted_note: string | null;
+  contour: string | null;
 };
 
 function toEntry(r: EntryRow): Entry {
@@ -57,6 +58,8 @@ function toEntry(r: EntryRow): Entry {
     gross: r.gross === null ? Number(r.amount) : Number(r.gross),
     commissionRate: Number(r.commission_rate),
     kind: r.kind as Kind,
+    // У записей до 18.08.2026 контура в базе нет — все они зальные.
+    contour: (r.contour ?? "hall") as Contour,
     operatorId: r.operator_id,
     operatorName: r.operator_name,
     createdAt: r.created_at.toISOString(),
@@ -121,13 +124,13 @@ export async function insertEntries(entries: Entry[]): Promise<void> {
         insert into entries (
           id, business_day, hall_id, hall_title, table_id, table_title,
           waiter_id, waiter_name, amount, kind, operator_id, operator_name,
-          created_at, split_group, gross, commission_rate
+          created_at, split_group, gross, commission_rate, contour
         ) values (
           ${e.id}, ${e.businessDay}, ${e.hallId}, ${e.hallTitle},
           ${e.tableId}, ${e.tableTitle}, ${e.waiterId}, ${e.waiterName},
           ${e.amount}, ${e.kind}, ${e.operatorId}, ${e.operatorName},
           ${e.createdAt}, ${e.splitGroup ?? null}, ${e.gross},
-          ${e.commissionRate}
+          ${e.commissionRate}, ${e.contour ?? "hall"}
         )
         on conflict (id) do nothing
       `;
@@ -232,13 +235,14 @@ export async function correctEntries(input: {
         insert into entries (
           id, business_day, hall_id, hall_title, table_id, table_title,
           waiter_id, waiter_name, amount, kind, operator_id, operator_name,
-          created_at, split_group, gross, commission_rate, corrects, source
+          created_at, split_group, gross, commission_rate, corrects, source,
+          contour
         ) values (
           ${e.id}, ${e.businessDay}, ${e.hallId}, ${e.hallTitle},
           ${e.tableId}, ${e.tableTitle}, ${e.waiterId}, ${e.waiterName},
           ${e.amount}, ${e.kind}, ${e.operatorId}, ${e.operatorName},
           ${e.createdAt}, ${e.splitGroup ?? null}, ${e.gross},
-          ${e.commissionRate}, ${input.key}::uuid, 'shift'
+          ${e.commissionRate}, ${input.key}::uuid, 'shift', ${e.contour ?? "hall"}
         )
         on conflict (id) do nothing
       `;
@@ -451,13 +455,13 @@ export async function distributeQrTip(
         insert into entries (
           id, business_day, hall_id, hall_title, table_id, table_title,
           waiter_id, waiter_name, amount, kind, operator_id, operator_name,
-          created_at, split_group, gross, commission_rate
+          created_at, split_group, gross, commission_rate, contour
         ) values (
           ${e.id}, ${e.businessDay}, ${e.hallId}, ${e.hallTitle},
           ${e.tableId}, ${e.tableTitle}, ${e.waiterId}, ${e.waiterName},
           ${e.amount}, ${e.kind}, ${e.operatorId}, ${e.operatorName},
           ${e.createdAt}, ${e.splitGroup ?? null}, ${e.gross},
-          ${e.commissionRate}
+          ${e.commissionRate}, ${e.contour ?? "hall"}
         )
         on conflict (id) do nothing
       `;
@@ -471,6 +475,8 @@ type ShiftRow = {
   operator_id: number | null;
   admin_id: number | null;
   cashier_id: number | null;
+  hostess: number[] | null;
+  hookah: number[] | null;
 };
 
 function toShift(r: ShiftRow): Shift {
@@ -479,6 +485,9 @@ function toShift(r: ShiftRow): Shift {
     operator: r.operator_id,
     admin: r.admin_id,
     cashier: r.cashier_id,
+    // У смен до 18.08.2026 этих столбцов не было: пусто значит «никого».
+    hostess: r.hostess ?? [],
+    hookah: r.hookah ?? [],
   };
 }
 
@@ -540,16 +549,21 @@ export async function writeShift(
 ): Promise<void> {
   const sql = db();
   await sql`
-    insert into shifts (business_day, crew, operator_id, admin_id, cashier_id)
+    insert into shifts (
+      business_day, crew, operator_id, admin_id, cashier_id, hostess, hookah
+    )
     values (
       ${businessDay}, ${shift.crew}, ${shift.operator},
-      ${shift.admin}, ${shift.cashier}
+      ${shift.admin}, ${shift.cashier},
+      ${shift.hostess ?? []}, ${shift.hookah ?? []}
     )
     on conflict (business_day) do update set
       crew = excluded.crew,
       operator_id = excluded.operator_id,
       admin_id = excluded.admin_id,
       cashier_id = excluded.cashier_id,
+      hostess = excluded.hostess,
+      hookah = excluded.hookah,
       updated_at = now()
   `;
 }

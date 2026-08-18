@@ -43,5 +43,19 @@ export function readSnapshot(day: string): Snapshot | null {
   const saved = readLocal<Snapshot>(KEY);
   if (!saved || saved.day !== day) return null;
   if (!Array.isArray(saved.entries) || !saved.shift) return null;
-  return saved;
+  return { ...saved, shift: withRoles(saved.shift), lastShift: withRoles(saved.lastShift) };
+}
+
+/**
+ * Снимок, снятый до 18.08.2026, про хостес и кальянщиков ничего не знает —
+ * этих списков в нём просто нет. Открывшись на таком снимке без сети,
+ * приложение споткнулось бы на первой же проверке «есть ли такой в списке».
+ * Пустой список — верный ответ: их в тот вечер и не было.
+ */
+function withRoles(shift: Shift | undefined): Shift {
+  return {
+    ...(shift as Shift),
+    hostess: shift?.hostess ?? [],
+    hookah: shift?.hookah ?? [],
+  };
 }

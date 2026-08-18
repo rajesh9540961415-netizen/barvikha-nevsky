@@ -17,13 +17,14 @@ import { businessDayKey, formatBusinessDay, formatMoney } from "@/lib/businessDa
 import { buildExport, downloadExport } from "@/lib/exportShift";
 import type { Shift } from "@/lib/crew";
 import { EMPTY_SHIFT, getLastShift, getShift, isReady, setShift } from "@/lib/crew";
-import { getManualPeople, getQuickRestoPeople } from "@/lib/people";
+import { HOOKAH_POT, getHookahPeople, getManualPeople, getQuickRestoPeople } from "@/lib/people";
 import ShiftHistory from "@/components/ShiftHistory";
 import EntryEditor from "@/components/EntryEditor";
 import { buildEvents } from "@/lib/events";
 import QrTipScreen from "@/components/QrTipScreen";
+import SideScreen from "@/components/SideScreen";
 import StaffScreen from "@/components/StaffScreen";
-import { COMMISSION_RATE, netAmount, shares, splitShift } from "@/lib/split";
+import { COMMISSION_RATE, netAmount, shares, splitShift, splitSide } from "@/lib/split";
 import {
   flushQueue,
   isStaleDeploy,
@@ -48,6 +49,7 @@ import {
 } from "@/lib/storage";
 import type { ExportMark } from "@/lib/storage";
 import type {
+  Contour,
   Employee,
   Entry,
   Hall,
@@ -171,6 +173,14 @@ export default function TipsScreen() {
    * Запись, открытая на правку: ключ события — метка группы у поделённых
    * чаевых, номер записи у обычной. Открывается из истории.
    */
+  /**
+   * Открыт ли экран хостес и кальянного бара, и какой котёл в нём выбран.
+   *
+   * Один экран на оба: администратор попадает туда одной кнопкой, а котёл
+   * переключает внутри. Двумя кнопками в шапке пришлось бы жертвовать
+   * местом под имя того, кто вносит записи, — оно и так обрезается.
+   */
+  const [showSide, setShowSide] = useState<Contour | null>(null);
   const [editing, setEditing] = useState<string | null>(null);
   const [toast, setToast] = useState<Toast | null>(null);
 
@@ -369,6 +379,32 @@ export default function TipsScreen() {
     () => everyone.find((p) => p.id === shift.operator) ?? null,
     [everyone, shift.operator],
   );
+  /** Хостес этого вечера. Отмечаются в составе смены, в зал не входят. */
+  const hostessPeople = useMemo(
+    () => everyone.filter((p) => shift.hostess.includes(p.id)),
+    [everyone, shift.hostess],
+  );
+  /**
+   * Кальянщики смены и общий котёл бара.
+   *
+   * Котёл стоит первым и есть всегда, даже когда никого не отметили: бывает,
+   * что администратор не знает, кто обслуживал, и деньги всё равно должны
+   * куда-то лечь. Запасной путь, который видно, лучше записи, которой
+   * не случилось.
+   */
+  const hookahPeople = useMemo(() => {
+    const onShift = getHookahPeople().filter((p) => shift.hookah.includes(p.id));
+    return [HOOKAH_POT, ...onShift];
+  }, [shift.hookah]);
+
+  const sideSplit = useMemo(
+    () => ({
+      hostess: splitSide(entries, "hostess", hostessPeople),
+      hookah: splitSide(entries, "hookah", hookahPeople),
+    }),
+    [entries, hostessPeople, hookahPeople],
+  );
+
   // Внизу показываем полученные деньги. Питание — вычет, а не доход,
   // и складывать его с чаевыми в одну сумму нельзя.
   const total = useMemo(
@@ -642,6 +678,55 @@ export default function TipsScreen() {
   }
 
   /**
+   * Записывает чаевые хостес или кальянного бара.
+   *
+   * Ложится обычной записью — тот же автор, та же отмена, то же место
+   * в истории, — но с пометкой котла. Стола нет: хостес чаевые оставляют
+   * на выходе, а кальянному бару за стол зала не платят.
+   *
+   * Комиссии здесь взяться неоткуда. Наличные и сервисный сбор идут мимо
+   * Сбера, а по QR он удерживает своё до нас — в приложение приходит уже
+   * чистая сумма. Терминала у этих двоих нет вовсе.
+   */
+  async function addSide(input: {
+    amount: number;
+    kind: Kind;
+    payee: Employee;
+    contour: Contour;
+  }) {
+    if (!operator) return;
+    const entry: Entry = {
+      id: crypto.randomUUID(),
+      hallId: null,
+      hallTitle: null,
+      tableId: null,
+      tableTitle: null,
+      waiterId: input.payee.id,
+      waiterName: input.payee.name,
+      amount: input.amount,
+      gross: input.amount,
+      commissionRate: 0,
+      kind: input.kind,
+      contour: input.contour,
+      operatorId: operator.id,
+      operatorName: operator.name,
+      createdAt: new Date().toISOString(),
+      businessDay: day,
+      splitGroup: null,
+    };
+    await save([entry]);
+    showLocally([entry]);
+    void refresh();
+    setToast({
+      text:
+        `${input.contour === "hookah" ? "Кальянный бар" : "Хостес"}: ` +
+        `${formatMoney(input.amount)} · ${input.payee.short}` +
+        (queueState().items.length > 0 ? " · ждёт отправки" : ""),
+      bad: false,
+    });
+  }
+
+  /**
    * Итоги открываем только на свежих данных.
    *
    * Именно отсюда выгружается отчёт, и собраться он должен из всех записей
@@ -863,6 +948,16 @@ export default function TipsScreen() {
           event={editingEvent}
           live={entries}
           crew={crew}
+          // Кому можно приписать запись — зависит от котла. Зальную можно
+          // переписать на официанта, чаевые хостес — только на хостес,
+          // а кальянные — на кальянщика или на бар целиком.
+          people={
+            editingEvent.contour === "hookah"
+              ? hookahPeople
+              : editingEvent.contour === "hostess"
+                ? hostessPeople
+                : crew
+          }
           operator={operator}
           halls={halls}
           day={day}
@@ -887,6 +982,24 @@ export default function TipsScreen() {
           cancelledHere={cancelledHere}
           onClose={() => setShowHistory(false)}
           onEdit={setEditing}
+        />
+      );
+    }
+
+    if (showSide) {
+      return (
+        <SideScreen
+          contour={showSide}
+          onContour={setShowSide}
+          hostess={hostessPeople}
+          hookah={hookahPeople}
+          split={sideSplit}
+          onCrew={() => {
+            setShowSide(null);
+            setEditingCrew(true);
+          }}
+          onCancel={() => setShowSide(null)}
+          onConfirm={addSide}
         />
       );
     }
@@ -921,6 +1034,7 @@ export default function TipsScreen() {
           day={day}
           entries={entries}
           crew={crew}
+          side={sideSplit}
           // Итоги считаются вместе с неотправленным — иначе сумма была бы
           // меньше настоящей. Но сказать, что часть ещё не в базе, надо.
           waiting={waitingSummary}
@@ -975,6 +1089,12 @@ export default function TipsScreen() {
             </p>
           </div>
           <div className="flex shrink-0 gap-1.5">
+            <button
+              onClick={() => setShowSide("hostess")}
+              className="rounded-lg border border-line px-3 py-1.5 text-xs text-fg-muted active:bg-surface"
+            >
+              хостес · кальян
+            </button>
             <button
               onClick={() => setShowStaff(true)}
               className="rounded-lg border border-line px-3 py-1.5 text-xs text-fg-muted active:bg-surface"

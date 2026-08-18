@@ -115,7 +115,17 @@ export type DayData = {
   changes: CrewChange[];
 };
 
-const EMPTY: Shift = { crew: [], operator: null, admin: null, cashier: null };
+// Хостес и кальянный бар бэк-офис пока не правит — но обязан их не потерять:
+// смена читается здесь, а пишется частями, и пустой список в этом объекте
+// однажды затёр бы настоящий состав. Появится экран правки — появится и здесь.
+const EMPTY: Shift = {
+  crew: [],
+  operator: null,
+  admin: null,
+  cashier: null,
+  hostess: [],
+  hookah: [],
+};
 
 async function allPeople(): Promise<Employee[]> {
   const sql = db();
@@ -144,6 +154,8 @@ export async function readDay(businessDay: string): Promise<DayData | null> {
       operator_id: number | null;
       admin_id: number | null;
       cashier_id: number | null;
+      hostess: number[] | null;
+      hookah: number[] | null;
     }[]
   >`select * from shifts where business_day = ${businessDay}`;
 
@@ -171,6 +183,8 @@ export async function readDay(businessDay: string): Promise<DayData | null> {
         operator: shifts[0].operator_id,
         admin: shifts[0].admin_id,
         cashier: shifts[0].cashier_id,
+        hostess: shifts[0].hostess ?? [],
+        hookah: shifts[0].hookah ?? [],
       }
     : EMPTY;
 
@@ -400,6 +414,11 @@ export async function saveCrew(input: {
     operator: role(input.shift.operator),
     admin: role(input.shift.admin),
     cashier: role(input.shift.cashier),
+    // Бэк-офис этих двух списков не трогает: экрана для них нет, а сам запрос
+    // ниже их столбцов не касается. Здесь они нужны, чтобы след «было / стало»
+    // не выглядел так, будто правка стёрла хостес и кальянщиков.
+    hostess: input.shift.hostess ?? [],
+    hookah: input.shift.hookah ?? [],
   };
 
   const unknown = [after.operator, after.admin, after.cashier, ...crew].find(
@@ -417,6 +436,8 @@ export async function saveCrew(input: {
           operator_id: number | null;
           admin_id: number | null;
           cashier_id: number | null;
+          hostess: number[] | null;
+          hookah: number[] | null;
         }[]
       >`select * from shifts where business_day = ${input.businessDay} for update`;
 
@@ -426,6 +447,8 @@ export async function saveCrew(input: {
             operator: before[0].operator_id,
             admin: before[0].admin_id,
             cashier: before[0].cashier_id,
+            hostess: before[0].hostess ?? [],
+            hookah: before[0].hookah ?? [],
           }
         : EMPTY;
 

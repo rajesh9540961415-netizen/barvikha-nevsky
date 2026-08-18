@@ -1,5 +1,6 @@
 import type { Shift } from "./crew";
-import { splitShift } from "./split";
+import { getHookahPeople } from "./people";
+import { HOOKAH_POT_ID, splitShift, splitSide } from "./split";
 import type { Employee, Entry } from "./types";
 
 /**
@@ -40,6 +41,19 @@ export type ShiftExport = {
   }[];
   admin: { name: string | null; amount: number };
   cashier: { name: string | null; amount: number };
+  /**
+   * Хостес и кальянный бар — два котла, которые ни с кем не делятся.
+   *
+   * Отдельными разделами, а не строками среди официантов: в отчёте под них
+   * свои блоки (хостес 8 строк, кальянный бар 10), а главное — у них нет
+   * ни порога, ни отчислений. Попади они в `waiters`, любая проверка
+   * «начислено = заработок минус доли» начала бы врать.
+   *
+   * Поля зальных итогов ниже намеренно оставлены как были: отчёт читает их
+   * с 01.08.2026, и менять их смысл ради двух новых блоков нельзя.
+   */
+  hostess: SideExport;
+  hookah: SideExport;
   totals: {
     cash: number;
     terminal: number;
@@ -48,6 +62,11 @@ export type ShiftExport = {
     earned: number;
     payout: number;
   };
+};
+
+export type SideExport = {
+  rows: { name: string; cash: number; qr: number; service: number; total: number }[];
+  totals: { cash: number; qr: number; service: number; total: number };
 };
 
 export function buildExport(
@@ -60,6 +79,39 @@ export function buildExport(
   const s = splitShift(entries, crew, day);
   const nameOf = (id: number | null) =>
     everyone.find((p) => p.id === id)?.name ?? null;
+
+  // Хостес — из общего списка зала и дописанных руками, кальянщики — из кассы
+  // ИП Шалаевой. Расчёт добирает и тех, кого в составе смены уже нет, но
+  // записи на них есть: спрятать настоящие деньги нельзя.
+  const hostessPeople = everyone.filter((p) => shift.hostess.includes(p.id));
+  const hookahPeople = getHookahPeople().filter(
+    // Общий котёл бара в составе смены не отмечается, но получателем быть
+    // может — поэтому он в списке всегда.
+    (p) => shift.hookah.includes(p.id) || p.id === HOOKAH_POT_ID,
+  );
+  const side = (contour: "hostess" | "hookah", people: Employee[]): SideExport => {
+    const calc = splitSide(entries, contour, people);
+    return {
+      rows: calc.rows
+        // Пустые строки в отчёт не нужны: там блок фиксированной длины,
+        // и человек без чаевых занял бы место того, у кого они были.
+        .filter((r) => r.total > 0)
+        .map((r) => ({
+          // Полное имя, как и у официантов: в отчёте строки подписаны целиком.
+          name: people.find((p) => p.id === r.payeeId)?.name ?? r.payeeName,
+          cash: r.cash,
+          qr: r.qr,
+          service: r.service,
+          total: r.total,
+        })),
+      totals: {
+        cash: calc.totalCash,
+        qr: calc.totalQr,
+        service: calc.totalService,
+        total: calc.total,
+      },
+    };
+  };
 
   return {
     businessDay: day,
@@ -75,6 +127,8 @@ export function buildExport(
     })),
     admin: { name: nameOf(shift.admin), amount: s.adminTotal },
     cashier: { name: nameOf(shift.cashier), amount: s.cashierTotal },
+    hostess: side("hostess", hostessPeople),
+    hookah: side("hookah", hookahPeople),
     totals: {
       cash: s.totalCash,
       terminal: s.totalTerminal,

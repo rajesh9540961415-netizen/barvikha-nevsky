@@ -1,4 +1,4 @@
-import type { Employee, Entry, Kind } from "./types";
+import type { Contour, Employee, Entry, Kind } from "./types";
 
 /**
  * Деление денег зала за смену.
@@ -77,6 +77,33 @@ export const COMMISSION_RATE: Record<Kind, number> = {
 export function netAmount(gross: number, kind: Kind): number {
   const rate = COMMISSION_RATE[kind];
   return rate ? money(gross * (1 - rate)) : gross;
+}
+
+/**
+ * Контур записи. У записей до 18.08.2026 поля нет — все они зальные.
+ *
+ * Спрашивать `e.contour === "hall"` напрямую нельзя: у старых записей там
+ * `undefined`, и вся история зала выпала бы из расчёта одним движением.
+ */
+export function contourOf(entry: Entry): Contour {
+  return entry.contour ?? "hall";
+}
+
+/**
+ * Общий котёл кальянного бара — «на бар целиком».
+ *
+ * Бывает, что администратор не знает, кто из кальянщиков обслуживал стол.
+ * Тогда деньги записываются на бар, а делят их между собой сами. Это
+ * не человек, поэтому и номер у него не человеческий: ровно миллион,
+ * начало диапазона кальянщиков (у живых номер кассы плюс миллион, так что
+ * занять этот номер никто не может — номеров 0 в Quick Resto не бывает).
+ */
+export const HOOKAH_POT_ID = 1_000_000;
+export const HOOKAH_POT_NAME = "Весь бар";
+
+/** Кальянщик или общий котёл бара: номера от миллиона. */
+export function isHookah(id: number): boolean {
+  return id >= HOOKAH_POT_ID;
 }
 
 export const THRESHOLD = 1300;
@@ -231,10 +258,16 @@ export function splitShift(
   const pool = cashierPool(businessDay);
   const cashierShare = crewSize > 0 ? money(pool / crewSize) : 0;
 
+  // Зальные деньги и только они. Хостес и кальянный бар считаются отдельно
+  // (splitSide ниже) и в этот расчёт попадать не должны: они не делятся
+  // ни с кем и порога не знают. Фильтр по контуру, а не по людям, потому
+  // что один и тот же человек может стоять в смене и официантом, и хостес.
+  const hall = entries.filter((e) => contourOf(e) === "hall");
+
   // В смене учитываем всех отмеченных, даже если человек не получил ничего:
   // он всё равно считается в знаменателе доли кассира.
   const waiters: WaiterSplit[] = crew.map((person) => {
-    const mine = entries.filter((e) => e.waiterId === person.id);
+    const mine = hall.filter((e) => e.waiterId === person.id);
     const by = (kind: Entry["kind"]) =>
       mine.filter((e) => e.kind === kind).reduce((sum, e) => sum + e.amount, 0);
 
@@ -318,5 +351,102 @@ export function splitShift(
     cashierTotal: sum((w) => w.toCashier),
     waitersAccrued: sum((w) => w.accrued),
     waitersNet: sum((w) => w.net),
+  };
+}
+
+/**
+ * Один получатель в контуре, который ни с кем не делится: хостес или
+ * кальянщик (или общий котёл бара).
+ *
+ * Полей меньше, чем у официанта, и это не упрощение ради краткости: здесь
+ * нет порога, нет доли администратора и доли кассира — их не существует
+ * по решению владельца 18.08.2026. Заводить пустые поля «для симметрии»
+ * значит однажды в них что-нибудь посчитать.
+ */
+export type PayeeSplit = {
+  payeeId: number;
+  payeeName: string;
+  cash: number;
+  qr: number;
+  service: number;
+  /** Чаевые без сервисного сбора — наличные и QR. */
+  tips: number;
+  /** Всё, что человек получил за смену. Начислено ему столько же. */
+  total: number;
+};
+
+export type SideSplit = {
+  rows: PayeeSplit[];
+  totalCash: number;
+  totalQr: number;
+  totalService: number;
+  totalTips: number;
+  /** Весь контур за смену. Ровно столько уходит людям — ничего не удержано. */
+  total: number;
+};
+
+/**
+ * Считает контур хостес или кальянного бара.
+ *
+ * Здесь нет деления как такового: сколько гость оставил, столько человек
+ * и получил. Функция нужна не ради арифметики, а ради того, чтобы суммы
+ * собирались в одном месте — там же, где зальные, и по тем же правилам
+ * округления.
+ *
+ * В список попадают все, кто стоит в смене в этой роли, даже с нулём —
+ * как у официантов. И сверх того — все, на кого есть записи, но кого
+ * в смене уже нет: администратор мог убрать человека из состава после
+ * того, как записал ему чаевые. Спрятать такие деньги нельзя, они
+ * настоящие; поэтому строка появится, а имя возьмётся из самой записи.
+ */
+export function splitSide(
+  entries: Entry[],
+  contour: Contour,
+  people: Employee[],
+): SideSplit {
+  const mine = entries.filter((e) => contourOf(e) === contour);
+
+  const known = new Map<number, string>(
+    people.map((p) => [p.id, p.short] as const),
+  );
+  for (const e of mine) {
+    if (!known.has(e.waiterId)) known.set(e.waiterId, e.waiterName);
+  }
+
+  const rows: PayeeSplit[] = [...known].map(([payeeId, payeeName]) => {
+    const his = mine.filter((e) => e.waiterId === payeeId);
+    const by = (kind: Kind) =>
+      money(
+        his.filter((e) => e.kind === kind).reduce((sum, e) => sum + e.amount, 0),
+      );
+
+    const cash = by("cash");
+    const qr = by("qr");
+    const service = by("service");
+    const tips = money(cash + qr);
+
+    return {
+      payeeId,
+      payeeName,
+      cash,
+      qr,
+      service,
+      tips,
+      total: money(tips + service),
+    };
+  });
+
+  rows.sort((a, b) => b.total - a.total);
+
+  const sum = (pick: (r: PayeeSplit) => number) =>
+    money(rows.reduce((acc, r) => acc + pick(r), 0));
+
+  return {
+    rows,
+    totalCash: sum((r) => r.cash),
+    totalQr: sum((r) => r.qr),
+    totalService: sum((r) => r.service),
+    totalTips: sum((r) => r.tips),
+    total: sum((r) => r.total),
   };
 }
