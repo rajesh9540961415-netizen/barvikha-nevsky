@@ -306,13 +306,36 @@ def main():
     # навсегда. На сервере запускается без ключей и работает постоянно.
     once = "--once" in sys.argv
 
+    # Читаем ли мы Telegram вообще.
+    #
+    # Роботов двое, и делают они разное: варшавский читает группу, московский
+    # делает копию базы (Telegram из Москвы перекрыт с 13.08.2026). До сих пор
+    # «не читаю Telegram» было для службы поломкой: без TG_SESSION она просто
+    # выходила. Из-за этого у московского робота переменная осталась стоять —
+    # и 18.08.2026 обернулась потерянным днём чаевых: два робота в разных
+    # странах вошли в Telegram ОДНИМ ключом, и Telegram отозвал его у обоих.
+    #
+    # Поэтому теперь это законное состояние: нет сессии — не читаем, но живём
+    # и делаем дела по расписанию. Копия базы в Telegram не нуждается вовсе,
+    # она уходит ботом, а у бота ключ свой.
+    reads_telegram = bool(os.environ.get("TG_SESSION"))
+
     group_id = os.environ.get("TG_GROUP_ID")
-    if not group_id:
+    if reads_telegram and not group_id:
         sys.exit("Не задана TG_GROUP_ID")
     since_day = os.environ.get("QR_SINCE_DAY")
 
     storage = storage_module.choose(log)
     announce_schedule(storage)
+    if not reads_telegram:
+        # Говорим прямо, а не молчим: «робот работает» и «робот читает группу» —
+        # разные вещи, и перепутать их стоило нам недели поступлений в августе.
+        log.info(
+            "Telegram НЕ читаю: сессия (TG_SESSION) не задана. Так и задумано "
+            "для московского робота — его дело копия базы. Группу читает "
+            "варшавский, и ключ Telegram должен быть только у него: один "
+            "ключ на двух серверах Telegram отзывает."
+        )
 
     client = None
     group = None
@@ -334,7 +357,7 @@ def main():
             # остальное стояло вместе с ней. 11.08.2026 это значило бы, что
             # копия базы не сделается никогда: MTProto с Amvera перекрыт,
             # а копия уходит другим путём и в нём не нуждается.
-            if client is None and (
+            if reads_telegram and client is None and (
                 tried_at is None
                 or now_utc - tried_at >= timedelta(seconds=reconnect_after)
             ):
