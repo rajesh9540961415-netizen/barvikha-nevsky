@@ -122,6 +122,7 @@ const EMPTY: Shift = {
   crew: [],
   operator: null,
   admin: null,
+  admin2: null,
   cashier: null,
   hostess: [],
   hookah: [],
@@ -153,6 +154,7 @@ export async function readDay(businessDay: string): Promise<DayData | null> {
       crew: number[];
       operator_id: number | null;
       admin_id: number | null;
+      admin2_id: number | null;
       cashier_id: number | null;
       hostess: number[] | null;
       hookah: number[] | null;
@@ -182,6 +184,7 @@ export async function readDay(businessDay: string): Promise<DayData | null> {
         crew: shifts[0].crew,
         operator: shifts[0].operator_id,
         admin: shifts[0].admin_id,
+        admin2: shifts[0].admin2_id,
         cashier: shifts[0].cashier_id,
         hostess: shifts[0].hostess ?? [],
         hookah: shifts[0].hookah ?? [],
@@ -413,6 +416,7 @@ export async function saveCrew(input: {
     crew,
     operator: role(input.shift.operator),
     admin: role(input.shift.admin),
+    admin2: role(input.shift.admin2),
     cashier: role(input.shift.cashier),
     // Бэк-офис этих двух списков не трогает: экрана для них нет, а сам запрос
     // ниже их столбцов не касается. Здесь они нужны, чтобы след «было / стало»
@@ -421,11 +425,27 @@ export async function saveCrew(input: {
     hookah: input.shift.hookah ?? [],
   };
 
-  const unknown = [after.operator, after.admin, after.cashier, ...crew].find(
-    (id) => id !== null && !allowed.has(id),
-  );
+  const unknown = [
+    after.operator,
+    after.admin,
+    after.admin2,
+    after.cashier,
+    ...crew,
+  ].find((id) => id !== null && !allowed.has(id));
   if (unknown != null) return { error: `Не знаю сотрудника №${unknown}` };
   if (after.operator === null) return { error: "Укажите, кто вносил записи" };
+
+  // Второй администратор без первого — это не «двое», а сдвинутая на одну
+  // клетку смена: доля поделилась бы пополам между человеком и пустотой.
+  if (after.admin === null && after.admin2 !== null) {
+    return { error: "Второй администратор есть, а первого нет" };
+  }
+  // Один и тот же человек дважды поделил бы его же долю пополам с самим
+  // собой — и половина ушла бы в никуда. Ловим здесь, а не на экране:
+  // экран можно обойти, сохранение — нет.
+  if (after.admin !== null && after.admin === after.admin2) {
+    return { error: "Оба администратора — один и тот же человек" };
+  }
 
   const sql = db();
   try {
@@ -435,6 +455,7 @@ export async function saveCrew(input: {
           crew: number[];
           operator_id: number | null;
           admin_id: number | null;
+          admin2_id: number | null;
           cashier_id: number | null;
           hostess: number[] | null;
           hookah: number[] | null;
@@ -446,6 +467,7 @@ export async function saveCrew(input: {
             crew: before[0].crew,
             operator: before[0].operator_id,
             admin: before[0].admin_id,
+            admin2: before[0].admin2_id,
             cashier: before[0].cashier_id,
             hostess: before[0].hostess ?? [],
             hookah: before[0].hookah ?? [],
@@ -453,15 +475,18 @@ export async function saveCrew(input: {
         : EMPTY;
 
       await tx`
-        insert into shifts (business_day, crew, operator_id, admin_id, cashier_id)
+        insert into shifts (
+          business_day, crew, operator_id, admin_id, admin2_id, cashier_id
+        )
         values (
           ${input.businessDay}, ${after.crew}, ${after.operator},
-          ${after.admin}, ${after.cashier}
+          ${after.admin}, ${after.admin2}, ${after.cashier}
         )
         on conflict (business_day) do update set
           crew = excluded.crew,
           operator_id = excluded.operator_id,
           admin_id = excluded.admin_id,
+          admin2_id = excluded.admin2_id,
           cashier_id = excluded.cashier_id,
           updated_at = now()
       `;

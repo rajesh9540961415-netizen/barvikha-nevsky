@@ -11,7 +11,7 @@ import {
   splitOffice,
   type ShiftEvent,
 } from "@/lib/office";
-import { THRESHOLD, cashierPool } from "@/lib/split";
+import { THRESHOLD, adminShares, cashierPool } from "@/lib/split";
 import Compare from "./Compare";
 import CrewEditor from "./CrewEditor";
 import EventEditor, { Field, Overlay } from "./EventEditor";
@@ -44,6 +44,7 @@ export default function ShiftScreen({ data }: { data: DayData }) {
             {nameOf(shift.operator)}
             {" · администратор "}
             {nameOf(shift.admin)}
+            {shift.admin2 !== null && ` и ${nameOf(shift.admin2)}`}
             {" · кассир "}
             {nameOf(shift.cashier)}
           </div>
@@ -59,7 +60,17 @@ export default function ShiftScreen({ data }: { data: DayData }) {
           <Total label="Заработано за смену" value={split.totalEarned} strong />
           <Total label="Начислено официантам" value={split.waitersAccrued} strong />
           <Total label="чаевые" value={split.totalTips} />
-          <Total label="Администратору" value={split.adminTotal} />
+          {shift.admin2 !== null ? (
+            <Total
+              label="Администраторам"
+              value={split.adminTotal}
+              note={adminShares(split.adminTotal, 2)
+                .map((доля, i) => `${nameOf(i === 0 ? shift.admin : shift.admin2)} ${money(доля)}`)
+                .join(" · ")}
+            />
+          ) : (
+            <Total label="Администратору" value={split.adminTotal} />
+          )}
           <Total label="сервисный сбор" value={split.totalService} />
           <Total
             label="Кассиру"
@@ -414,6 +425,10 @@ function describeCrewChange(
   const roles: [string, number | null, number | null][] = [
     ["вносил записи", c.before.operator, c.after.operator],
     ["администратор", c.before.admin, c.after.admin],
+    // У смен до 19.08.2026 второго администратора в следе нет вовсе:
+    // поле появилось позже. `?? null` — чтобы «не указан → не указан»
+    // не попало в список изменений и не выглядело правкой.
+    ["второй администратор", c.before.admin2 ?? null, c.after.admin2 ?? null],
     ["кассир", c.before.cashier, c.after.cashier],
   ];
   for (const [title, was, now] of roles) {

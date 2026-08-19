@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 
 import quickResto from "@/data/employees.json";
 import { splitOffice, type OfficeEntry } from "../office";
+import { adminShares } from "../split";
 import type { Employee, Shift } from "../types";
 import { currentManager } from "./managers";
 import { db } from "./sql";
@@ -208,6 +209,7 @@ export async function readPerson(
       crew: number[];
       operator_id: number | null;
       admin_id: number | null;
+      admin2_id: number | null;
       cashier_id: number | null;
       hostess: number[] | null;
       hookah: number[] | null;
@@ -231,6 +233,7 @@ export async function readPerson(
       crew: s.crew,
       operator: s.operator_id,
       admin: s.admin_id,
+      admin2: s.admin2_id,
       cashier: s.cashier_id,
       hostess: s.hostess ?? [],
       hookah: s.hookah ?? [],
@@ -264,12 +267,28 @@ export async function readPerson(
     const split = splitOffice(dayEntries, crew, businessDay);
     const mine = split.waiters.find((w) => w.waiterId === personId);
 
+    // Администраторов за вечер может быть двое — тогда доля делится
+    // пополам. Считаем через `adminShares`, а не делением на два: две доли
+    // обязаны сложиться в исходную сумму копейка в копейку.
+    const админов = [shift?.admin, shift?.admin2].filter(
+      (id) => id !== null && id !== undefined,
+    ).length;
+    const доли = adminShares(split.adminTotal, админов);
+
     const roles: string[] = [];
-    if (shift?.admin === personId) roles.push("администратор");
+    if (shift?.admin === personId) {
+      roles.push(админов > 1 ? "администратор, смену делили надвое" : "администратор");
+    }
+    if (shift?.admin2 === personId) roles.push("администратор, смену делили надвое");
     if (shift?.cashier === personId) roles.push("кассир");
     if (shift?.operator === personId) roles.push("вносил записи");
 
-    const asAdmin = shift?.admin === personId ? split.adminTotal : 0;
+    const asAdmin =
+      shift?.admin === personId
+        ? доли[0]
+        : shift?.admin2 === personId
+          ? доли[1]
+          : 0;
     const asCashier = shift?.cashier === personId ? split.cashierTotal : 0;
 
     const worked =

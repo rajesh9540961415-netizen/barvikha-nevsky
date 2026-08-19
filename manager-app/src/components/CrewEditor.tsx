@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { saveCrew } from "@/lib/db/corrections";
 import { money } from "@/lib/format";
 import { splitOffice, type OfficeEntry } from "@/lib/office";
-import { cashierPool } from "@/lib/split";
+import { adminShares, cashierPool } from "@/lib/split";
 import type { Employee, Shift } from "@/lib/types";
 import Compare from "./Compare";
 import { Chip, Field, Overlay } from "./EventEditor";
@@ -63,7 +63,11 @@ export default function CrewEditor({ day, shift, live, crew, people, onClose }: 
       ? "Отметьте хотя бы одного официанта"
       : next.operator === null
         ? "Укажите, кто вносил записи"
-        : null;
+        : next.admin === null && next.admin2 !== null
+          ? "Второй администратор есть, а первого нет"
+          : next.admin !== null && next.admin === next.admin2
+            ? "Оба администратора — один и тот же человек"
+            : null;
 
   function toggle(id: number) {
     setNext((s) => ({
@@ -130,6 +134,24 @@ export default function CrewEditor({ day, shift, live, crew, people, onClose }: 
           value={next.admin}
           onPick={(id) => setNext((s) => ({ ...s, admin: id }))}
         />
+        {/* Второй администратор пустует в обычную смену — и это не пропуск,
+            а норма. Заполняется, когда смену делили надвое: один до
+            пересменки, второй после. Доля тогда делится пополам, без
+            привязки к часам — решение владельца 18.08.2026. */}
+        <Role
+          label="Второй администратор — если смену делили надвое"
+          people={everyone}
+          value={next.admin2}
+          onPick={(id) => setNext((s) => ({ ...s, admin2: id }))}
+        />
+        {next.admin2 !== null && (
+          <p className="-mt-3 text-sm text-fg-muted">
+            доля администратора делится пополам:{" "}
+            {adminShares(after.adminTotal, 2)
+              .map((доля) => money(доля))
+              .join(" и ")}
+          </p>
+        )}
         <Role
           label={`Кассир смены — ему уходит доля от ${money(cashierPool(day))}`}
           people={everyone}
