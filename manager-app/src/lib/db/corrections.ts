@@ -511,3 +511,118 @@ export async function saveCrew(input: {
   revalidatePath("/");
   return { ok: true };
 }
+
+/**
+ * Заводит запись задним числом — то, чего в приложении не было вовсе.
+ *
+ * Зачем это понадобилось. До 19.08.2026 бэк-офис умел только исправлять
+ * и отменять уже существующие записи: каждая новая строка обязана была
+ * ссылаться на ту, которую заменяет. Замысел верный — деньги нельзя
+ * дописать в прошлое без следа. Но у него нашлась дыра с другой стороны:
+ * если запись НЕ СДЕЛАЛИ ВОВСЕ, исправлять нечего, и восполнить пропажу
+ * было нечем. Сверка с бумажными листами нашла 13 116 ₽ за три вечера
+ * августа, и все три — «человека не внесли в смену».
+ *
+ * ⚠️ Отсутствие записи не видно ни на одном экране и не может быть видно:
+ * у наличных и терминала нет второго канала, как у QR. Пустая клетка
+ * означает ровно то же, что и тихий вечер. Поэтому дыру нашла бумага,
+ * и закрывать её надо здесь.
+ *
+ * Чем эта запись отличается от обычной правки:
+ *
+ * 1. `corrects` пуст — она ничего не заменяет.
+ * 2. Пояснение ОБЯЗАТЕЛЬНО. У правки есть «было / стало», и по нему видно,
+ *    что изменилось; у записи из ниоткуда сравнить не с чем, поэтому
+ *    единственное объяснение — слова того, кто её завёл.
+ * 3. Автором ставится тот, кто вносил записи в тот вечер, а не управляющий:
+ *    деньги приняли в зале, и в истории смены запись должна стоять рядом
+ *    со своими. Кто её завёл задним числом, видно по `manager_id`.
+ */
+export async function добавитьЗапись(input: {
+  businessDay: string;
+  draft: Draft;
+  /** Время события внутри смены, как на бумаге: «19:40». */
+  время: string;
+  note: string;
+}): Promise<Answer> {
+  const manager = await currentManager();
+  if (!manager) return { error: "Вход истёк — войдите заново" };
+  if (!DAY.test(input.businessDay)) return { error: "Непонятная смена" };
+
+  const bad = draftError(input.draft);
+  if (bad) return { error: bad };
+
+  const пояснение = input.note.trim();
+  if (пояснение.length < 3) {
+    return { error: "Напишите, откуда эта запись — без пояснения её не отличить от выдумки" };
+  }
+  if (!/^\d{1,2}:\d{2}$/.test(input.время)) {
+    return { error: "Время нужно вида 19:40" };
+  }
+
+  const sql = db();
+  const [строка] = await sql<{ crew: number[]; operator_id: number | null }[]>`
+    select crew, operator_id from shifts where business_day = ${input.businessDay}
+  `;
+  if (!строка) return { error: "Смены за этот день нет — сначала соберите состав" };
+
+  // Раскладка смены перебирает состав, а не записи: деньги на человека вне
+  // состава не попадут никуда и пропадут молча. Та же проверка, что у правки.
+  const вСоставе = new Set(строка.crew ?? []);
+  const чужой = input.draft.waiterIds.find((id) => !вСоставе.has(id));
+  if (чужой !== undefined) {
+    return { error: `В составе смены нет сотрудника №${чужой} — сначала поправьте состав` };
+  }
+  if (строка.operator_id === null) {
+    return { error: "У смены не указано, кто вносил записи — поправьте состав" };
+  }
+
+  const people = await allPeople();
+  const имя = (id: number) => people.find((p) => p.id === id)?.name ?? `№${id}`;
+
+  const [часы, минуты] = input.время.split(":").map(Number);
+  if (часы > 23 || минуты > 59) return { error: "Такого времени не бывает" };
+  // Смена переваливает за полночь: часы до 6 утра относятся к следующему
+  // календарному дню, иначе запись встала бы в историю на сутки раньше.
+  const дата = new Date(`${input.businessDay}T00:00:00+03:00`);
+  if (часы < 6) дата.setDate(дата.getDate() + 1);
+  дата.setHours(часы, минуты, 0, 0);
+
+  const строки = rowsFromDraft(input.draft, {
+    businessDay: input.businessDay,
+    createdAt: дата.toISOString(),
+    operatorId: строка.operator_id,
+    operatorName: имя(строка.operator_id),
+    managerId: manager.id,
+    corrects: null,
+    note: пояснение,
+    nameOf: имя,
+  });
+
+  try {
+    await sql.begin(async (tx) => {
+      for (const e of строки) {
+        await tx`
+          insert into entries (
+            id, business_day, hall_id, hall_title, table_id, table_title,
+            waiter_id, waiter_name, amount, kind, operator_id, operator_name,
+            created_at, split_group, gross, commission_rate,
+            corrects, source, manager_id, note
+          ) values (
+            ${e.id}, ${e.businessDay}, ${e.hallId}, ${e.hallTitle},
+            ${e.tableId}, ${e.tableTitle}, ${e.waiterId}, ${e.waiterName},
+            ${e.amount}, ${e.kind}, ${e.operatorId}, ${e.operatorName},
+            ${e.createdAt}, ${e.splitGroup ?? null}, ${e.gross}, ${e.commissionRate},
+            ${null}, 'office', ${e.managerId}, ${e.note}
+          )
+        `;
+      }
+    });
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : "Не получилось сохранить" };
+  }
+
+  revalidatePath(`/shift/${input.businessDay}`);
+  revalidatePath("/");
+  return { ok: true };
+}

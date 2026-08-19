@@ -13,6 +13,7 @@ import {
 } from "@/lib/office";
 import { THRESHOLD, adminShares, cashierPool } from "@/lib/split";
 import Compare from "./Compare";
+import AddEntry from "./AddEntry";
 import CrewEditor from "./CrewEditor";
 import EventEditor, { Field, Overlay } from "./EventEditor";
 
@@ -29,6 +30,7 @@ export default function ShiftScreen({ data }: { data: DayData }) {
   const [editing, setEditing] = useState<ShiftEvent | null>(null);
   const [cancelling, setCancelling] = useState<ShiftEvent | null>(null);
   const [crewOpen, setCrewOpen] = useState(false);
+  const [addOpen, setAddOpen] = useState(false);
 
   const split = useMemo(() => splitOffice(live, crew, day), [live, crew, day]);
   const nameOf = (id: number | null) =>
@@ -48,12 +50,23 @@ export default function ShiftScreen({ data }: { data: DayData }) {
             {" · кассир "}
             {nameOf(shift.cashier)}
           </div>
-          <button
-            onClick={() => setCrewOpen(true)}
-            className="text-sm text-sand underline"
-          >
-            поправить состав
-          </button>
+          <div className="flex gap-4">
+            <button
+              onClick={() => setCrewOpen(true)}
+              className="text-sm text-sand underline"
+            >
+              поправить состав
+            </button>
+            {/* Запись, которой не было вовсе. Стоит рядом с составом, а не
+                в списке записей: там правят существующее, а это — другое
+                действие, и путать их нельзя. */}
+            <button
+              onClick={() => setAddOpen(true)}
+              className="text-sm text-sand underline"
+            >
+              завести запись
+            </button>
+          </div>
         </div>
 
         <div className="grid gap-x-8 gap-y-1 px-5 py-4 sm:grid-cols-2">
@@ -216,6 +229,15 @@ export default function ShiftScreen({ data }: { data: DayData }) {
           onClose={() => setCancelling(null)}
         />
       )}
+      {addOpen && (
+        <AddEntry
+          day={day}
+          live={live}
+          crew={crew}
+          onClose={() => setAddOpen(false)}
+        />
+      )}
+
       {crewOpen && (
         <CrewEditor
           day={day}

@@ -66,8 +66,8 @@ type RowTemplate = {
   operatorId: number | null;
   operatorName: string;
   managerId: number;
-  /** Ключ события, которое заменяем. */
-  corrects: string;
+  /** Ключ события, которое заменяем. Пусто у записи, заведённой с нуля. */
+  corrects: string | null;
   note: string | null;
   /** Имена официантов по номерам — берутся из справочника, не с экрана. */
   nameOf: (id: number) => string;

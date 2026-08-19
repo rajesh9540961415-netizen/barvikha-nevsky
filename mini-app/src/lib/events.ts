@@ -222,8 +222,8 @@ export function draftError(draft: Draft): string | null {
  */
 export type DraftRow = Omit<Entry, "operatorId"> & {
   operatorId: number | null;
-  /** Ключ события, которое заменяем. У правки он есть всегда. */
-  corrects: string;
+  /** Ключ события, которое заменяем. Пусто у записи, заведённой с нуля. */
+  corrects: string | null;
   source: "shift" | "office";
   note: string | null;
 };
@@ -240,8 +240,15 @@ export type RowTemplate = {
   createdAt: string;
   operatorId: number | null;
   operatorName: string;
-  /** Ключ события, которое заменяем. */
-  corrects: string;
+  /**
+   * Ключ события, которое заменяем.
+   *
+   * Пусто у записи, заведённой задним числом: она ничего не заменяет,
+   * а восполняет то, чего в приложении не было вовсе. Такое бывает,
+   * когда человека забыли внести в смену — за август так потерялось
+   * 13 116 ₽ по трём вечерам, и увидеть это можно было только по бумаге.
+   */
+  corrects: string | null;
   source: "shift" | "office";
   note: string | null;
   /** Имена официантов по номерам — берутся из справочника, не с экрана. */
