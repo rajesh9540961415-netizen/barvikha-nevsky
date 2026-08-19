@@ -4,7 +4,7 @@ import { Suspense } from "react";
 import PersonPicker from "@/components/PersonPicker";
 import PersonStatsView from "@/components/PersonStats";
 import ManualPeople from "./ManualPeople";
-import { listPeople, listManualPeople, readPerson } from "@/lib/db/people";
+import { listPeople, listManualPeople, readPerson, склейки } from "@/lib/db/people";
 import { requireManager } from "@/lib/db/managers";
 import { dayLabel } from "@/lib/format";
 
@@ -58,6 +58,12 @@ export default async function PeoplePage({
   const { from, to } = range(period);
 
   const people = await listPeople();
+  const склеено = await склейки();
+  // Склеенных в выборе не показываем: после склейки у них имя главной записи,
+  // и в списке стояли бы две одинаковые строки — ровно то, ради избавления
+  // от чего склейка и делалась. Из `people` их не убираем: по этому списку
+  // ищут имя по номеру, и без них состав прошлой смены показал бы «№-5».
+  const дляВыбора = people.filter((p) => !склеено.has(p.id));
   // Переименовывать может только владелец, поэтому и список ему одному:
   // показать кнопку тому, кто не может ею воспользоваться, — обман.
   const manual = manager.role === "owner" ? await listManualPeople() : [];
@@ -77,7 +83,7 @@ export default async function PeoplePage({
 
       <div className="mt-6">
         <Suspense fallback={<div className="h-16" />}>
-          <PersonPicker people={people} personId={id} period={period} />
+          <PersonPicker people={дляВыбора} personId={id} period={period} />
         </Suspense>
       </div>
 
@@ -96,7 +102,7 @@ export default async function PeoplePage({
         <PersonStatsView stats={stats} />
       )}
 
-      <ManualPeople people={manual} />
+      <ManualPeople people={manual} все={people} />
     </main>
     </>
   );

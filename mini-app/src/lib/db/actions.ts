@@ -590,7 +590,13 @@ export async function readLastShift(): Promise<Shift | null> {
   return rows[0] ? toShift(rows[0]) : null;
 }
 
-type PersonRow = { id: number; name: string; short: string; hidden_at: Date | null };
+type PersonRow = {
+  id: number;
+  name: string;
+  short: string;
+  hidden_at: Date | null;
+  merged_into: number | null;
+};
 
 /**
  * Все вписанные руками — и те, кого убрали из списка, тоже.
@@ -607,13 +613,15 @@ type PersonRow = { id: number; name: string; short: string; hidden_at: Date | nu
 export async function listManual(): Promise<Employee[]> {
   const sql = db();
   const rows = await sql<PersonRow[]>`
-    select id, name, short, hidden_at from manual_people order by id desc
+    select id, name, short, hidden_at, merged_into
+      from manual_people order by id desc
   `;
   return rows.map((r) => ({
     id: r.id,
     name: r.name,
     short: r.short,
     hidden: r.hidden_at !== null,
+    mergedInto: r.merged_into ?? undefined,
   }));
 }
 

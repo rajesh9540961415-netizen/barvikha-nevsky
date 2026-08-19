@@ -202,8 +202,19 @@ export async function readPerson(
 
   const sql = db();
   const people = await listPeople();
-  const person = people.find((p) => p.id === personId);
+  const склеено = await склейки();
+
+  // Открыли склеенную запись — показываем человека целиком, а не половину.
+  // Склейка и заводилась ради того, чтобы у работника была одна история,
+  // и страница, показывающая только один из двух его номеров, эту работу
+  // обесценивала бы ровно там, где на неё смотрят.
+  const главный = склеено.get(personId) ?? personId;
+  const person = people.find((p) => p.id === главный);
   if (!person) return null;
+
+  // Все номера этого человека: его собственный и все, что на него склеены.
+  const свои = new Set<number>([главный]);
+  for (const [номер, цель] of склеено) if (цель === главный) свои.add(номер);
 
   // Тянем период целиком одним запросом, а не по дню: тридцать запросов
   // подряд превратили бы страницу в ту самую, что думает минуту.
@@ -275,7 +286,29 @@ export async function readPerson(
     );
 
     const split = splitOffice(dayEntries, crew, businessDay);
-    const mine = split.waiters.find((w) => w.waiterId === personId);
+
+    // Складываем все свои номера, а не берём первый попавшийся. Пересечься
+    // в один вечер они почти не могут — до оформления человек работает под
+    // одним номером, после под другим, — но «почти» в деньгах не считается.
+    const мои = split.waiters.filter((w) => свои.has(w.waiterId));
+    const сложить = (взять: (w: (typeof мои)[number]) => number) =>
+      round(мои.reduce((acc, w) => acc + взять(w), 0));
+    const mine = мои.length
+      ? {
+          cash: сложить((w) => w.cash),
+          terminal: сложить((w) => w.terminal),
+          qr: сложить((w) => w.qr),
+          service: сложить((w) => w.service),
+          total: сложить((w) => w.total),
+          accrued: сложить((w) => w.accrued),
+          commission: сложить((w) => w.commission),
+          toAdmin: сложить((w) => w.toAdmin),
+          toCashier: сложить((w) => w.toCashier),
+          // Порог считается по каждой записи отдельно, и хватило одной —
+          // значит вечер порог перешагнул.
+          aboveThreshold: мои.some((w) => w.aboveThreshold),
+        }
+      : undefined;
 
     // Администраторов за вечер может быть двое — тогда доля делится
     // пополам. Считаем через `adminShares`, а не делением на два: две доли
@@ -286,25 +319,27 @@ export async function readPerson(
     const доли = adminShares(split.adminTotal, админов);
 
     const roles: string[] = [];
-    if (shift?.admin === personId) {
+    const свой = (id: number | null | undefined) =>
+      id !== null && id !== undefined && свои.has(id);
+
+    if (свой(shift?.admin)) {
       roles.push(админов > 1 ? "администратор, смену делили надвое" : "администратор");
     }
-    if (shift?.admin2 === personId) roles.push("администратор, смену делили надвое");
-    if (shift?.cashier === personId) roles.push("кассир");
-    if (shift?.operator === personId) roles.push("вносил записи");
+    if (свой(shift?.admin2)) roles.push("администратор, смену делили надвое");
+    if (свой(shift?.cashier)) roles.push("кассир");
+    if (свой(shift?.operator)) roles.push("вносил записи");
 
-    const asAdmin =
-      shift?.admin === personId
-        ? доли[0]
-        : shift?.admin2 === personId
-          ? доли[1]
-          : 0;
-    const asCashier = shift?.cashier === personId ? split.cashierTotal : 0;
+    const asAdmin = свой(shift?.admin)
+      ? доли[0]
+      : свой(shift?.admin2)
+        ? доли[1]
+        : 0;
+    const asCashier = свой(shift?.cashier) ? split.cashierTotal : 0;
 
     const worked =
-      crewIds.includes(personId) ||
+      crewIds.some((id) => свои.has(id)) ||
       roles.length > 0 ||
-      dayEntries.some((e) => e.waiterId === personId);
+      dayEntries.some((e) => свои.has(e.waiterId));
 
     const mineAccrued = mine ? mine.accrued : 0;
 
@@ -314,7 +349,7 @@ export async function readPerson(
     // ничего, в среднее не берём — сравнение идёт между теми, кто работал
     // с гостями, а не с пустыми строками состава.
     const others = split.waiters.filter(
-      (w) => w.waiterId !== personId && w.total > 0,
+      (w) => !свои.has(w.waiterId) && w.total > 0,
     );
     const peers = others.length
       ? round(others.reduce((s, w) => s + w.total, 0) / others.length)
@@ -509,9 +544,10 @@ export async function listManualPeople(): Promise<ManualPerson[]> {
       shifts: string;
       last_day: string | null;
       hidden_at: Date | null;
+      merged_into: number | null;
     }[]
   >`
-    select p.id, p.name, p.short, p.hidden_at,
+    select p.id, p.name, p.short, p.hidden_at, p.merged_into,
            (select count(distinct e.business_day) from entries e
              where e.waiter_id = p.id and e.deleted_at is null) as shifts,
            (select max(e.business_day) from entries e
@@ -526,7 +562,23 @@ export async function listManualPeople(): Promise<ManualPerson[]> {
     shifts: Number(r.shifts),
     lastDay: r.last_day,
     hidden: r.hidden_at !== null,
+    mergedInto: r.merged_into ?? undefined,
   }));
+}
+
+/**
+ * Кто с кем склеен: {номер вписанного руками → номер главной записи}.
+ *
+ * Отдельной функцией, потому что спрашивают об этом трое: список выбора
+ * (склеенного предлагать не надо), карточка человека (истории складываются)
+ * и сама страница «Люди».
+ */
+export async function склейки(): Promise<Map<number, number>> {
+  const sql = db();
+  const rows = await sql<{ id: number; merged_into: number }[]>`
+    select id, merged_into from manual_people where merged_into is not null
+  `;
+  return new Map(rows.map((r) => [r.id, r.merged_into]));
 }
 
 /**
@@ -562,5 +614,146 @@ export async function вернутьВСписок(
   return {
     ok: true,
     текст: `${строки[0].name} снова в списке — его можно отмечать в смене.`,
+  };
+}
+
+/**
+ * Склеивает вписанного руками с главной записью человека.
+ *
+ * Что делает разом две вещи, и обе нужны:
+ *
+ *   1. **записывает решение** — «номер −5 это тот же человек, что №920»;
+ *   2. **приводит имя к имени главной записи** — и в справочнике,
+ *      и во всех прошлых записях о деньгах.
+ *
+ * ⚠️ Второе не украшение. Отчёт складывает людей ПО ИМЕНИ, и до сих пор это
+ * держалось на том, что администратор набрал имя буква в букву как в кассе.
+ * Наберёт «Михаэла» вместо «Михаела» — и у человека в отчёте две строки,
+ * а деньги разъехались по ним. После склейки совпадение имени перестаёт быть
+ * везением: оно следствие записанного решения.
+ *
+ * ⚠️ А вот номер в записях НЕ меняем. Запись — денежный документ: в тот вечер
+ * деньги внесли именно на этот номер, и через год должно быть видно, как было.
+ * Отсюда же и обратимость: склейку можно снять, а переписанные номера
+ * назад не соберёшь.
+ *
+ * 💡 Почему решение хранится здесь, а не словарём в сборщике отчёта. Словарь
+ * `СКЛЕЙКА` в `report_build.py` делал ровно это же, но жил в коде на другом
+ * компьютере: правит его тот, кто открывает Питон, а знает про людей тот,
+ * кто открывает бэк-офис. Решение должно лежать там, где его принимают.
+ */
+export async function склеить(
+  _previous: { ok: boolean; текст: string } | null,
+  form: FormData,
+): Promise<{ ok: boolean; текст: string }> {
+  const manager = await currentManager();
+  if (!manager) return { ok: false, текст: "Войдите заново" };
+  if (manager.role !== "owner") {
+    return { ok: false, текст: "Склеивать людей может только владелец" };
+  }
+
+  const id = Number(form.get("id"));
+  const главный = Number(form.get("target"));
+
+  // Склеивать можно только вписанного руками: имя человека из Quick Resto
+  // приезжает из кассы и вернулось бы обратно при следующей выгрузке.
+  if (!Number.isInteger(id) || id >= 0) {
+    return { ok: false, текст: "Склеить можно только вписанного руками" };
+  }
+  if (!Number.isInteger(главный)) return { ok: false, текст: "Не выбран человек" };
+  if (главный === id) return { ok: false, текст: "Человек не может быть сам себе двойником" };
+
+  const люди = await listPeople();
+  const цель = люди.find((p) => p.id === главный);
+  if (!цель) return { ok: false, текст: "Такого человека нет" };
+
+  // Цепочек не допускаем: A → B → C читалось бы по-разному в трёх местах,
+  // и однажды прочиталось бы неверно в деньгах.
+  const уже = await склейки();
+  if (уже.has(главный)) {
+    return {
+      ok: false,
+      текст: "Этот человек сам склеен с другим — выберите ту запись, к которой ведёт склейка",
+    };
+  }
+  if ([...уже.values()].includes(id)) {
+    return { ok: false, текст: "С этой записью уже склеен кто-то другой" };
+  }
+
+  const sql = db();
+  try {
+    const итог = await sql.begin(async (tx) => {
+      const прежние = await tx<{ name: string }[]>`
+        select name from manual_people where id = ${id} for update
+      `;
+      if (прежние.length === 0) return { ok: false, текст: "Человек не найден" };
+      const было = прежние[0].name;
+
+      await tx`
+        update manual_people
+           set name = ${цель.name}, short = ${цель.short},
+               merged_into = ${главный},
+               -- Склеенного больше не предлагаем отмечать: человек один,
+               -- и отмечать надо главную запись.
+               hidden_at = coalesce(hidden_at, now())
+         where id = ${id}
+      `;
+
+      const записи = await tx<{ id: string }[]>`
+        update entries set waiter_name = ${цель.name}
+         where waiter_id = ${id} returning id
+      `;
+
+      return {
+        ok: true,
+        текст:
+          `«${было}» теперь считается тем же человеком, что «${цель.name}» (№${главный}). ` +
+          `Имя приведено к главной записи, поправлено записей о деньгах: ${записи.length}. ` +
+          "Суммы не тронуты, номера в записях остались прежними.",
+      };
+    });
+    if (итог.ok) revalidatePath("/people");
+    return итог;
+  } catch (e) {
+    const err = e as { message?: string };
+    return { ok: false, текст: `База не ответила: ${err.message ?? "неизвестно"}` };
+  }
+}
+
+/**
+ * Снимает склейку.
+ *
+ * ⚠️ Имя обратно НЕ переименовывает. Мы не знаем, каким оно должно стать:
+ * прежнее было тем самым неверным написанием, из-за которого склейку
+ * и делали. Вернуть его молча значило бы снова развалить строку в отчёте.
+ * Имя правится отдельно и осознанно — кнопкой «переименовать».
+ */
+export async function расклеить(
+  _previous: { ok: boolean; текст: string } | null,
+  form: FormData,
+): Promise<{ ok: boolean; текст: string }> {
+  const manager = await currentManager();
+  if (!manager) return { ok: false, текст: "Войдите заново" };
+  if (manager.role !== "owner") {
+    return { ok: false, текст: "Снимать склейку может только владелец" };
+  }
+
+  const id = Number(form.get("id"));
+  if (!Number.isInteger(id) || id >= 0) {
+    return { ok: false, текст: "Это не вписанный руками" };
+  }
+
+  const sql = db();
+  const строки = await sql<{ name: string }[]>`
+    update manual_people set merged_into = null where id = ${id} returning name
+  `;
+  if (строки.length === 0) return { ok: false, текст: "Человек не найден" };
+
+  revalidatePath("/people");
+  return {
+    ok: true,
+    текст:
+      `${строки[0].name}: склейка снята. Имя осталось прежним — если его надо ` +
+      "поменять, сделайте это отдельно, кнопкой «переименовать».",
   };
 }
