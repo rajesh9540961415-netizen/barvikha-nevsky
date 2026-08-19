@@ -131,10 +131,23 @@ const EMPTY: Shift = {
 
 async function allPeople(): Promise<Employee[]> {
   const sql = db();
-  const manual = await sql<{ id: number; name: string; short: string }[]>`
-    select id, name, short from manual_people order by id desc
+  const manual = await sql<
+    { id: number; name: string; short: string; hidden_at: Date | null }[]
+  >`
+    select id, name, short, hidden_at from manual_people order by id desc
   `;
-  return [...(quickResto as Employee[]), ...manual];
+  // Убранных отсюда НЕ выбрасываем: по этому списку ищут имя по номеру,
+  // и без них прошлые смены снова показывали бы «№-6». Пометка нужна,
+  // чтобы окна выбора могли сказать про человека правду.
+  return [
+    ...(quickResto as Employee[]),
+    ...manual.map((m) => ({
+      id: m.id,
+      name: m.name,
+      short: m.short,
+      hidden: m.hidden_at !== null,
+    })),
+  ];
 }
 
 /** Всё, что нужно экрану смены, одним чтением. */

@@ -69,15 +69,44 @@ export default function ShiftCrew({
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
   /**
-   * Почему человека не убрали из списка.
+   * Что сказать администратору про список людей.
    *
-   * Отдельной строкой на экране, а не в журнале: до 19.08.2026 удаление
-   * всегда молча удавалось, и администратор привык, что кнопка срабатывает.
-   * Теперь она иногда отказывает, и без объяснения это выглядело бы поломкой.
+   * Отдельной строкой на экране, а не в журнале. Кнопки «вписать» и «убрать»
+   * до 19.08.2026 в спорных случаях молчали: вписал уже заведённого — ничего
+   * не произошло и никто не объяснил. Молчание читается как поломка кнопки,
+   * а не как ответ.
    */
-  const [отказ, setОтказ] = useState<string | null>(null);
+  const [слова, setСлова] = useState<string | null>(null);
 
+  /**
+   * Все, кого знаем, — включая убранных из списка.
+   *
+   * ⚠️ Отсюда берут ИМЯ по номеру: подписи ролей, состав, история вечера.
+   * Убери отсюда убранного человека — и вчерашняя смена, которую открыли
+   * поправить, покажет вместо него «№-6». Список для показа и список для
+   * поиска имени — разные списки, и путать их дорого.
+   */
   const everyone = [...FROM_QUICK_RESTO, ...manual];
+
+  /**
+   * Кого предлагаем отметить сегодня.
+   *
+   * Убранные не предлагаются: стажёра оформили в кассе или он ушёл. Но если
+   * он уже стоит в СЕГОДНЯШНЕЙ смене — показываем, иначе его нельзя было бы
+   * снять: человек в составе, а кнопки нет.
+   */
+  const вСмене = (id: number) =>
+    shift.crew.includes(id) ||
+    shift.hostess.includes(id) ||
+    shift.hookah.includes(id) ||
+    shift.operator === id ||
+    shift.admin === id ||
+    shift.admin2 === id ||
+    shift.cashier === id;
+
+  const manualВыбор = manual.filter((p) => !p.hidden || вСмене(p.id));
+  const выбор = [...FROM_QUICK_RESTO, ...manualВыбор];
+
   const ready = shift.crew.length > 0 && shift.operator !== null && !busy;
 
   function toggleCrew(id: number) {
@@ -124,8 +153,10 @@ export default function ShiftCrew({
 
   async function add(section: string) {
     const before = manual.map((p) => p.id);
-    const next = await addManualPerson(name);
-    onManualChange(next);
+    const ответ = await addManualPerson(name);
+    onManualChange(ответ.люди);
+    setСлова(ответ.вернулся);
+    const next = ответ.люди;
     const fresh = next.find((p) => !before.includes(p.id));
     if (fresh) {
       // Куда именно вписали, туда человек и попадает. В зал — только если
@@ -148,12 +179,10 @@ export default function ShiftCrew({
   async function drop(person: Employee) {
     const ответ = await removeManualPerson(person.id);
     onManualChange(ответ.люди);
-    if (ответ.отказ) {
-      // Человек остался в списке — и в смене его тоже не трогаем.
-      setОтказ(`${person.name}: ${ответ.отказ}`);
-      return;
-    }
-    setОтказ(null);
+    setСлова(ответ.сказать);
+    // Из состава СЕГОДНЯШНЕЙ смены человека снимаем в любом случае: его
+    // убрали с экрана именно потому, что сегодня он не работает. Прошлые
+    // смены это не трогает — там свой состав, сохранённый в тот вечер.
     setShift((s) => ({
       ...s,
       crew: s.crew.filter((x) => x !== person.id),
@@ -185,13 +214,19 @@ export default function ShiftCrew({
         </div>
       </header>
 
-      {/* Отказ на удаление. Стоит под шапкой, а не рядом с кнопкой: убрать
-          человека можно из шести разделов, и сообщение у каждой кнопки
-          пришлось бы держать в шести местах. */}
-      {отказ && (
-        <div className="mx-4 mb-3 rounded-xl border border-alert bg-alert/10 px-3 py-2 text-sm">
-          {отказ}
-        </div>
+      {/* Ответ на «вписать» и «убрать». Стоит под шапкой, а не рядом
+          с кнопкой: вписывать и убирать можно из шести разделов, и сообщение
+          у каждой кнопки пришлось бы держать в шести местах.
+
+          Рамка спокойная, а не тревожная: это не ошибка, а ответ. Убрали
+          человека — так и было задумано, и пугать администратора нечем. */}
+      {слова && (
+        <button
+          onClick={() => setСлова(null)}
+          className="mx-4 mb-3 rounded-xl border border-line bg-surface px-3 py-2 text-left text-sm"
+        >
+          {слова}
+        </button>
       )}
 
       <Section
@@ -215,13 +250,13 @@ export default function ShiftCrew({
           ))}
         </div>
 
-        {manual.length > 0 && (
+        {manualВыбор.length > 0 && (
           <>
             <div className="px-4 pb-1.5 pt-4 text-xs text-fg-muted">
               дописаны вручную
             </div>
             <div className="grid grid-cols-2 gap-2 px-4">
-              {manual.map((p) => (
+              {manualВыбор.map((p) => (
                 <PersonButton
                   key={p.id}
                   person={p}
@@ -251,7 +286,7 @@ export default function ShiftCrew({
         onToggle={() => setOpen(open === "operator" ? null : "operator")}
       >
         <RolePicker
-          people={everyone}
+          people={выбор}
           selected={shift.operator}
           onPick={(id) => pick("operator", id)}
         />
@@ -273,7 +308,7 @@ export default function ShiftCrew({
         onToggle={() => setOpen(open === "admin" ? null : "admin")}
       >
         <RolePicker
-          people={everyone}
+          people={выбор}
           selected={shift.admin}
           onPick={(id) => pick("admin", id)}
         />
@@ -302,7 +337,7 @@ export default function ShiftCrew({
         onToggle={() => setOpen(open === "admin2" ? null : "admin2")}
       >
         <RolePicker
-          people={everyone}
+          people={выбор}
           selected={shift.admin2}
           onPick={(id) => pick("admin2", id)}
         />
@@ -324,7 +359,7 @@ export default function ShiftCrew({
         onToggle={() => setOpen(open === "cashier" ? null : "cashier")}
       >
         <RolePicker
-          people={everyone}
+          people={выбор}
           selected={shift.cashier}
           onPick={(id) => pick("cashier", id)}
         />
@@ -349,7 +384,7 @@ export default function ShiftCrew({
         onToggle={() => setOpen(open === "hostess" ? null : "hostess")}
       >
         <MultiPicker
-          people={everyone}
+          people={выбор}
           selected={shift.hostess}
           onToggle={toggleHostess}
         />

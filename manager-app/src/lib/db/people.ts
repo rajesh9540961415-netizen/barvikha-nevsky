@@ -85,11 +85,21 @@ export async function listPeople(): Promise<Employee[]> {
     union
     select unnest(crew) as id, null as name from shifts
   `;
-  const manual = await sql<{ id: number; name: string; short: string }[]>`
-    select id, name, short from manual_people
+  const manual = await sql<
+    { id: number; name: string; short: string; hidden_at: Date | null }[]
+  >`
+    select id, name, short, hidden_at from manual_people
   `;
 
-  const known = [...(quickResto as Employee[]), ...manual];
+  const known: Employee[] = [
+    ...(quickResto as Employee[]),
+    ...manual.map((m) => ({
+      id: m.id,
+      name: m.name,
+      short: m.short,
+      hidden: m.hidden_at !== null,
+    })),
+  ];
   const seen = new Map<number, Employee>();
   for (const r of rows) {
     if (seen.has(r.id)) continue;
@@ -492,9 +502,16 @@ export type ManualPerson = Employee & {
 export async function listManualPeople(): Promise<ManualPerson[]> {
   const sql = db();
   const rows = await sql<
-    { id: number; name: string; short: string; shifts: string; last_day: string | null }[]
+    {
+      id: number;
+      name: string;
+      short: string;
+      shifts: string;
+      last_day: string | null;
+      hidden_at: Date | null;
+    }[]
   >`
-    select p.id, p.name, p.short,
+    select p.id, p.name, p.short, p.hidden_at,
            (select count(distinct e.business_day) from entries e
              where e.waiter_id = p.id and e.deleted_at is null) as shifts,
            (select max(e.business_day) from entries e
@@ -508,5 +525,42 @@ export async function listManualPeople(): Promise<ManualPerson[]> {
     short: r.short,
     shifts: Number(r.shifts),
     lastDay: r.last_day,
+    hidden: r.hidden_at !== null,
   }));
+}
+
+/**
+ * Возвращает убранного человека в список выбора.
+ *
+ * ⚠️ Зачем это здесь, если в зале имя и так возвращает человека само.
+ * Затем, что в зале возвращают ПО ИМЕНИ, а имя могли и переименовать.
+ * Владельцу нужен способ вернуть человека, глядя на список, а не угадывая
+ * написание.
+ */
+export async function вернутьВСписок(
+  _previous: { ok: boolean; текст: string } | null,
+  form: FormData,
+): Promise<{ ok: boolean; текст: string }> {
+  const manager = await currentManager();
+  if (!manager) return { ok: false, текст: "Войдите заново" };
+  if (manager.role !== "owner") {
+    return { ok: false, текст: "Возвращать в список может только владелец" };
+  }
+
+  const id = Number(form.get("id"));
+  if (!Number.isInteger(id) || id >= 0) {
+    return { ok: false, текст: "Это человек из кассы — его список ведёт Quick Resto" };
+  }
+
+  const sql = db();
+  const строки = await sql<{ name: string }[]>`
+    update manual_people set hidden_at = null where id = ${id} returning name
+  `;
+  if (строки.length === 0) return { ok: false, текст: "Человек не найден" };
+
+  revalidatePath("/people");
+  return {
+    ok: true,
+    текст: `${строки[0].name} снова в списке — его можно отмечать в смене.`,
+  };
 }

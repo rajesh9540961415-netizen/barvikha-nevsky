@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useActionState } from "react";
-import { renameManual } from "@/lib/db/people";
+import { renameManual, вернутьВСписок } from "@/lib/db/people";
 import type { ManualPerson } from "@/lib/db/people";
 import { dayLabel } from "@/lib/format";
 
@@ -36,10 +36,17 @@ function похоже_на_сокращение(имя: string): string | null {
 
 export default function ManualPeople({ people }: { people: ManualPerson[] }) {
   const [итог, переименовать, идёт] = useActionState(renameManual, null);
+  const [возврат, вернуть, возвращаю] = useActionState(вернутьВСписок, null);
 
   if (people.length === 0) return null;
 
-  const подозрительных = people.filter((p) => похоже_на_сокращение(p.name)).length;
+  // Убранные лежат отдельно. Не вперемешку с работающими: список выбора
+  // в зале — это «кто сегодня в заведении», и человек, ушедший в июне,
+  // среди них только мешает.
+  const работают = people.filter((p) => !p.hidden);
+  const убранные = people.filter((p) => p.hidden);
+
+  const подозрительных = работают.filter((p) => похоже_на_сокращение(p.name)).length;
 
   return (
     <section className="mt-10 rounded-xl border border-line p-4">
@@ -62,7 +69,7 @@ export default function ManualPeople({ people }: { people: ManualPerson[] }) {
       )}
 
       <div className="mt-4 flex flex-col gap-3">
-        {people.map((p) => {
+        {работают.map((p) => {
           const беда = похоже_на_сокращение(p.name);
           return (
             <form key={p.id} action={переименовать} className="flex flex-wrap items-center gap-3">
@@ -104,6 +111,53 @@ export default function ManualPeople({ people }: { people: ManualPerson[] }) {
         из кассы и вернулись бы обратно при следующей выгрузке. Такие правки
         делаются в самой кассе.
       </p>
+
+      {убранные.length > 0 && (
+        <div className="mt-8 border-t border-line pt-4">
+          <h3 className="font-medium">Убраны из списка</h3>
+          <p className="mt-1 text-sm text-fg-muted">
+            Их не предлагают отметить в смене: стажёра оформили в кассе или он
+            ушёл. Из учёта они никуда не делись — прошлые смены, деньги
+            и отчёты считаются как раньше.
+          </p>
+
+          {возврат && (
+            <p className={`mt-3 ${возврат.ok ? "text-fg" : "text-alert"}`}>
+              {возврат.текст}
+            </p>
+          )}
+
+          <div className="mt-4 flex flex-col gap-3">
+            {убранные.map((p) => (
+              <form key={p.id} action={вернуть} className="flex flex-wrap items-center gap-3">
+                <input type="hidden" name="id" value={p.id} />
+                <div className="w-56 shrink-0">
+                  <Link href={`/people?id=${p.id}`} className="text-sand underline">
+                    {p.name}
+                  </Link>
+                  <div className="text-sm text-fg-muted">
+                    {p.shifts === 0
+                      ? "записей нет"
+                      : `смен: ${p.shifts}${p.lastDay ? ` · последняя ${dayLabel(p.lastDay)}` : ""}`}
+                  </div>
+                </div>
+                <button
+                  disabled={возвращаю}
+                  className="rounded-xl border border-line px-3 py-2 disabled:opacity-40"
+                >
+                  {возвращаю ? "Возвращаю…" : "Вернуть в список"}
+                </button>
+              </form>
+            ))}
+          </div>
+
+          <p className="mt-4 text-sm text-fg-muted">
+            💡 Возвращать отсюда нужно редко: если администратор в зале впишет
+            это же имя, человек вернётся сам — тот же самый, со своей историей,
+            а не новый однофамилец.
+          </p>
+        </div>
+      )}
     </section>
   );
 }

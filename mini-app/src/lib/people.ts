@@ -1,6 +1,6 @@
 import employees from "@/data/employees.json";
 import hookah from "@/data/hookah.json";
-import { addManual, deleteManual, listManual } from "./db/actions";
+import { addManual, deleteManual, listManual, unhideManual } from "./db/actions";
 import type { Удаление } from "./db/actions";
 import { HOOKAH_POT_ID, HOOKAH_POT_NAME } from "./split";
 import type { Employee } from "./types";
@@ -67,14 +67,24 @@ export async function getManualPeople(): Promise<Employee[]> {
  * он живёт файлом в сборке. Совпадение среди уже дописанных ловит сама
  * база — там на имя стоит запрет повторов.
  */
-export async function addManualPerson(rawName: string): Promise<Employee[]> {
+export async function addManualPerson(
+  rawName: string,
+): Promise<{ люди: Employee[]; вернулся: string | null }> {
   const name = rawName.trim().replace(/\s+/g, " ");
-  if (!name) return listManual();
+  if (!name) return { люди: await listManual(), вернулся: null };
 
   const inQuickResto = FROM_QUICK_RESTO.some(
     (p) => p.name.toLowerCase() === name.toLowerCase(),
   );
-  if (inQuickResto) return listManual();
+  if (inQuickResto) {
+    // Человек есть в кассе — вписывать его руками не надо и нельзя: вышел бы
+    // двойник с двумя номерами. Раньше здесь просто возвращался прежний
+    // список, и на экране это выглядело как «кнопка не сработала».
+    return {
+      люди: await listManual(),
+      вернулся: `${name} уже заведён в кассе — выберите его в общем списке, вписывать руками не нужно.`,
+    };
+  }
 
   return addManual(name);
 }
@@ -88,4 +98,9 @@ export async function addManualPerson(rawName: string): Promise<Employee[]> {
  */
 export async function removeManualPerson(id: number): Promise<Удаление> {
   return deleteManual(id);
+}
+
+/** Возвращает убранного человека в список выбора. */
+export async function restoreManualPerson(id: number): Promise<Employee[]> {
+  return unhideManual(id);
 }
