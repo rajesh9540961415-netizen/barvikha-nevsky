@@ -68,6 +68,14 @@ export default function ShiftCrew({
   const [addingIn, setAddingIn] = useState<string | null>(null);
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
+  /**
+   * Почему человека не убрали из списка.
+   *
+   * Отдельной строкой на экране, а не в журнале: до 19.08.2026 удаление
+   * всегда молча удавалось, и администратор привык, что кнопка срабатывает.
+   * Теперь она иногда отказывает, и без объяснения это выглядело бы поломкой.
+   */
+  const [отказ, setОтказ] = useState<string | null>(null);
 
   const everyone = [...FROM_QUICK_RESTO, ...manual];
   const ready = shift.crew.length > 0 && shift.operator !== null && !busy;
@@ -138,7 +146,14 @@ export default function ShiftCrew({
   }
 
   async function drop(person: Employee) {
-    onManualChange(await removeManualPerson(person.id));
+    const ответ = await removeManualPerson(person.id);
+    onManualChange(ответ.люди);
+    if (ответ.отказ) {
+      // Человек остался в списке — и в смене его тоже не трогаем.
+      setОтказ(`${person.name}: ${ответ.отказ}`);
+      return;
+    }
+    setОтказ(null);
     setShift((s) => ({
       ...s,
       crew: s.crew.filter((x) => x !== person.id),
@@ -169,6 +184,15 @@ export default function ShiftCrew({
           </p>
         </div>
       </header>
+
+      {/* Отказ на удаление. Стоит под шапкой, а не рядом с кнопкой: убрать
+          человека можно из шести разделов, и сообщение у каждой кнопки
+          пришлось бы держать в шести местах. */}
+      {отказ && (
+        <div className="mx-4 mb-3 rounded-xl border border-alert bg-alert/10 px-3 py-2 text-sm">
+          {отказ}
+        </div>
+      )}
 
       <Section
         title="Официанты"

@@ -1,6 +1,7 @@
 import employees from "@/data/employees.json";
 import hookah from "@/data/hookah.json";
 import { addManual, deleteManual, listManual } from "./db/actions";
+import type { Удаление } from "./db/actions";
 import { HOOKAH_POT_ID, HOOKAH_POT_NAME } from "./split";
 import type { Employee } from "./types";
 
@@ -78,6 +79,13 @@ export async function addManualPerson(rawName: string): Promise<Employee[]> {
   return addManual(name);
 }
 
-export async function removeManualPerson(id: number): Promise<Employee[]> {
+/**
+ * Убирает дописанного руками человека — если ему больше ничего не должны.
+ *
+ * Возвращает не только новый список, но и причину отказа: удаление человека,
+ * за которым стоят деньги, приложение больше не делает. Почему именно так —
+ * в пояснении к `deleteManual`.
+ */
+export async function removeManualPerson(id: number): Promise<Удаление> {
   return deleteManual(id);
 }

@@ -2,6 +2,7 @@
 
 import { useRouter, useSearchParams } from "next/navigation";
 import { useTransition } from "react";
+import { twinHint } from "@/lib/format";
 import type { Employee } from "@/lib/types";
 
 /**
@@ -51,7 +52,7 @@ export default function PersonPicker({
           <option value="">— выберите —</option>
           {people.map((p) => (
             <option key={p.id} value={p.id}>
-              {p.name}
+              {`${p.name}${twinHint(p, people)}`}
             </option>
           ))}
         </select>

@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import quickResto from "@/data/employees.json";
+import { crewPeople } from "../crewPeople";
 import {
   buildEvents,
   draftError,
@@ -158,6 +159,7 @@ export async function readDay(businessDay: string): Promise<DayData | null> {
       cashier_id: number | null;
       hostess: number[] | null;
       hookah: number[] | null;
+      names: Record<string, string> | null;
     }[]
   >`select * from shifts where business_day = ${businessDay}`;
 
@@ -188,19 +190,21 @@ export async function readDay(businessDay: string): Promise<DayData | null> {
         cashier: shifts[0].cashier_id,
         hostess: shifts[0].hostess ?? [],
         hookah: shifts[0].hookah ?? [],
+        // Имена, сохранённые вместе со сменой. Читаются, чтобы человека,
+        // которого больше нет в справочнике, звали как в тот вечер,
+        // а не «№−6».
+        names: shifts[0].names ?? {},
       }
     : EMPTY;
 
   // Официант, которого нет в справочнике, всё равно должен попасть в расчёт:
   // без него доля кассира поделилась бы на меньшее число людей, и остальные
-  // получили бы больше, чем им причитается. Имя в таком случае берём
-  // из записей — там оно хранится рядом с номером как раз на этот случай.
-  const crew: Employee[] = shift.crew.map((id) => {
-    const known = people.find((p) => p.id === id);
-    if (known) return known;
-    const seen = entries.find((e) => e.waiterId === id);
-    return { id, name: seen?.waiterName ?? `№${id}`, short: seen?.waiterName ?? `№${id}` };
-  });
+  // получили бы больше, чем им причитается.
+  //
+  // Общей функцией, а не своим кодом: ровно этот расчёт делает и выгрузка
+  // смены, которой кормится отчёт. Раньше он был написан здесь и там врозь,
+  // и 19.08.2026 они разошлись на живых деньгах — см. `crewPeople`.
+  const crew: Employee[] = crewPeople(shift, entries, people);
 
   return {
     businessDay,

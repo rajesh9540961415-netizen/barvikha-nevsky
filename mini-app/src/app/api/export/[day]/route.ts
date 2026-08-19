@@ -1,4 +1,5 @@
 import { отказПоКлючу } from "@/lib/apiKey";
+import { crewPeople } from "@/lib/crewPeople";
 import { listEntries, listManual, readShift } from "@/lib/db/actions";
 import { buildExport } from "@/lib/exportShift";
 import { getQuickRestoPeople } from "@/lib/people";
@@ -71,7 +72,10 @@ export async function GET(
 
     // Ровно так же, как на экране: люди из Quick Resto плюс дописанные руками.
     const все = [...getQuickRestoPeople(), ...дописанные];
-    const состав = смена ? все.filter((p) => смена.crew.includes(p.id)) : [];
+    // ⚠️ Не `все.filter(...)`, как было до 19.08.2026. Отбор по справочнику
+    // выбрасывал из состава каждого, кого в справочнике не нашлось, — а вместе
+    // с ним и его деньги, молча. Подробности и цена ошибки — в crewPeople.
+    const состав = смена ? crewPeople(смена, записи, все) : [];
 
     return Response.json(
       buildExport(day, записи, состав, смена ?? ПУСТАЯ_СМЕНА, все),

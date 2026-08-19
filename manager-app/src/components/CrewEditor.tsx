@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { saveCrew } from "@/lib/db/corrections";
-import { money } from "@/lib/format";
+import { money, twinHint } from "@/lib/format";
 import { splitOffice, type OfficeEntry } from "@/lib/office";
 import { adminShares, cashierPool } from "@/lib/split";
 import type { Employee, Shift } from "@/lib/types";
@@ -117,6 +117,7 @@ export default function CrewEditor({ day, shift, live, crew, people, onClose }: 
             {everyone.map((p) => (
               <Chip key={p.id} on={next.crew.includes(p.id)} onClick={() => toggle(p.id)}>
                 {p.short}
+                {twinHint(p, everyone)}
               </Chip>
             ))}
           </div>
@@ -211,7 +212,7 @@ function Role({
         <option value="">— не указан —</option>
         {people.map((p) => (
           <option key={p.id} value={p.id}>
-            {p.name}
+            {`${p.name}${twinHint(p, people)}`}
           </option>
         ))}
       </select>

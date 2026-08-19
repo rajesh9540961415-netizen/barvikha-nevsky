@@ -4,7 +4,7 @@ import { useCallback, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import scheme from "@/data/tables.json";
 import { добавитьЗапись } from "@/lib/db/corrections";
-import { money } from "@/lib/format";
+import { money, twinHint } from "@/lib/format";
 import {
   KIND_TITLE,
   draftError,
@@ -251,6 +251,7 @@ export default function AddEntry({ day, live, crew, onClose }: Props) {
                 onClick={() => toggleWaiter(p.id)}
               >
                 {p.short}
+                {twinHint(p, crew)}
               </Chip>
             ))}
           </div>

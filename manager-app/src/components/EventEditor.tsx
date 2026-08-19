@@ -4,7 +4,7 @@ import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import scheme from "@/data/tables.json";
 import { correctEvent } from "@/lib/db/corrections";
-import { clock, money } from "@/lib/format";
+import { clock, money, twinHint } from "@/lib/format";
 import {
   KIND_TITLE,
   draftError,
@@ -263,7 +263,7 @@ export default function EventEditor({ day, event, live, crew, people, onClose }:
               .filter((p) => !crewIds.has(p.id) && !draft.waiterIds.includes(p.id))
               .map((p) => (
                 <option key={p.id} value={p.id}>
-                  {p.name}
+                  {`${p.name}${twinHint(p, people)}`}
                 </option>
               ))}
           </select>
