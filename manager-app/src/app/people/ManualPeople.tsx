@@ -2,7 +2,13 @@
 
 import Link from "next/link";
 import { useActionState } from "react";
-import { renameManual, вернутьВСписок, склеить, расклеить } from "@/lib/db/people";
+import {
+  renameManual,
+  вернутьВСписок,
+  склеить,
+  расклеить,
+  вписатьРуками,
+} from "@/lib/db/people";
 import type { ManualPerson } from "@/lib/db/people";
 import type { Employee } from "@/lib/types";
 import { dayLabel } from "@/lib/format";
@@ -47,8 +53,7 @@ export default function ManualPeople({
   const [возврат, вернуть, возвращаю] = useActionState(вернутьВСписок, null);
   const [склейка, склеитьС, клею] = useActionState(склеить, null);
   const [разрыв, разорвать, рву] = useActionState(расклеить, null);
-
-  if (people.length === 0) return null;
+  const [новый, вписать, пишу] = useActionState(вписатьРуками, null);
 
   const имяПо = (id: number) => все.find((p) => p.id === id)?.name ?? `№${id}`;
   const склеенные = people.filter((p) => p.mergedInto !== undefined);
@@ -81,6 +86,31 @@ export default function ManualPeople({
 
       {итог && (
         <p className={`mt-3 ${итог.ok ? "text-fg" : "text-alert"}`}>{итог.текст}</p>
+      )}
+
+      {/* Завести человека задним числом.
+          Стоит здесь, а не на экране смены: там кнопка «вписать» сразу ставит
+          человека в СЕГОДНЯШНЮЮ смену, и для живого вечера это правильно.
+          А когда разбирают прошлое, трогать сегодняшний зал нельзя. */}
+      <form action={вписать} className="mt-4 flex flex-wrap items-center gap-3">
+        <input
+          name="name"
+          placeholder="имя и фамилия полностью"
+          className="min-w-64 flex-1 rounded-xl border border-line bg-surface px-3 py-2"
+        />
+        <button
+          disabled={пишу}
+          className="rounded-xl border border-line px-3 py-2 disabled:opacity-40"
+        >
+          {пишу ? "Вписываю…" : "Вписать человека"}
+        </button>
+      </form>
+      <p className="mt-1 text-sm text-fg-muted">
+        Заводит только запись. Ни в какую смену человек не попадёт — откройте
+        нужный день и поправьте состав там.
+      </p>
+      {новый && (
+        <p className={`mt-2 ${новый.ok ? "text-fg" : "text-alert"}`}>{новый.текст}</p>
       )}
 
       <div className="mt-4 flex flex-col gap-3">
