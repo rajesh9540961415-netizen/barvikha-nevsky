@@ -1,3 +1,4 @@
+import Link from "next/link";
 import Nav from "@/components/Nav";
 import { notFound } from "next/navigation";
 import ShiftScreen from "@/components/ShiftScreen";
@@ -22,6 +23,17 @@ export default async function ShiftPage({
     <>
       <Nav раздел="tips" />
       <main className="mx-auto max-w-5xl px-6 py-8">
+      {/* Путь назад к списку смен.
+          Владелец 19.08.2026: со страницы правки некуда вернуться, приходится
+          жать «назад» в браузере. Ссылка стоит НАД заголовком и до всего
+          остального: её ищут первой, когда работа с днём закончена. */}
+      <Link
+        href="/tips"
+        className="mb-3 inline-block text-sm text-sand underline"
+      >
+        ← ко всем сменам
+      </Link>
+
       <header>
         <h1 className="text-2xl font-medium">
           {dayLabel(day)}
