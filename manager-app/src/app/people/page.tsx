@@ -1,5 +1,6 @@
 import Link from "next/link";
 import Nav from "@/components/Nav";
+import quickResto from "@/data/employees.json";
 import { Suspense } from "react";
 import PersonPicker from "@/components/PersonPicker";
 import PersonStatsView from "@/components/PersonStats";
@@ -7,6 +8,7 @@ import ManualPeople from "./ManualPeople";
 import { listPeople, listManualPeople, readPerson, склейки } from "@/lib/db/people";
 import { requireManager } from "@/lib/db/managers";
 import { dayLabel } from "@/lib/format";
+import type { Employee } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
@@ -67,6 +69,21 @@ export default async function PeoplePage({
   // Переименовывать может только владелец, поэтому и список ему одному:
   // показать кнопку тому, кто не может ею воспользоваться, — обман.
   const manual = manager.role === "owner" ? await listManualPeople() : [];
+
+  // Кого можно назначить главной записью при склейке.
+  //
+  // ⚠️ Не `listPeople()`. Тот список — «кто хоть раз стоял в смене или получал
+  // деньги», и для склейки он не годится дважды. Во-первых, стажёра оформляют
+  // в кассе ДО первой смены под новым номером, и в списке его ещё нет — то есть
+  // склеить нельзя ровно в тот день, когда это и нужно. Во-вторых, вписанные
+  // руками тоже бывают главной записью: двух вписанных одного человека
+  // склеивают друг с другом, кассы у него может не быть вовсе.
+  //
+  // Поэтому берём справочник целиком: касса Quick Resto плюс вписанные руками.
+  const дляСклейки: Employee[] = [
+    ...(quickResto as Employee[]),
+    ...manual.map((m) => ({ id: m.id, name: m.name, short: m.short })),
+  ].sort((a, b) => a.name.localeCompare(b.name, "ru"));
   const id = params.id ? Number(params.id) : null;
   const stats = id !== null ? await readPerson(id, from, to) : null;
 
@@ -102,7 +119,7 @@ export default async function PeoplePage({
         <PersonStatsView stats={stats} />
       )}
 
-      <ManualPeople people={manual} все={people} />
+      <ManualPeople people={manual} все={дляСклейки} />
     </main>
     </>
   );
