@@ -8,6 +8,7 @@ import {
   type ВходящаяОперация,
   type ВходящийДень,
   type Замена,
+  type ВнеУчёта,
 } from "@/lib/db/finance";
 
 /**
@@ -291,8 +292,48 @@ export async function POST(request: Request) {
     замена = { source: "cash", from: з.from, to: з.to };
   }
 
+  // Счета, учёт по которым кончился датой. Это не «замена периода»: та сносит
+  // всё подряд за промежуток, и банку она поэтому запрещена. Здесь названы
+  // конкретный счёт и конкретный день, и убирается только то, что позже.
+  const внеУчёта: ВнеУчёта[] = [];
+  const снять = т.outOfScope;
+  if (снять !== undefined) {
+    if (!Array.isArray(снять)) {
+      return Response.json(
+        { ok: false, причина: "outOfScope должен быть списком" },
+        { status: 400 },
+      );
+    }
+    for (const сырое of снять) {
+      const x = сырое as Record<string, unknown>;
+      // Счёт обязателен и обязан быть номером целиком. Пустая строка или
+      // звёздочка означали бы «все счета», а такого права у этой ручки нет.
+      if (typeof x.account !== "string" || !/^\d{20}$/.test(x.account)) {
+        return Response.json(
+          { ok: false, причина: "у outOfScope account — двадцать цифр номера счёта" },
+          { status: 400 },
+        );
+      }
+      if (typeof x.after !== "string" || !ДЕНЬ.test(x.after)) {
+        return Response.json(
+          { ok: false, причина: "у outOfScope after — дата вида 2025-12-31" },
+          { status: 400 },
+        );
+      }
+      // Причина обязательна. Класть её пока некуда, и это сказано честно:
+      // она нужна, чтобы удаление нельзя было отправить не думая.
+      if (typeof x.почему !== "string" || x.почему.trim().length < 10) {
+        return Response.json(
+          { ok: false, причина: "у outOfScope нужна причина словами, хотя бы десять букв" },
+          { status: 400 },
+        );
+      }
+      внеУчёта.push({ account: x.account, after: x.after, почему: x.почему.trim() });
+    }
+  }
+
   try {
-    const итог = await saveFinance(операции, дни, замена, выручка, остатки);
+    const итог = await saveFinance(операции, дни, замена, выручка, остатки, внеУчёта);
 
     // Отметка «докуда доведён источник» — только если её прислали явно.
     // Вывести её из самих строк нельзя: три дня без наличных расходов —
