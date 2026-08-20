@@ -7,17 +7,19 @@ import { добавитьЗапись } from "@/lib/db/corrections";
 import { money, twinHint } from "@/lib/format";
 import {
   KIND_TITLE,
+  canHaveTable,
   contoursOf,
   draftError,
   needsTable,
   rowsFromDraft,
   splitOffice,
   контурНового,
+  получатели,
   type Draft,
   type OfficeEntry,
 } from "@/lib/office";
 import { netAmount } from "@/lib/split";
-import type { Employee, Kind, Shift } from "@/lib/types";
+import type { Contour, Employee, Kind, Shift } from "@/lib/types";
 import Compare from "./Compare";
 import { Chip, Field, Overlay } from "./EventEditor";
 
@@ -58,6 +60,8 @@ type Props = {
   day: string;
   live: OfficeEntry[];
   crew: Employee[];
+  /** Справочник: по нему находится имя хостес — в составе зала её нет. */
+  people: Employee[];
   /**
    * Состав ТОЙ смены — по нему определяется котёл получателя. См.
    * `контурНового`: у записи, которой не было вовсе, своего котла взяться
@@ -67,13 +71,15 @@ type Props = {
   onClose: () => void;
 };
 
-export default function AddEntry({ day, live, crew, shift, onClose }: Props) {
+export default function AddEntry({ day, live, crew, people, shift, onClose }: Props) {
   const router = useRouter();
   const [draft, setDraft] = useState<Draft>(ПУСТОЙ);
   const [время, setВремя] = useState("");
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
   const [failed, setFailed] = useState<string | null>(null);
+
+  const СТОРОНА = useMemo(() => получатели(shift, people), [shift, people]);
 
   const имя = useCallback(
     (id: number) => crew.find((p) => p.id === id)?.short ?? `№${id}`,
@@ -140,6 +146,21 @@ export default function AddEntry({ day, live, crew, shift, onClose }: Props) {
         : d.kind === "staff"
           ? [{ id, contour: контурНового(id, shift) }]
           : [...d.payees, { id, contour: контурНового(id, shift) }],
+    }));
+  }
+
+  /**
+   * Отмечает получателя из хостес или кальянного бара.
+   *
+   * Котёл берётся из списка, в котором нажали, а не выводится из человека:
+   * от него зависит, вычтут ли из доли 20 % администратору и долю кассира.
+   */
+  function toggleSide(id: number, contour: Contour) {
+    setDraft((d) => ({
+      ...d,
+      payees: d.payees.some((p) => p.id === id && p.contour === contour)
+        ? d.payees.filter((p) => !(p.id === id && p.contour === contour))
+        : [...d.payees, { id, contour }],
     }));
   }
 
@@ -262,6 +283,43 @@ export default function AddEntry({ day, live, crew, shift, onClose }: Props) {
               </Chip>
             ))}
           </div>
+
+          {/* Хостес и кальянный бар. Отдельными рядами с подписями, а не
+              вперемешку с залом: от того, из какого списка выбран человек,
+              зависят его деньги — зальная доля делится с администратором
+              и кассиром, барская и хостес не делятся ни с кем.
+
+              Только у записи СО СТОЛОМ: гость оставляет чаевые за стол
+              и просит поделить. У QR и питания такого не бывает. */}
+          {СТОРОНА.length > 0 && canHaveTable(draft.kind) && (
+            <>
+              {(["hookah", "hostess"] as const).map((c) => {
+                const список = СТОРОНА.filter((o) => o.contour === c);
+                if (список.length === 0) return null;
+                return (
+                  <div key={c} className="mt-2">
+                    <div className="mb-1 text-xs text-fg-muted">
+                      {c === "hookah" ? "кальянный бар" : "хостес"}
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {список.map(({ person }) => (
+                        <Chip
+                          key={`${c}-${person.id}`}
+                          on={draft.payees.some(
+                            (x) => x.id === person.id && x.contour === c,
+                          )}
+                          onClick={() => toggleSide(person.id, c)}
+                        >
+                          {person.short}
+                        </Chip>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+            </>
+          )}
+
           {/* Человека вне состава здесь нет намеренно: раскладка смены
               перебирает состав, и деньги за таким человеком не попали бы
               никуда. Сначала состав, потом запись. */}

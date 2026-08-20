@@ -7,6 +7,7 @@ import { correctEvent } from "@/lib/db/corrections";
 import { clock, money, twinHint } from "@/lib/format";
 import {
   KIND_TITLE,
+  canHaveTable,
   contoursOf,
   draftError,
   draftOf,
@@ -15,12 +16,13 @@ import {
   splitOffice,
   withReplacement,
   контурНового,
+  получатели,
   type Draft,
   type OfficeEntry,
   type ShiftEvent,
 } from "@/lib/office";
 import { netAmount } from "@/lib/split";
-import type { Employee, Kind, Scheme, Shift } from "@/lib/types";
+import type { Contour, Employee, Kind, Scheme, Shift } from "@/lib/types";
 import Compare from "./Compare";
 
 /**
@@ -59,6 +61,8 @@ export default function EventEditor({ day, event, live, crew, people, shift, onC
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
   const [failed, setFailed] = useState<string | null>(null);
+
+  const СТОРОНА = useMemo(() => получатели(shift, people), [shift, people]);
 
   const before = useMemo(() => splitOffice(live, crew, day), [live, crew, day]);
 
@@ -125,6 +129,21 @@ export default function EventEditor({ day, event, live, crew, people, shift, onC
       const свежий = { id, contour: контурНового(id, shift) };
       return { ...d, payees: d.kind === "staff" ? [свежий] : [...d.payees, свежий] };
     });
+  }
+
+  /**
+   * Отмечает получателя из хостес или кальянного бара.
+   *
+   * Котёл берётся из списка, в котором нажали, а не выводится из человека:
+   * от него зависит, вычтут ли из доли 20 % администратору и долю кассира.
+   */
+  function toggleSide(id: number, contour: Contour) {
+    setDraft((d) => ({
+      ...d,
+      payees: d.payees.some((p) => p.id === id && p.contour === contour)
+        ? d.payees.filter((p) => !(p.id === id && p.contour === contour))
+        : [...d.payees, { id, contour }],
+    }));
   }
 
   async function save() {
@@ -282,6 +301,42 @@ export default function EventEditor({ day, event, live, crew, people, shift, onC
                 </option>
               ))}
           </select>
+          {/* Хостес и кальянный бар. Отдельными рядами с подписями, а не
+              вперемешку с залом: от того, из какого списка выбран человек,
+              зависят его деньги — зальная доля делится с администратором
+              и кассиром, барская и хостес не делятся ни с кем.
+
+              Показываем только у записи СО СТОЛОМ: гость оставляет чаевые
+              за стол и просит поделить. У записи без стола (QR, питание)
+              такого не бывает. */}
+          {СТОРОНА.length > 0 && canHaveTable(draft.kind) && (
+            <>
+              {(["hookah", "hostess"] as const).map((c) => {
+                const список = СТОРОНА.filter((o) => o.contour === c);
+                if (список.length === 0) return null;
+                return (
+                  <div key={c} className="mt-2">
+                    <div className="mb-1 text-xs text-fg-muted">
+                      {c === "hookah" ? "кальянный бар" : "хостес"}
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {список.map(({ person }) => (
+                        <Chip
+                          key={`${c}-${person.id}`}
+                          on={draft.payees.some(
+                            (x) => x.id === person.id && x.contour === c,
+                          )}
+                          onClick={() => toggleSide(person.id, c)}
+                        >
+                          {person.short}
+                        </Chip>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+            </>
+          )}
         </Field>
 
         <Field label="Зачем поправили — по желанию">
