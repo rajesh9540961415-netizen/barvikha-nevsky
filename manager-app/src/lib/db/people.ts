@@ -534,6 +534,8 @@ export type ManualPerson = Employee & {
   lastDay: string | null;
   /** Как запись звалась до склейки. Пусто, если склейки нет. */
   nameBeforeMerge?: string;
+  /** Сколько живых записей о деньгах — столько имён поправит склейка. */
+  entries: number;
 };
 
 export async function listManualPeople(): Promise<ManualPerson[]> {
@@ -548,13 +550,16 @@ export async function listManualPeople(): Promise<ManualPerson[]> {
       hidden_at: Date | null;
       merged_into: number | null;
       merge_undo: { name: string } | null;
+      entries: string;
     }[]
   >`
     select p.id, p.name, p.short, p.hidden_at, p.merged_into, p.merge_undo,
            (select count(distinct e.business_day) from entries e
              where e.waiter_id = p.id and e.deleted_at is null) as shifts,
            (select max(e.business_day) from entries e
-             where e.waiter_id = p.id and e.deleted_at is null) as last_day
+             where e.waiter_id = p.id and e.deleted_at is null) as last_day,
+           (select count(*) from entries e
+             where e.waiter_id = p.id and e.deleted_at is null) as entries
       from manual_people p
      order by p.name
   `;
@@ -569,6 +574,7 @@ export async function listManualPeople(): Promise<ManualPerson[]> {
     // Имя до склейки — чтобы на экране было видно, откуда взялась запись
     // с чужим именем, а не приходилось это восстанавливать в голове.
     nameBeforeMerge: r.merge_undo?.name,
+    entries: Number(r.entries),
   }));
 }
 

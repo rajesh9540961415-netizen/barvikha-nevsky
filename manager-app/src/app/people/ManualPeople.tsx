@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useActionState } from "react";
+import { useActionState, useState } from "react";
 import {
   renameManual,
   вернутьВСписок,
@@ -54,6 +54,12 @@ export default function ManualPeople({
   const [склейка, склеитьС, клею] = useActionState(склеить, null);
   const [разрыв, разорвать, рву] = useActionState(расклеить, null);
   const [новый, вписать, пишу] = useActionState(вписатьРуками, null);
+
+  // Что выбрано в склейке. Состояние нужно ради предпросмотра: до 20.08.2026
+  // блок показывал два списка и кнопку, а что она сделает — приходилось
+  // держать в голове. Владелец: «неплохо было бы показывать, что мы поменяем».
+  const [кого, setКого] = useState("");
+  const [главной, setГлавной] = useState("");
 
   const имяПо = (id: number) => все.find((p) => p.id === id)?.name ?? `№${id}`;
   const склеенные = people.filter((p) => p.mergedInto !== undefined);
@@ -172,7 +178,8 @@ export default function ManualPeople({
         <form action={склеитьС} className="mt-4 flex flex-wrap items-center gap-3">
           <select
             name="id"
-            defaultValue=""
+            value={кого}
+            onChange={(e) => setКого(e.target.value)}
             className="rounded-xl border border-line bg-surface px-3 py-2"
           >
             <option value="">— кого склеить —</option>
@@ -192,7 +199,8 @@ export default function ManualPeople({
 
           <select
             name="target"
-            defaultValue=""
+            value={главной}
+            onChange={(e) => setГлавной(e.target.value)}
             className="rounded-xl border border-line bg-surface px-3 py-2"
           >
             <option value="">— главная запись —</option>
@@ -219,6 +227,71 @@ export default function ManualPeople({
             {клею ? "Склеиваю…" : "Склеить"}
           </button>
         </form>
+
+        {/* Предпросмотр. Показываем ДО нажатия, что именно изменится:
+            склейка трогает имя во всех прошлых записях о деньгах, и держать
+            это в голове человек не обязан. */}
+        {(() => {
+          const источник = people.find((p) => String(p.id) === кого);
+          const цель = все.find((p) => String(p.id) === главной);
+          if (!источник || !цель) return null;
+
+          const тотЖе = источник.id === цель.id;
+          const имяМеняется = источник.name !== цель.name;
+
+          return (
+            <div className="mt-4 rounded-xl border border-line bg-surface px-4 py-3 text-sm">
+              <div className="text-fg-muted">Что произойдёт</div>
+
+              {тотЖе ? (
+                <p className="mt-2 text-alert">
+                  Слева и справа один и тот же человек — склеивать нечего.
+                </p>
+              ) : (
+                <>
+                  <p className="mt-2">
+                    <b>{источник.name}</b>{" "}
+                    <span className="text-fg-muted">
+                      (№{источник.id}, вписан руками
+                      {источник.shifts === 0
+                        ? ", записей нет"
+                        : `, смен ${источник.shifts}, последняя ${
+                            источник.lastDay ? dayLabel(источник.lastDay) : "—"
+                          }`}
+                      )
+                    </span>{" "}
+                    станет считаться тем же человеком, что <b>{цель.name}</b>{" "}
+                    <span className="text-fg-muted">
+                      (№{цель.id}, {цель.id < 0 ? "вписан руками" : "из кассы"})
+                    </span>
+                    .
+                  </p>
+
+                  <ul className="mt-2 flex list-disc flex-col gap-1 pl-5">
+                    {имяМеняется ? (
+                      <li className="text-sand">
+                        Имя сменится с «{источник.name}» на «{цель.name}» —
+                        и в записях о деньгах тоже, их{" "}
+                        <b>{источник.entries}</b>.
+                      </li>
+                    ) : (
+                      <li>Имя не изменится — оно уже такое же.</li>
+                    )}
+                    <li>Суммы не изменятся ни на рубль.</li>
+                    <li>Номера в записях останутся прежними.</li>
+                    <li>
+                      Запись пропадёт из списков выбора: отмечать надо будет
+                      главную.
+                    </li>
+                    <li className="text-fg-muted">
+                      Отмена вернёт всё — имя, записи и место в списке.
+                    </li>
+                  </ul>
+                </>
+              )}
+            </div>
+          );
+        })()}
 
         <p className="mt-3 text-sm text-fg-muted">
           ⚠️ Главной делайте запись из кассы: её имя приезжает из Quick Resto
