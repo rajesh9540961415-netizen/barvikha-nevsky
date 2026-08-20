@@ -5,16 +5,18 @@ import TablePicker from "@/components/TablePicker";
 import { formatMoney } from "@/lib/businessDay";
 import {
   SIDE_KINDS,
+  contoursOf,
   draftError,
   draftOf,
   needsTable,
   rowsFromDraft,
   withReplacement,
   type Draft,
+  type Payee,
   type ShiftEvent,
 } from "@/lib/events";
 import { COMMISSION_RATE, netAmount, THRESHOLD, splitShift } from "@/lib/split";
-import type { Employee, Entry, Hall, Kind } from "@/lib/types";
+import type { Contour, Employee, Entry, Hall, Kind } from "@/lib/types";
 
 /**
  * Правка записи текущей смены.
@@ -51,14 +53,19 @@ type Props = {
   /** Официанты смены: по ним считается порог 1300 ₽ и доли. */
   crew: Employee[];
   /**
-   * Кому можно приписать эту запись.
+   * Кому можно приписать эту запись — и в какой котёл лягут его деньги.
    *
    * У зальной записи это официанты смены, у хостес — хостес этого вечера,
    * у кальянного бара — кальянщики и общий котёл. Отдельно от `crew`
    * намеренно: список получателей и состав зала — разные вещи, и подставив
    * сюда зал, правка чаевых кальянщика молча предложила бы официантов.
+   *
+   * Котёл идёт рядом с человеком, а не выводится из его роли на сегодня:
+   * у записи со стола получатели бывают из разных котлов, и от того, из
+   * какого списка человека выбрали, зависит, вычтут ли из его доли 20 %
+   * администратору и долю кассира.
    */
-  people: Employee[];
+  people: { person: Employee; contour: Contour }[];
   /** Кто правит: тот, кто отмечен вносящим записи в этой смене. */
   operator: Employee;
   halls: Hall[];
@@ -84,9 +91,23 @@ export default function EntryEditor({
 }: Props) {
   const was = useMemo(() => draftOf(event), [event]);
 
-  /** Котёл записи. Правка его не меняет — он и определяет, что можно менять. */
+  /**
+   * Главный котёл записи. Правка его не меняет — он и определяет, что можно
+   * менять: у зальной записи бывают все виды денег, у записи со стороны
+   * только её.
+   *
+   * ⚠️ Терминал попадает в список стороны, только если у записи есть стол.
+   * Своего терминала у хостес и бара нет — но гость может заплатить
+   * на зальном терминале и попросить поделить, и тогда у барской доли
+   * стол есть. Правило то же, что в `draftError`.
+   */
   const contour = event.contour;
-  const kinds = contour === "hall" ? KINDS : SIDE_KINDS;
+  const kinds =
+    contour === "hall"
+      ? KINDS
+      : event.tableId !== null
+        ? [...SIDE_KINDS, "terminal" as Kind]
+        : SIDE_KINDS;
 
   /**
    * Набранная сумма. Пока не трогали клавиатуру — пусто, и в дело идёт сумма
@@ -98,8 +119,14 @@ export default function EntryEditor({
    */
   const [digits, setDigits] = useState<string | null>(null);
   const [kind, setKind] = useState<Kind>(was.kind);
-  const [ids, setIds] = useState<number[]>(was.waiterIds);
-  const [splitting, setSplitting] = useState(was.waiterIds.length > 1);
+  /**
+   * Кому и в какой котёл — по порядку, как лягут доли.
+   *
+   * Номерами тут не обойтись: один и тот же человек может стоять в смене
+   * и официантом, и хостес, а от котла зависят деньги. Держим пару целиком.
+   */
+  const [payees, setPayees] = useState<Payee[]>(was.payees);
+  const [splitting, setSplitting] = useState(was.payees.length > 1);
   const [table, setTable] = useState({
     hallId: was.hallId,
     hallTitle: was.hallTitle,
@@ -124,10 +151,9 @@ export default function EntryEditor({
       hallTitle: table.hallTitle,
       tableId: table.tableId,
       tableTitle: table.tableTitle,
-      waiterIds: ids,
-      contour,
+      payees,
     }),
-    [kind, gross, table, ids, contour],
+    [kind, gross, table, payees],
   );
   const problem = draftError(draft);
 
@@ -152,9 +178,14 @@ export default function EntryEditor({
       // Зачем поправили, в смене не спрашиваем: след и так остаётся —
       // кто, когда, что было, что стало. Решение владельца 14.08.2026.
       note: null,
-      nameOf: (id) => people.find((w) => w.id === id)?.name ?? `№${id}`,
+      nameOf: (id) =>
+        people.find((o) => o.person.id === id)?.person.name ??
+        // Человека могли убрать из состава уже после того, как записали ему
+        // деньги. Имя тогда берём из самой записи: терять получателя нельзя.
+        event.waiters.find((w) => w.id === id)?.name ??
+        `№${id}`,
     }).map((row) => ({ ...row, operatorId: operator.id }));
-  }, [problem, draft, day, event.createdAt, event.key, people, operator]);
+  }, [problem, draft, day, event, people, operator]);
 
   const money = (rows: Entry[]) =>
     rows.filter((e) => e.kind !== "staff").reduce((sum, e) => sum + e.amount, 0);
@@ -212,13 +243,13 @@ export default function EntryEditor({
     if (Number(next || "0") <= MAX_AMOUNT) setDigits(next);
   }
 
-  function pickWaiter(id: number) {
+  function pickWaiter(id: number, contourOfPerson: Contour) {
     setFailed(false);
-    setIds((current) => {
-      if (!splitting) return [id];
-      return current.includes(id)
-        ? current.filter((x) => x !== id)
-        : [...current, id];
+    setPayees((current) => {
+      if (!splitting) return [{ id, contour: contourOfPerson }];
+      return current.some((p) => p.id === id && p.contour === contourOfPerson)
+        ? current.filter((p) => !(p.id === id && p.contour === contourOfPerson))
+        : [...current, { id, contour: contourOfPerson }];
     });
   }
 
@@ -335,7 +366,7 @@ export default function EntryEditor({
         </div>
 
         {/* У QR и питания стола нет: гость платил по чеку, а не за столом. */}
-        {needsTable(kind, contour) && (
+        {needsTable(kind, contoursOf(payees)) && (
           <button
             onClick={() => setPicking(true)}
             className="mt-2.5 w-full rounded-lg border border-line bg-surface px-3 py-2 text-left text-sm active:bg-surface-2"
@@ -352,24 +383,24 @@ export default function EntryEditor({
 
         <div className="mb-1.5 mt-3 flex items-baseline justify-between gap-2">
           <span className="text-xs text-fg-muted">
-            {ids.length === 0
+            {payees.length === 0
               ? contour === "hall"
                 ? "выберите официанта"
                 : "выберите, кому"
-              : ids.length === 1
-                ? contour === "hall"
+              : payees.length === 1
+                ? payees[0].contour === "hall"
                   ? "официант"
-                  : contour === "hookah"
+                  : payees[0].contour === "hookah"
                     ? "кальянный бар"
                     : "хостес"
-                : `делим поровну на ${ids.length}`}
+                : `делим поровну на ${payees.length}`}
           </span>
           {people.length > 1 && (
             <button
               onClick={() => {
                 setFailed(false);
                 if (splitting) {
-                  setIds((current) => current.slice(0, 1));
+                  setPayees((current) => current.slice(0, 1));
                   setSplitting(false);
                   return;
                 }
@@ -385,28 +416,53 @@ export default function EntryEditor({
             </button>
           )}
         </div>
-        <div className="flex flex-wrap gap-2">
-          {people.map((w) => {
-            const on = ids.includes(w.id);
-            return (
-              <button
-                key={w.id}
-                onClick={() => pickWaiter(w.id)}
-                className={`rounded-lg border px-3 py-2 text-sm ${
-                  on
-                    ? "border-sand bg-sand/10 text-fg"
-                    : "border-line bg-surface text-fg-muted active:bg-surface-2"
-                }`}
-              >
-                {w.short}
-              </button>
-            );
-          })}
-        </div>
+        {/* Получатели по котлам. Разделены подписями, а не свалены в один
+            ряд: от того, из какого списка выбран человек, зависят его деньги
+            — зальная доля делится с администратором и кассиром, барская
+            и хостес не делятся ни с кем. */}
+        {(["hall", "hookah", "hostess"] as const).map((c) => {
+          const список = people.filter((o) => o.contour === c);
+          if (список.length === 0) return null;
+          const подписи = { hall: "зал", hookah: "кальянный бар", hostess: "хостес" };
+          return (
+            <div key={c}>
+              {/* Подпись нужна, только когда котлов больше одного: у обычной
+                  зальной записи она была бы шумом. */}
+              {new Set(people.map((o) => o.contour)).size > 1 && (
+                <div className="mb-1 mt-2 text-[11px] text-fg-muted">
+                  {подписи[c]}
+                </div>
+              )}
+              <div className="flex flex-wrap gap-2">
+                {список.map(({ person: w }) => {
+                  const on = payees.some(
+                    (p) => p.id === w.id && p.contour === c,
+                  );
+                  return (
+                    <button
+                      key={`${c}-${w.id}`}
+                      onClick={() => pickWaiter(w.id, c)}
+                      className={`rounded-lg border px-3 py-2 text-sm ${
+                        on
+                          ? "border-sand bg-sand/10 text-fg"
+                          : "border-line bg-surface text-fg-muted active:bg-surface-2"
+                      }`}
+                    >
+                      {w.short}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        })}
         {fresh.length > 1 && (
           <div className="mt-2 text-xs text-fg-muted">
             {fresh
-              .map((r) => `${shortOf(people, r.waiterId)} — ${formatMoney(r.amount)}`)
+              .map(
+                (r) =>
+                  `${shortOf(people.map((o) => o.person), r.waiterId)} — ${formatMoney(r.amount)}`,
+              )
               .join(" · ")}
           </div>
         )}

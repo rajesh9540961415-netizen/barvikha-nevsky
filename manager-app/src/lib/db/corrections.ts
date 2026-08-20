@@ -9,8 +9,10 @@ import {
   rowsFromDraft,
   type Draft,
   type OfficeEntry,
+  type Payee,
   type ShiftEvent,
 } from "../office";
+import { HOOKAH_POT_ID } from "../split";
 import type { Employee, Shift } from "../types";
 import { currentManager } from "./managers";
 import { db } from "./sql";
@@ -48,6 +50,17 @@ type Row = {
   gross: string | null;
   commission_rate: string;
   kind: string;
+  /**
+   * Котёл записи: зал, хостес или кальянный бар.
+   *
+   * ⚠️ Читать ОБЯЗАТЕЛЬНО. До 20.08.2026 этой строки здесь не было, и колонка
+   * из базы просто не доезжала — бэк-офис считал зальными ВСЕ записи. Хостес
+   * и бар при этом исчезали из раскладки совсем: в состав зала они не входят,
+   * а по контуру их никто не искал. Хуже того, правка такой записи писала
+   * обратно «зал», и с чаевых, которые не делятся ни с кем, начинали брать
+   * 20 % администратору и долю кассира — молча.
+   */
+  contour: string | null;
   operator_id: number | null;
   operator_name: string;
   created_at: Date;
@@ -78,6 +91,8 @@ function toEntry(r: Row): OfficeEntry {
     gross: r.gross === null ? Number(r.amount) : Number(r.gross),
     commissionRate: Number(r.commission_rate),
     kind: r.kind as OfficeEntry["kind"],
+    // У записей до 18.08.2026 колонки не было — тогда контур был один, зальный.
+    contour: (r.contour ?? "hall") as OfficeEntry["contour"],
     operatorId: r.operator_id,
     operatorName: r.operator_name,
     createdAt: r.created_at.toISOString(),
@@ -236,6 +251,41 @@ export async function readDay(businessDay: string): Promise<DayData | null> {
   };
 }
 
+/**
+ * Стоит ли получатель в смене — в СВОЕЙ роли.
+ *
+ * Раскладка перебирает состав, а не записи: деньги, записанные на человека
+ * вне состава, в неё не попадут и пропадут молча. Но составов три, и они
+ * не взаимозаменяемы: официант считается в зале, хостес и кальянщик —
+ * каждый в своём котле. Проверять всех по зальному составу значило бы
+ * отвергать кальянщика ровно там, где гость и попросил поделить с баром.
+ *
+ * Общий котёл бара («Весь бар») в составе не отмечается никогда и получателем
+ * быть обязан: администратор не всегда знает, кто обслуживал.
+ */
+function неВСоставе(
+  payees: Payee[],
+  shift: { crew: number[]; hostess: number[] | null; hookah: number[] | null },
+): Payee | undefined {
+  const зал = new Set(shift.crew ?? []);
+  const хостес = new Set(shift.hostess ?? []);
+  const бар = new Set([...(shift.hookah ?? []), HOOKAH_POT_ID]);
+  return payees.find((p) =>
+    p.contour === "hall"
+      ? !зал.has(p.id)
+      : p.contour === "hostess"
+        ? !хостес.has(p.id)
+        : !бар.has(p.id),
+  );
+}
+
+/** Как назвать котёл в сообщении об ошибке. */
+const КОТЁЛ: Record<string, string> = {
+  hall: "в зале",
+  hostess: "среди хостес",
+  hookah: "в кальянном баре",
+};
+
 /* ─── Правка записи ──────────────────────────────────────────────────── */
 
 /**
@@ -268,14 +318,15 @@ export async function correctEvent(input: {
 
   // Раскладка смены перебирает состав, а не записи. Значит деньги, записанные
   // на человека вне состава, в неё просто не попадут — и пропадут молча.
-  const [crewRow] = await sql<{ crew: number[] }[]>`
-    select crew from shifts where business_day = ${input.businessDay}
+  const [crewRow] = await sql<
+    { crew: number[]; hostess: number[] | null; hookah: number[] | null }[]
+  >`
+    select crew, hostess, hookah from shifts where business_day = ${input.businessDay}
   `;
-  const inCrew = new Set(crewRow?.crew ?? []);
-  const stray = input.draft.waiterIds.find((id) => !inCrew.has(id));
+  const stray = неВСоставе(input.draft.payees, crewRow ?? { crew: [], hostess: [], hookah: [] });
   if (stray !== undefined) {
     return {
-      error: `В составе смены нет сотрудника №${stray} — сначала поправьте состав`,
+      error: `В составе смены ${КОТЁЛ[stray.contour]} нет сотрудника №${stray.id} — сначала поправьте состав`,
     };
   }
 
@@ -325,13 +376,13 @@ export async function correctEvent(input: {
         await tx`
           insert into entries (
             id, business_day, hall_id, hall_title, table_id, table_title,
-            waiter_id, waiter_name, amount, kind, operator_id, operator_name,
+            waiter_id, waiter_name, amount, kind, contour, operator_id, operator_name,
             created_at, split_group, gross, commission_rate,
             corrects, source, manager_id, note
           ) values (
             ${e.id}, ${e.businessDay}, ${e.hallId}, ${e.hallTitle},
             ${e.tableId}, ${e.tableTitle}, ${e.waiterId}, ${e.waiterName},
-            ${e.amount}, ${e.kind}, ${e.operatorId}, ${e.operatorName},
+            ${e.amount}, ${e.kind}, ${e.contour ?? "hall"}, ${e.operatorId}, ${e.operatorName},
             ${e.createdAt}, ${e.splitGroup ?? null}, ${e.gross}, ${e.commissionRate},
             ${e.corrects}, 'office', ${e.managerId}, ${e.note}
           )
@@ -585,17 +636,26 @@ export async function добавитьЗапись(input: {
   }
 
   const sql = db();
-  const [строка] = await sql<{ crew: number[]; operator_id: number | null }[]>`
-    select crew, operator_id from shifts where business_day = ${input.businessDay}
+  const [строка] = await sql<
+    {
+      crew: number[];
+      hostess: number[] | null;
+      hookah: number[] | null;
+      operator_id: number | null;
+    }[]
+  >`
+    select crew, hostess, hookah, operator_id
+      from shifts where business_day = ${input.businessDay}
   `;
   if (!строка) return { error: "Смены за этот день нет — сначала соберите состав" };
 
   // Раскладка смены перебирает состав, а не записи: деньги на человека вне
   // состава не попадут никуда и пропадут молча. Та же проверка, что у правки.
-  const вСоставе = new Set(строка.crew ?? []);
-  const чужой = input.draft.waiterIds.find((id) => !вСоставе.has(id));
+  const чужой = неВСоставе(input.draft.payees, строка);
   if (чужой !== undefined) {
-    return { error: `В составе смены нет сотрудника №${чужой} — сначала поправьте состав` };
+    return {
+      error: `В составе смены ${КОТЁЛ[чужой.contour]} нет сотрудника №${чужой.id} — сначала поправьте состав`,
+    };
   }
   if (строка.operator_id === null) {
     return { error: "У смены не указано, кто вносил записи — поправьте состав" };
@@ -629,13 +689,13 @@ export async function добавитьЗапись(input: {
         await tx`
           insert into entries (
             id, business_day, hall_id, hall_title, table_id, table_title,
-            waiter_id, waiter_name, amount, kind, operator_id, operator_name,
+            waiter_id, waiter_name, amount, kind, contour, operator_id, operator_name,
             created_at, split_group, gross, commission_rate,
             corrects, source, manager_id, note
           ) values (
             ${e.id}, ${e.businessDay}, ${e.hallId}, ${e.hallTitle},
             ${e.tableId}, ${e.tableTitle}, ${e.waiterId}, ${e.waiterName},
-            ${e.amount}, ${e.kind}, ${e.operatorId}, ${e.operatorName},
+            ${e.amount}, ${e.kind}, ${e.contour ?? "hall"}, ${e.operatorId}, ${e.operatorName},
             ${e.createdAt}, ${e.splitGroup ?? null}, ${e.gross}, ${e.commissionRate},
             ${null}, 'office', ${e.managerId}, ${e.note}
           )

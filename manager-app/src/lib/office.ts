@@ -5,8 +5,14 @@ import {
   type Draft,
   type ShiftEvent as SharedEvent,
 } from "./events";
-import { splitShift, type ShiftSplit } from "./split";
-import type { Employee, Entry, Kind } from "./types";
+import {
+  isHookah,
+  splitShift,
+  splitSide,
+  type ShiftSplit,
+  type SideSplit,
+} from "./split";
+import type { Contour, Employee, Entry, Kind, Shift } from "./types";
 
 /**
  * Бэк-офис поверх общего расчёта.
@@ -22,12 +28,14 @@ import type { Employee, Entry, Kind } from "./types";
 
 export {
   buildEvents,
+  contoursOf,
   draftError,
   draftOf,
   eventKey,
   needsTable,
   withReplacement,
   type Draft,
+  type Payee,
 } from "./events";
 
 export type OfficeEntry = Omit<Entry, "operatorId"> & {
@@ -123,6 +131,27 @@ export function splitOffice(
 }
 
 /**
+ * Котёл хостес или кальянного бара — тем же расчётом, что и в приложении
+ * смены. Автор подставляется по той же причине, что и выше.
+ *
+ * ⚠️ Заведён 20.08.2026. До этого бэк-офис эти деньги не считал вовсе:
+ * они были видны только в списке записей, а в раскладке их не было —
+ * и «Заработано за смену» тут и в приложении смены за один вечер
+ * называли разные суммы.
+ */
+export function splitSideOffice(
+  rows: OfficeEntry[],
+  contour: Contour,
+  people: Employee[],
+): SideSplit {
+  return splitSide(
+    rows.map((r) => ({ ...r, operatorId: r.operatorId ?? 0 })),
+    contour,
+    people,
+  );
+}
+
+/**
  * Сборка записей бэк-офиса в события — с проставленным «чем заменено».
  *
  * Отдельным именем, чтобы не терять тип: общий расчёт возвращает события
@@ -151,3 +180,34 @@ export const KIND_TITLE: Record<Kind, string> = {
   service: "сервисный сбор",
   staff: "питание",
 };
+
+/**
+ * В какой котёл положить деньги человека, которого ДОБАВЛЯЮТ в событие
+ * из бэк-офиса.
+ *
+ * ⚠️ Это не «определить котёл по роли». Котёл записи ставится в момент
+ * записи и потом не пересматривается: у тех, кто в событии уже есть, он
+ * переезжает из самой записи как есть (см. `draftOf`). Здесь речь только
+ * о новом получателе, у которого своего котла ещё нет вовсе, — и тогда
+ * единственный честный источник это состав ТОЙ смены.
+ *
+ * Кальянщик узнаётся по номеру: у второй кассы он сдвинут на миллион,
+ * и спутать его не с кем. Хостес — только по составу: номер у неё
+ * обычный, зальный.
+ *
+ * Человек, отмеченный в смене и официантом, и хостес, попадёт в зал.
+ * Так задумано: зал — это то, где считается порог и доли, и ошибиться
+ * в его пользу безопаснее. Если нужно иначе, запись правится в приложении
+ * смены, где котлы выбираются списками.
+ */
+export function контурНового(id: number, shift: Shift): Contour {
+  // Кальянщик узнаётся по номеру: у второй кассы он сдвинут на миллион,
+  // и спутать его не с кем.
+  if (isHookah(id)) return "hookah";
+  // Зал раньше хостес намеренно: человека могли отметить и там, и там,
+  // а порог и доли считаются в зале. Ошибиться в его пользу безопаснее —
+  // такая запись видна в раскладке, а не пропадает в чужом котле.
+  if (shift.crew.includes(id)) return "hall";
+  if (shift.hostess.includes(id)) return "hostess";
+  return "hall";
+}

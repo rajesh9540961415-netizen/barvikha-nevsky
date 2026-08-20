@@ -77,8 +77,30 @@ export type ShiftExport = {
 };
 
 export type SideExport = {
-  rows: { name: string; cash: number; qr: number; service: number; total: number }[];
-  totals: { cash: number; qr: number; service: number; total: number };
+  rows: {
+    name: string;
+    cash: number;
+    /**
+     * Дошло с терминала — доля со стола, которую гость попросил отдать
+     * бару или хостес.
+     *
+     * ⚠️ Поле появилось 20.08.2026 вместе с самой возможностью. Без него
+     * такая доля не попадала бы в отчёт вовсе: сборщик читает у боковых
+     * блоков ровно те графы, что перечислены здесь, и лишнюю сумму
+     * не искал бы никто — она просто не сошлась бы в «Расхождении».
+     */
+    terminal: number;
+    qr: number;
+    service: number;
+    total: number;
+  }[];
+  totals: {
+    cash: number;
+    terminal: number;
+    qr: number;
+    service: number;
+    total: number;
+  };
 };
 
 export function buildExport(
@@ -125,12 +147,14 @@ export function buildExport(
           // Полное имя, как и у официантов: в отчёте строки подписаны целиком.
           name: people.find((p) => p.id === r.payeeId)?.name ?? r.payeeName,
           cash: r.cash,
+          terminal: r.terminal,
           qr: r.qr,
           service: r.service,
           total: r.total,
         })),
       totals: {
         cash: calc.totalCash,
+        terminal: calc.totalTerminal,
         qr: calc.totalQr,
         service: calc.totalService,
         total: calc.total,
@@ -156,6 +180,9 @@ export function buildExport(
     hostess: side("hostess", hostessPeople),
     hookah: side("hookah", hookahPeople),
     totals: {
+      // ⚠️ Зальные итоги намеренно остались зальными: отчёт читает их
+      // с 01.08.2026, и менять их смысл нельзя. Деньги хостес и бара —
+      // в своих блоках, там же и их терминал.
       cash: s.totalCash,
       terminal: s.totalTerminal,
       qr: s.totalQr,
