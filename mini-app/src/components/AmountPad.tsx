@@ -3,7 +3,17 @@
 import { useState } from "react";
 import { formatMoney } from "@/lib/businessDay";
 import { COMMISSION_RATE, netAmount, shares } from "@/lib/split";
-import type { Employee, Hall, Kind, Table } from "@/lib/types";
+import type { Contour, Employee, Hall, Kind, Table } from "@/lib/types";
+
+/**
+ * Кому и в какой котёл ложится его доля.
+ *
+ * Котёл у каждого получателя свой: гость оставляет чаевые за стол целиком
+ * и просит поделить их между официантом и кальянным баром. Зальная доля
+ * делится с администратором и кассиром, барская не делится ни с кем —
+ * и решается это здесь, в момент выбора, а не потом по роли человека.
+ */
+export type PickedPayee = { person: Employee; contour: Contour };
 
 /**
  * Свежая запись по столу — в том виде, в каком её показывают в вопросе
@@ -27,6 +37,12 @@ type Props = {
   table: Table;
   /** Официанты, отмеченные на смене. */
   crew: Employee[];
+  /** Хостес этого вечера. Пусто — значит её не отметили в составе. */
+  hostess: Employee[];
+  /** Кальянщики смены и общий котёл бара. Котёл есть всегда. */
+  hookah: Employee[];
+  /** Открыть состав смены — если нужного человека в списке нет. */
+  onCrew: () => void;
   /**
    * Кого предложить: обычно те, кто уже обслуживал этот стол сегодня.
    *
@@ -53,7 +69,7 @@ type Props = {
    */
   onConfirm: (
     amount: number,
-    waiters: Employee[],
+    payees: PickedPayee[],
     kind: Kind,
   ) => Promise<void>;
 };
@@ -76,6 +92,9 @@ export default function AmountPad({
   hall,
   table,
   crew,
+  hostess,
+  hookah,
+  onCrew,
   suggestedWaiterIds,
   recent,
   onCancel,
@@ -97,6 +116,17 @@ export default function AmountPad({
     if (suggested.length > 0) return suggested;
     return crew.length === 1 ? [crew[0].id] : [];
   });
+  /**
+   * Кто выбран из хостес и кальянного бара — по порядку нажатий.
+   *
+   * Отдельно от зальных `ids` намеренно: у зала есть переключатель «делить
+   * или нет», а сторона добавляется всегда вдобавок. Выбрать бар и при этом
+   * никого не выбрать в зале тоже можно — гость мог оставить чаевые только
+   * кальянщику.
+   */
+  const [side, setSide] = useState<{ id: number; contour: Contour }[]>([]);
+  /** Какой котёл раскрыт. Раскрытым остаётся и тот, из кого уже выбрали. */
+  const [openSide, setOpenSide] = useState<Contour | null>(null);
   // Деление включается отдельной кнопкой, а не вторым тапом по имени.
   // Иначе промах по соседней кнопке молча превратил бы обычные чаевые
   // в поделённые, и официант недосчитался бы половины.
@@ -105,11 +135,27 @@ export default function AmountPad({
   const amount = Number(digits || "0");
   // Порядок здесь тот же, что и в долях ниже: кто выбран первым, тот и первый
   // в раскладке, и ему же достаётся лишняя копейка от нечётной суммы.
-  const waiters = ids
-    .map((id) => crew.find((w) => w.id === id))
-    .filter((w): w is Employee => w !== undefined);
-  const parts = shares(amount, waiters.length);
-  const ready = amount > 0 && waiters.length > 0 && !saving;
+  // Зал идёт первым, сторона за ним — так же они лягут в базу.
+  const payees: PickedPayee[] = [
+    ...ids.map((id) => ({
+      person: crew.find((w) => w.id === id),
+      contour: "hall" as Contour,
+    })),
+    ...side.map(({ id, contour }) => ({
+      person: (contour === "hookah" ? hookah : hostess).find((p) => p.id === id),
+      contour,
+    })),
+  ].filter((p): p is PickedPayee => p.person !== undefined);
+  const parts = shares(amount, payees.length);
+  const ready = amount > 0 && payees.length > 0 && !saving;
+  /**
+   * Есть ли в получателях кто-то со стороны.
+   *
+   * От этого зависит подпись под кнопками: у зальной доли будут вычтены
+   * 20 % администратору и доля кассира, у барской и хостес — ничего.
+   * Администратор должен видеть это до нажатия, а не узнавать из итогов.
+   */
+  const mixed = side.length > 0;
   // Сколько дойдёт, если нажать «Терминал». Показываем до нажатия: сумма
   // записывается не та, что набрана, и узнать об этом администратор должен
   // заранее, а не из сообщения постфактум.
@@ -136,6 +182,37 @@ export default function AmountPad({
     });
   }
 
+  /**
+   * Отмечает получателя из хостес или кальянного бара.
+   *
+   * Всегда добавлением, без переключателя «делить»: сторону выбирают именно
+   * тогда, когда делят, — иначе её деньги вводят своим экраном.
+   */
+  function pickSide(id: number, contour: Contour) {
+    setFailed(false);
+    setSide((current) =>
+      current.some((p) => p.id === id)
+        ? current.filter((p) => p.id !== id)
+        : [...current, { id, contour }],
+    );
+  }
+
+  /**
+   * Раскрывает котёл стороны.
+   *
+   * Когда выбирать не из кого — не тупик, а повод сказать об этом там же,
+   * где человек понадобился: хостес просто не отметили в составе смены.
+   * У бара так не бывает — «Весь бар» есть всегда.
+   */
+  function toggleSide(contour: Contour) {
+    setFailed(false);
+    if (contour === "hostess" && hostess.length === 0) {
+      onCrew();
+      return;
+    }
+    setOpenSide((current) => (current === contour ? null : contour));
+  }
+
   function toggleSplitting() {
     setFailed(false);
     if (splitting) {
@@ -149,7 +226,7 @@ export default function AmountPad({
   }
 
   async function confirm(kind: Kind) {
-    if (!ready || waiters.length === 0) return;
+    if (!ready || payees.length === 0) return;
     // По этому столу недавно уже вносили — переспрашиваем один раз.
     if (recent && asking === null) {
       setAsking({ kind, ago: minutesAgo(recent.createdAt) });
@@ -159,7 +236,7 @@ export default function AmountPad({
     setSaving(true);
     setFailed(false);
     try {
-      await onConfirm(amount, waiters, kind);
+      await onConfirm(amount, payees, kind);
       // При успехе экран закрывается сверху.
     } catch {
       // При ошибке остаёмся с набранной суммой и выбранными официантами —
@@ -197,11 +274,13 @@ export default function AmountPad({
       <div className="px-4 pb-3">
         <div className="mb-1.5 flex items-baseline justify-between gap-2">
           <span className="text-xs text-fg-muted">
-            {waiters.length === 0
-              ? "выберите официанта"
-              : waiters.length === 1
-                ? "официант"
-                : `делим поровну на ${waiters.length}`}
+            {payees.length === 0
+              ? "выберите, кому"
+              : payees.length === 1
+                ? payees[0].contour === "hall"
+                  ? "официант"
+                  : "получатель"
+                : `делим поровну на ${payees.length}`}
           </span>
           {crew.length > 1 && (
             <button
@@ -234,12 +313,67 @@ export default function AmountPad({
             );
           })}
         </div>
+        {/* Хостес и кальянный бар. Их деньги живут в своих котлах и ни с кем
+            не делятся, поэтому и кнопки стоят отдельно от зала: перепутать
+            их значит отдать деньги другим людям, а по цифрам это потом
+            не отличить. */}
+        <div className="mt-2 flex gap-2">
+          {(["hookah", "hostess"] as const).map((c) => {
+            const chosen = side.filter((p) => p.contour === c).length;
+            return (
+              <button
+                key={c}
+                onClick={() => toggleSide(c)}
+                className={`flex-1 rounded-lg border px-2.5 py-2 text-xs ${
+                  chosen > 0
+                    ? "border-sand bg-sand/10 text-fg"
+                    : "border-line bg-surface text-fg-muted active:bg-surface-2"
+                }`}
+              >
+                {c === "hookah" ? "Кальянный бар" : "Хостес"}
+                {chosen > 0 && (
+                  <span className="ml-1.5 tabular-nums">{chosen}</span>
+                )}
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Список котла: раскрыт, пока из него выбирают, и остаётся раскрытым,
+            если кто-то уже выбран — спрятанный выбор хуже отсутствия выбора. */}
+        {(["hookah", "hostess"] as const).map((c) => {
+          const people = c === "hookah" ? hookah : hostess;
+          const open =
+            openSide === c || side.some((p) => p.contour === c);
+          if (!open || people.length === 0) return null;
+          return (
+            <div key={c} className="mt-2 flex flex-wrap gap-2">
+              {people.map((p) => {
+                const on = side.some((x) => x.id === p.id);
+                return (
+                  <button
+                    key={p.id}
+                    onClick={() => pickSide(p.id, c)}
+                    className={`rounded-lg border px-3 py-2 text-sm ${
+                      on
+                        ? "border-sand bg-sand/10 text-fg"
+                        : "border-line bg-surface text-fg-muted active:bg-surface-2"
+                    }`}
+                  >
+                    {p.short}
+                  </button>
+                );
+              })}
+            </div>
+          );
+        })}
+
         {/* Раскладку показываем только когда есть что раскладывать: с нулевой
             суммой строка «Анна 0 ₽ · Иван 0 ₽» только мешала бы. */}
-        {waiters.length > 1 && amount > 0 && (
+        {payees.length > 1 && amount > 0 && (
           <div className="mt-2 text-xs text-fg-muted">
-            {waiters
-              .map((w, i) => `${w.short} — ${formatMoney(parts[i])}`)
+            {payees
+              .map((p, i) => `${p.person.short} — ${formatMoney(parts[i])}`)
               .join(" · ")}
           </div>
         )}
@@ -293,9 +427,16 @@ export default function AmountPad({
             ? "сохраняю…"
             : failed
               ? "не сохранилось — проверьте связь и повторите"
-              : amount > 0 && terminalFee > 0
-                ? `чаевые · по терминалу дойдёт ${formatMoney(terminalNet)}, комиссия ${terminalFee} %`
-                : "чаевые"}
+              : mixed
+                ? // Про сторону говорим прямо: у зальной доли будут вычтены
+                  // 20 % администратору и доля кассира, у барской и хостес —
+                  // ничего. Узнать об этом администратор должен до нажатия.
+                  amount > 0 && terminalFee > 0
+                  ? `по терминалу дойдёт ${formatMoney(terminalNet)}, комиссия ${terminalFee} % · доля бара и хостес ни с кем не делится`
+                  : "доля бара и хостес ни с кем не делится"
+                : amount > 0 && terminalFee > 0
+                  ? `чаевые · по терминалу дойдёт ${formatMoney(terminalNet)}, комиссия ${terminalFee} %`
+                  : "чаевые"}
         </div>
         <div className="grid grid-cols-2 gap-2">
           <button

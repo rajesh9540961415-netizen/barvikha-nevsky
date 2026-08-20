@@ -8,7 +8,7 @@ import {
   useSyncExternalStore,
 } from "react";
 import AmountPad from "@/components/AmountPad";
-import type { RecentEntry } from "@/components/AmountPad";
+import type { PickedPayee, RecentEntry } from "@/components/AmountPad";
 import ShiftCrew from "@/components/ShiftCrew";
 import ShiftSummary from "@/components/ShiftSummary";
 import TablePicker from "@/components/TablePicker";
@@ -509,7 +509,7 @@ export default function TipsScreen() {
   }
 
   /**
-   * Записывает чаевые. Официантов может быть несколько: большой стол
+   * Записывает чаевые. Получателей может быть несколько: большой стол
    * обслуживают вдвоём, гость оставляет чаевые за стол целиком.
    *
    * В базу такие чаевые ложатся по строке на каждого, каждому своя доля.
@@ -517,29 +517,40 @@ export default function TipsScreen() {
    * смены и отчёт продолжают работать без единой правки: для них это просто
    * обычные записи. Общая метка связывает строки, чтобы история показывала
    * их одним событием, а отмена убирала обе.
+   *
+   * ⚠️ С 20.08.2026 получатели бывают из разных котлов: гость просит поделить
+   * чаевые между официантом и кальянным баром. Котёл проставляется КАЖДОЙ
+   * строке свой — от этого зависит, вычтут ли из доли 20 % администратору
+   * и долю кассира. Одного контура на всё событие тут не хватает, и это
+   * не мелочь разметки: зальная доля делится, барская нет.
    */
-  async function addEntry(amount: number, waiters: Employee[], kind: Kind) {
-    if (!picked || !operator || waiters.length === 0) return;
-    const split = waiters.length > 1;
+  async function addEntry(amount: number, payees: PickedPayee[], kind: Kind) {
+    if (!picked || !operator || payees.length === 0) return;
+    const split = payees.length > 1;
     const group = split ? crypto.randomUUID() : null;
     // Комиссия удерживается со всей суммы сразу, и делится уже то, что дошло:
     // тогда доли складываются ровно в дошедшее, без копейки расхождения.
+    // Сберу всё равно, между какими котлами потом делят: он снимает своё
+    // с того, что оставил гость, целиком.
     const net = netAmount(amount, kind);
-    const parts = shares(net, waiters.length);
-    const grossParts = shares(amount, waiters.length);
+    const parts = shares(net, payees.length);
+    const grossParts = shares(amount, payees.length);
     const now = new Date().toISOString();
-    const rows: Entry[] = waiters.map((waiter, i) => ({
+    const rows: Entry[] = payees.map(({ person, contour }, i) => ({
       id: crypto.randomUUID(),
+      // Стол остаётся и у барской доли: он говорит, откуда деньги. Записи,
+      // введённые своим экраном, стола по-прежнему не имеют — там его нет.
       hallId: picked.hall.id,
       hallTitle: picked.hall.title,
       tableId: picked.table.id,
       tableTitle: picked.table.title,
-      waiterId: waiter.id,
-      waiterName: waiter.name,
+      waiterId: person.id,
+      waiterName: person.name,
       amount: parts[i],
       gross: grossParts[i],
       commissionRate: COMMISSION_RATE[kind],
       kind,
+      contour,
       operatorId: operator.id,
       operatorName: operator.name,
       // Время одно на всю группу: это одно событие, а не два подряд.
@@ -556,8 +567,8 @@ export default function TipsScreen() {
     void refresh();
     const waiting = queueState().items.length > 0;
     const who = split
-      ? `${waiters.length === 2 ? "пополам" : "поровну"}: ${waiters.map((w) => w.short).join(", ")}`
-      : waiters[0].short;
+      ? `${payees.length === 2 ? "пополам" : "поровну"}: ${payees.map((p) => p.person.short).join(", ")}`
+      : payees[0].person.short;
     // Когда часть суммы забрала комиссия, показываем обе цифры: администратор
     // ввёл одно, а записалось другое — про это он должен узнать сразу, а не
     // через месяц при сверке отчёта.
@@ -984,15 +995,41 @@ export default function TipsScreen() {
           event={editingEvent}
           live={entries}
           crew={crew}
-          // Кому можно приписать запись — зависит от котла. Зальную можно
-          // переписать на официанта, чаевые хостес — только на хостес,
-          // а кальянные — на кальянщика или на бар целиком.
+          // Кому можно приписать запись — зависит от того, откуда она.
+          //
+          // У записи СО СТОЛА получатели бывают из любого котла: гость
+          // оставляет чаевые за стол и просит поделить их между официантом
+          // и кальянщиком. Поэтому здесь все три списка, и котёл идёт рядом
+          // с человеком — от него зависит, вычтут ли из доли 20 %
+          // администратору и долю кассира.
+          //
+          // У записи без стола (QR, питание, чаевые своим экраном) выбор
+          // остаётся в её собственном котле: чаевые хостес можно переписать
+          // только на хостес, кальянные — на кальянщика или на бар целиком.
           people={
-            editingEvent.contour === "hookah"
-              ? hookahPeople
-              : editingEvent.contour === "hostess"
-                ? hostessPeople
-                : crew
+            editingEvent.tableId !== null
+              ? [
+                  ...crew.map((p) => ({ person: p, contour: "hall" as const })),
+                  ...hookahPeople.map((p) => ({
+                    person: p,
+                    contour: "hookah" as const,
+                  })),
+                  ...hostessPeople.map((p) => ({
+                    person: p,
+                    contour: "hostess" as const,
+                  })),
+                ]
+              : editingEvent.contour === "hookah"
+                ? hookahPeople.map((p) => ({
+                    person: p,
+                    contour: "hookah" as const,
+                  }))
+                : editingEvent.contour === "hostess"
+                  ? hostessPeople.map((p) => ({
+                      person: p,
+                      contour: "hostess" as const,
+                    }))
+                  : crew.map((p) => ({ person: p, contour: "hall" as const }))
           }
           operator={operator}
           halls={halls}
@@ -1118,6 +1155,12 @@ export default function TipsScreen() {
           hall={picked.hall}
           table={picked.table}
           crew={crew}
+          hostess={hostessPeople}
+          hookah={hookahPeople}
+          onCrew={() => {
+            setPicked(null);
+            setEditingCrew(true);
+          }}
           suggestedWaiterIds={suggested}
           recent={picked.recent}
           onCancel={() => setPicked(null)}

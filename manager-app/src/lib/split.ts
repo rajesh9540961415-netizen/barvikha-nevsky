@@ -385,9 +385,33 @@ export type PayeeSplit = {
   payeeId: number;
   payeeName: string;
   cash: number;
+  /**
+   * Чаевые с терминала — сколько ДОШЛО, после комиссии Сбера.
+   *
+   * ⚠️ Появилось 20.08.2026 и переоткрывает решение от 18.08 «терминала
+   * у хостес и бара не бывает». Оно было верным ровно для тех чаевых,
+   * которые оставляют лично: у бара своего терминала нет.
+   *
+   * Но гость за столом оставляет чаевые на зальном терминале и просит
+   * поделить их с кальянщиком. Деньги при этом приходят в зальный котёл
+   * Сбера, комиссию 8 % он снимает со всей суммы, а долю бара передают
+   * из рук в руки. Записать её надо всё равно — иначе она не попадёт
+   * никуда: раньше этого поля не было, и такая доля молча исчезала бы
+   * из итога бара и из отчёта.
+   *
+   * Решение владельца 20.08.2026.
+   */
+  terminal: number;
+  /**
+   * Сколько гость оставил на терминале ДО комиссии.
+   *
+   * Отдельно от `terminal` по той же причине, что у официантов: кассир
+   * сверяет вечер с лентой терминала, а там пробита полная сумма.
+   */
+  terminalGross: number;
   qr: number;
   service: number;
-  /** Чаевые без сервисного сбора — наличные и QR. */
+  /** Чаевые без сервисного сбора — наличные, терминал и QR. */
   tips: number;
   /**
    * Всё, что человек получил за смену. Начислено ему столько же:
@@ -410,6 +434,10 @@ export type PayeeSplit = {
 export type SideSplit = {
   rows: PayeeSplit[];
   totalCash: number;
+  /** Дошло с терминала по всему контуру — см. `PayeeSplit.terminal`. */
+  totalTerminal: number;
+  /** Сколько оставили на терминале до комиссии — для сверки с лентой. */
+  totalTerminalGross: number;
   totalQr: number;
   totalService: number;
   totalTips: number;
@@ -464,9 +492,17 @@ export function splitSide(
       );
 
     const cash = by("cash");
+    const terminal = by("terminal");
+    // Полная сумма с терминала — до того, как Сбер удержал свои 8 %.
+    // У записей без поля `gross` дошло ровно то, что оставили.
+    const terminalGross = money(
+      his
+        .filter((e) => e.kind === "terminal")
+        .reduce((sum, e) => sum + (e.gross ?? e.amount), 0),
+    );
     const qr = by("qr");
     const service = by("service");
-    const tips = money(cash + qr);
+    const tips = money(cash + terminal + qr);
     // Питание вычитается из того, что человек получил. Может увести в минус —
     // тогда так и показываем: обнулять значит скрыть долг, как и у официантов.
     const staff = by("staff");
@@ -476,6 +512,8 @@ export function splitSide(
       payeeId,
       payeeName,
       cash,
+      terminal,
+      terminalGross,
       qr,
       service,
       tips,
@@ -493,6 +531,8 @@ export function splitSide(
   return {
     rows,
     totalCash: sum((r) => r.cash),
+    totalTerminal: sum((r) => r.terminal),
+    totalTerminalGross: sum((r) => r.terminalGross),
     totalQr: sum((r) => r.qr),
     totalService: sum((r) => r.service),
     totalTips: sum((r) => r.tips),

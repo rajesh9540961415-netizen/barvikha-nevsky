@@ -217,6 +217,7 @@ export default function ShiftScreen({ data }: { data: DayData }) {
           live={live}
           crew={crew}
           people={people}
+          shift={shift}
           onClose={() => setEditing(null)}
         />
       )}
@@ -234,6 +235,7 @@ export default function ShiftScreen({ data }: { data: DayData }) {
           day={day}
           live={live}
           crew={crew}
+          shift={shift}
           onClose={() => setAddOpen(false)}
         />
       )}
