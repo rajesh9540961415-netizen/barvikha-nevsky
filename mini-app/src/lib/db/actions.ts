@@ -552,16 +552,32 @@ export async function writeShift(
   shift: Shift,
 ): Promise<void> {
   const sql = db();
+
+  // ⚠️ Повторов в составе быть не должно: раскладка перебирает состав,
+  // и номер, попавший туда дважды, приносит человеку двойные деньги, а долю
+  // кассира делит на лишнего. 20.08.2026 так и вышло на 11 августа.
+  //
+  // Чистим ЗДЕСЬ, на входе в базу, а не только в расчёте. Расчёт починили
+  // в тот же день, и он повтор переживает; но пока повтор лежит в данных,
+  // его переживает КАЖДЫЙ, кто их читает, — и завтрашний читатель о нём
+  // не знает. Кривое лечится там, где записывается.
+  const без_повторов = {
+    ...shift,
+    crew: [...new Set(shift.crew)],
+    hostess: [...new Set(shift.hostess ?? [])],
+    hookah: [...new Set(shift.hookah ?? [])],
+  };
+
   await sql`
     insert into shifts (
       business_day, crew, operator_id, admin_id, admin2_id, cashier_id,
       hostess, hookah, names
     )
     values (
-      ${businessDay}, ${shift.crew}, ${shift.operator},
-      ${shift.admin}, ${shift.admin2 ?? null}, ${shift.cashier},
-      ${shift.hostess ?? []}, ${shift.hookah ?? []},
-      ${sql.json(shift.names ?? {})}
+      ${businessDay}, ${без_повторов.crew}, ${без_повторов.operator},
+      ${без_повторов.admin}, ${без_повторов.admin2 ?? null}, ${без_повторов.cashier},
+      ${без_повторов.hostess}, ${без_повторов.hookah},
+      ${sql.json(без_повторов.names ?? {})}
     )
     on conflict (business_day) do update set
       crew = excluded.crew,

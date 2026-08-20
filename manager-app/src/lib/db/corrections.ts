@@ -491,12 +491,19 @@ export async function saveCrew(input: {
           }
         : EMPTY;
 
+      // ⚠️ Повторы из состава убираем при записи. Номер, попавший в состав
+      // дважды, приносил человеку двойные деньги и делил долю кассира
+      // на лишнего — 20.08.2026 так вышло на 11 августа. Расчёт это теперь
+      // переживает, но чинить надо там, где пишут: пока повтор лежит
+      // в данных, о нём должен знать каждый, кто их читает.
+      const состав = [...new Set(after.crew)];
+
       await tx`
         insert into shifts (
           business_day, crew, operator_id, admin_id, admin2_id, cashier_id
         )
         values (
-          ${input.businessDay}, ${after.crew}, ${after.operator},
+          ${input.businessDay}, ${состав}, ${after.operator},
           ${after.admin}, ${after.admin2}, ${after.cashier}
         )
         on conflict (business_day) do update set
