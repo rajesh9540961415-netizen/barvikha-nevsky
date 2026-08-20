@@ -1,3 +1,4 @@
+import hookahList from "@/data/hookah.json";
 import {
   buildEvents as buildSharedEvents,
   rowsFromDraft as sharedRowsFromDraft,
@@ -6,6 +7,8 @@ import {
   type ShiftEvent as SharedEvent,
 } from "./events";
 import {
+  HOOKAH_POT_ID,
+  HOOKAH_POT_NAME,
   isHookah,
   splitShift,
   splitSide,
@@ -28,6 +31,7 @@ import type { Contour, Employee, Entry, Kind, Shift } from "./types";
 
 export {
   buildEvents,
+  canHaveTable,
   contoursOf,
   draftError,
   draftOf,
@@ -200,6 +204,35 @@ export const KIND_TITLE: Record<Kind, string> = {
  * в его пользу безопаснее. Если нужно иначе, запись правится в приложении
  * смены, где котлы выбираются списками.
  */
+/**
+ * Из кого выбирают получателя в бэк-офисе, по котлам.
+ *
+ * Зал приходит снаружи — его собирает `crewPeople`, и своей копии тут быть
+ * не должно. Хостес берём из состава смены: номера у них зальные, и отличить
+ * их иначе нельзя. Кальянщики — из кассы ИП Шалаевой плюс общий котёл бара;
+ * котёл есть всегда, даже когда никого не отметили: администратор не обязан
+ * знать, кто обслуживал.
+ *
+ * ⚠️ Тех, кто уже стоит в событии, добавляем к спискам отдельно — человека
+ * могли убрать из состава после того, как ему записали деньги, и без этого
+ * он исчез бы с экрана вместе с возможностью его поправить.
+ */
+export function получатели(
+  shift: Shift,
+  everyone: Employee[],
+): { person: Employee; contour: Contour }[] {
+  const хостес = shift.hostess
+    .map((id) => everyone.find((p) => p.id === id) ?? { id, name: `№${id}`, short: `№${id}` })
+    .map((person) => ({ person, contour: "hostess" as Contour }));
+
+  const бар = [
+    { id: HOOKAH_POT_ID, name: HOOKAH_POT_NAME, short: HOOKAH_POT_NAME },
+    ...(hookahList as Employee[]).filter((p) => shift.hookah.includes(p.id)),
+  ].map((person) => ({ person, contour: "hookah" as Contour }));
+
+  return [...бар, ...хостес];
+}
+
 export function контурНового(id: number, shift: Shift): Contour {
   // Кальянщик узнаётся по номеру: у второй кассы он сдвинут на миллион,
   // и спутать его не с кем.
