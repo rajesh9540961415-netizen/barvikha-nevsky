@@ -5,7 +5,13 @@ import {
   type Draft,
   type ShiftEvent as SharedEvent,
 } from "./events";
-import { isHookah, splitShift, type ShiftSplit } from "./split";
+import {
+  isHookah,
+  splitShift,
+  splitSide,
+  type ShiftSplit,
+  type SideSplit,
+} from "./split";
 import type { Contour, Employee, Entry, Kind, Shift } from "./types";
 
 /**
@@ -121,6 +127,27 @@ export function splitOffice(
     rows.map((r) => ({ ...r, operatorId: r.operatorId ?? 0 })),
     crew,
     businessDay,
+  );
+}
+
+/**
+ * Котёл хостес или кальянного бара — тем же расчётом, что и в приложении
+ * смены. Автор подставляется по той же причине, что и выше.
+ *
+ * ⚠️ Заведён 20.08.2026. До этого бэк-офис эти деньги не считал вовсе:
+ * они были видны только в списке записей, а в раскладке их не было —
+ * и «Заработано за смену» тут и в приложении смены за один вечер
+ * называли разные суммы.
+ */
+export function splitSideOffice(
+  rows: OfficeEntry[],
+  contour: Contour,
+  people: Employee[],
+): SideSplit {
+  return splitSide(
+    rows.map((r) => ({ ...r, operatorId: r.operatorId ?? 0 })),
+    contour,
+    people,
   );
 }
 
