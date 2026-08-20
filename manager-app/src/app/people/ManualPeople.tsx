@@ -250,6 +250,15 @@ export default function ManualPeople({
                       {" "}
                       №{p.id} → №{p.mergedInto} · {имяПо(p.mergedInto!)}
                     </span>
+                    {/* Откуда взялась запись с чужим именем. Без этой строки
+                        склеенная запись выглядит как неизвестно чья: имя
+                        у неё теперь главной, а прежнего не видно нигде. */}
+                    {p.nameBeforeMerge && (
+                      <div className="text-sm text-sand">
+                        до склейки звалась «{p.nameBeforeMerge}» — отмена вернёт
+                        это имя и запись, и всем её записям о деньгах
+                      </div>
+                    )}
                     <div className="text-sm text-fg-muted">
                       {p.shifts === 0
                         ? "записей нет"

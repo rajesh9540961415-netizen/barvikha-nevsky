@@ -532,6 +532,8 @@ export type ManualPerson = Employee & {
   shifts: number;
   /** Последняя смена, в ключах бизнес-дня. null — записей нет вовсе. */
   lastDay: string | null;
+  /** Как запись звалась до склейки. Пусто, если склейки нет. */
+  nameBeforeMerge?: string;
 };
 
 export async function listManualPeople(): Promise<ManualPerson[]> {
@@ -545,9 +547,10 @@ export async function listManualPeople(): Promise<ManualPerson[]> {
       last_day: string | null;
       hidden_at: Date | null;
       merged_into: number | null;
+      merge_undo: { name: string } | null;
     }[]
   >`
-    select p.id, p.name, p.short, p.hidden_at, p.merged_into,
+    select p.id, p.name, p.short, p.hidden_at, p.merged_into, p.merge_undo,
            (select count(distinct e.business_day) from entries e
              where e.waiter_id = p.id and e.deleted_at is null) as shifts,
            (select max(e.business_day) from entries e
@@ -563,6 +566,9 @@ export async function listManualPeople(): Promise<ManualPerson[]> {
     lastDay: r.last_day,
     hidden: r.hidden_at !== null,
     mergedInto: r.merged_into ?? undefined,
+    // Имя до склейки — чтобы на экране было видно, откуда взялась запись
+    // с чужим именем, а не приходилось это восстанавливать в голове.
+    nameBeforeMerge: r.merge_undo?.name,
   }));
 }
 
@@ -757,18 +763,72 @@ export async function расклеить(
   }
 
   const sql = db();
-  const строки = await sql<{ name: string }[]>`
-    update manual_people set merged_into = null where id = ${id} returning name
-  `;
-  if (строки.length === 0) return { ok: false, текст: "Человек не найден" };
+  try {
+    const итог = await sql.begin(async (tx) => {
+      const [строка] = await tx<
+        {
+          name: string;
+          merged_into: number | null;
+          merge_undo: { name: string; short: string; hiddenAt: string | null } | null;
+        }[]
+      >`
+        select name, merged_into, merge_undo from manual_people
+         where id = ${id} for update
+      `;
+      if (!строка) return { ok: false, текст: "Человек не найден" };
+      if (строка.merged_into === null) {
+        return { ok: false, текст: `${строка.name}: склейки на этой записи нет` };
+      }
 
-  revalidatePath("/people");
-  return {
-    ok: true,
-    текст:
-      `${строки[0].name}: склейка снята. Имя осталось прежним — если его надо ` +
-      "поменять, сделайте это отдельно, кнопкой «переименовать».",
-  };
+      const вернуть = строка.merge_undo;
+      if (!вернуть) {
+        // Склейка сделана до 20.08.2026, когда прежнее состояние ещё
+        // не запоминали. Указатель снимаем, но имя вернуть неоткуда —
+        // и говорим об этом прямо, а не делаем вид, что вернули всё.
+        await tx`
+          update manual_people set merged_into = null, merge_undo = null
+           where id = ${id}
+        `;
+        return {
+          ok: true,
+          текст:
+            `${строка.name}: склейка снята, но имя вернуть неоткуда — ` +
+            "эту склейку делали до того, как приложение стало запоминать " +
+            "прежнее имя. Поправьте имя кнопкой «переименовать».",
+        };
+      }
+
+      await tx`
+        update manual_people
+           set name = ${вернуть.name},
+               short = ${вернуть.short},
+               hidden_at = ${вернуть.hiddenAt},
+               merged_into = null,
+               merge_undo = null
+         where id = ${id}
+      `;
+
+      const записи = await tx<{ id: string }[]>`
+        update entries set waiter_name = ${вернуть.name}
+         where waiter_id = ${id} returning id
+      `;
+
+      return {
+        ok: true,
+        текст:
+          `Склейка снята. «${строка.name}» снова «${вернуть.name}», ` +
+          `имя возвращено в записях о деньгах: ${записи.length}. ` +
+          (вернуть.hiddenAt
+            ? "Запись, как и была, убрана из списка."
+            : "Запись снова в списке."),
+      };
+    });
+    if (итог.ok) revalidatePath("/people");
+    return итог;
+  } catch (e) {
+    const err = e as { message?: string };
+    return { ok: false, текст: `База не ответила: ${err.message ?? "неизвестно"}` };
+  }
 }
 
 /**
