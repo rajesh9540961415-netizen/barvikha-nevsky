@@ -50,6 +50,17 @@ type Row = {
   gross: string | null;
   commission_rate: string;
   kind: string;
+  /**
+   * Котёл записи: зал, хостес или кальянный бар.
+   *
+   * ⚠️ Читать ОБЯЗАТЕЛЬНО. До 20.08.2026 этой строки здесь не было, и колонка
+   * из базы просто не доезжала — бэк-офис считал зальными ВСЕ записи. Хостес
+   * и бар при этом исчезали из раскладки совсем: в состав зала они не входят,
+   * а по контуру их никто не искал. Хуже того, правка такой записи писала
+   * обратно «зал», и с чаевых, которые не делятся ни с кем, начинали брать
+   * 20 % администратору и долю кассира — молча.
+   */
+  contour: string | null;
   operator_id: number | null;
   operator_name: string;
   created_at: Date;
@@ -80,6 +91,8 @@ function toEntry(r: Row): OfficeEntry {
     gross: r.gross === null ? Number(r.amount) : Number(r.gross),
     commissionRate: Number(r.commission_rate),
     kind: r.kind as OfficeEntry["kind"],
+    // У записей до 18.08.2026 колонки не было — тогда контур был один, зальный.
+    contour: (r.contour ?? "hall") as OfficeEntry["contour"],
     operatorId: r.operator_id,
     operatorName: r.operator_name,
     createdAt: r.created_at.toISOString(),
@@ -363,13 +376,13 @@ export async function correctEvent(input: {
         await tx`
           insert into entries (
             id, business_day, hall_id, hall_title, table_id, table_title,
-            waiter_id, waiter_name, amount, kind, operator_id, operator_name,
+            waiter_id, waiter_name, amount, kind, contour, operator_id, operator_name,
             created_at, split_group, gross, commission_rate,
             corrects, source, manager_id, note
           ) values (
             ${e.id}, ${e.businessDay}, ${e.hallId}, ${e.hallTitle},
             ${e.tableId}, ${e.tableTitle}, ${e.waiterId}, ${e.waiterName},
-            ${e.amount}, ${e.kind}, ${e.operatorId}, ${e.operatorName},
+            ${e.amount}, ${e.kind}, ${e.contour ?? "hall"}, ${e.operatorId}, ${e.operatorName},
             ${e.createdAt}, ${e.splitGroup ?? null}, ${e.gross}, ${e.commissionRate},
             ${e.corrects}, 'office', ${e.managerId}, ${e.note}
           )
@@ -676,13 +689,13 @@ export async function добавитьЗапись(input: {
         await tx`
           insert into entries (
             id, business_day, hall_id, hall_title, table_id, table_title,
-            waiter_id, waiter_name, amount, kind, operator_id, operator_name,
+            waiter_id, waiter_name, amount, kind, contour, operator_id, operator_name,
             created_at, split_group, gross, commission_rate,
             corrects, source, manager_id, note
           ) values (
             ${e.id}, ${e.businessDay}, ${e.hallId}, ${e.hallTitle},
             ${e.tableId}, ${e.tableTitle}, ${e.waiterId}, ${e.waiterName},
-            ${e.amount}, ${e.kind}, ${e.operatorId}, ${e.operatorName},
+            ${e.amount}, ${e.kind}, ${e.contour ?? "hall"}, ${e.operatorId}, ${e.operatorName},
             ${e.createdAt}, ${e.splitGroup ?? null}, ${e.gross}, ${e.commissionRate},
             ${null}, 'office', ${e.managerId}, ${e.note}
           )

@@ -419,6 +419,18 @@ export type PayeeSplit = {
    */
   total: number;
   /**
+   * Сколько оставили гости — до комиссии Сбера.
+   *
+   * ⚠️ Заведено 20.08.2026. Без этого поля «Гости оставили» на экранах
+   * считалось ТОЛЬКО по залу, а стояло рядом с итогом всего вечера:
+   * гость оставил 3 000 ₽, на экране «оставили 1 000 ₽, всего за смену
+   * 2 760 ₽». Сумма, которая не сходится сама с собой, обесценивает
+   * все остальные — их перестают проверять.
+   */
+  gross: number;
+  /** Сколько из этого удержал Сбер. */
+  commission: number;
+  /**
    * Сколько проел за смену — вычет, а не доход.
    *
    * У хостес питание вычитается так же, как у официантов: решение владельца
@@ -450,6 +462,10 @@ export type SideSplit = {
    * на руки после обедов — в `totalNet`.
    */
   total: number;
+  /** Сколько оставили гости по всему контуру — до комиссии. */
+  totalGross: number;
+  /** Сколько из этого удержал Сбер. */
+  totalCommission: number;
   /** Удержано за питание по всему контуру. У кальянного бара всегда ноль. */
   totalStaff: number;
   /** Начислено минус питание. */
@@ -507,6 +523,13 @@ export function splitSide(
     // тогда так и показываем: обнулять значит скрыть долг, как и у официантов.
     const staff = by("staff");
     const total = money(tips + service);
+    // Что оставили гости — до комиссии. Питание сюда не входит: это вычет,
+    // а не деньги гостя, и попав в эту сумму оно выглядело бы комиссией.
+    const gross = money(
+      his
+        .filter((e) => e.kind !== "staff")
+        .reduce((sum, e) => sum + (e.gross ?? e.amount), 0),
+    );
 
     return {
       payeeId,
@@ -518,6 +541,8 @@ export function splitSide(
       service,
       tips,
       total,
+      gross,
+      commission: money(gross - total),
       staff,
       net: money(total - staff),
     };
@@ -537,6 +562,8 @@ export function splitSide(
     totalService: sum((r) => r.service),
     totalTips: sum((r) => r.tips),
     total: sum((r) => r.total),
+    totalGross: sum((r) => r.gross),
+    totalCommission: sum((r) => r.commission),
     totalStaff: sum((r) => r.staff),
     totalNet: sum((r) => r.net),
   };

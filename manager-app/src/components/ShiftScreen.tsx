@@ -66,6 +66,26 @@ export default function ShiftScreen({ data }: { data: DayData }) {
     [live, people],
   );
   const sideTotal = side.hostess.total + side.hookah.total;
+  /**
+   * Сколько гости оставили за ВЕСЬ вечер и сколько забрал Сбер.
+   *
+   * ⚠️ По трём котлам, а не по одному залу. Владелец 20.08.2026: «цифры
+   * не сходятся» — и была права: на экране рядом стояли «гости оставили
+   * 1 000 ₽» и «всего за смену 2 760 ₽», потому что первая считалась
+   * только по залу. Сумма, спорящая сама с собой, обесценивает соседние:
+   * их перестают проверять.
+   */
+  const grossAll =
+    Math.round(
+      (split.totalGross + side.hostess.totalGross + side.hookah.totalGross) * 100,
+    ) / 100;
+  const commissionAll =
+    Math.round(
+      (split.totalCommission +
+        side.hostess.totalCommission +
+        side.hookah.totalCommission) *
+        100,
+    ) / 100;
   const nameOf = (id: number | null) =>
     id === null ? "не указан" : people.find((p) => p.id === id)?.short ?? `№${id}`;
 
@@ -125,10 +145,10 @@ export default function ShiftScreen({ data }: { data: DayData }) {
           />
           <Total
             label="Гости оставили"
-            value={split.totalGross}
+            value={grossAll}
             note={
-              split.totalCommission > 0
-                ? `комиссия Сбера −${money(split.totalCommission)}`
+              commissionAll > 0
+                ? `комиссия Сбера −${money(commissionAll)}`
                 : undefined
             }
           />
@@ -305,12 +325,12 @@ export default function ShiftScreen({ data }: { data: DayData }) {
         {/* Та же сноска, что в списке смен и на экране сотрудника: все суммы
             здесь — то, что дошло, а гость оставил больше. Человек, заходящий
             раз в месяц, иначе решит, что цифра неверная. */}
-        {split.totalCommission > 0 && (
+        {commissionAll > 0 && (
           <p className="border-t border-line px-5 py-3 text-sm text-fg-muted">
             Суммы — то, что <b className="font-medium text-fg">дошло</b>. Сбер
             удерживает 8 % с чаевых на терминале: гости оставили{" "}
-            {money(split.totalGross)}, комиссия — {money(split.totalCommission)}.
-            В списке записей ниже обе суммы стоят рядом.
+            {money(grossAll)}, комиссия — {money(commissionAll)}. В списке
+            записей ниже обе суммы стоят рядом.
           </p>
         )}
       </section>

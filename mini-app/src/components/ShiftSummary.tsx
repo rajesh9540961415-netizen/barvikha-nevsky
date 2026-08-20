@@ -62,6 +62,21 @@ export default function ShiftSummary({
   // и кальянный бар. Если бы здесь она была только зальной, два экрана
   // показывали бы разные итоги за один вечер — и объяснить это было бы нечем.
   const sideTotal = side.hostess.total + side.hookah.total;
+  /**
+   * Сколько гости оставили за ВЕСЬ вечер и сколько из этого забрал Сбер.
+   *
+   * ⚠️ Складываем три котла. Пока считался только зал, на экране рядом
+   * стояли «гости оставили 1 000 ₽» и «всего за смену 2 760 ₽» — две цифры,
+   * которые не сходятся между собой. Владелец 20.08.2026: «цифры
+   * не сходятся». Сумма, которая спорит сама с собой, обесценивает
+   * и соседние: их перестают проверять.
+   */
+  const grossAll =
+    Math.round((s.totalGross + side.hostess.totalGross + side.hookah.totalGross) * 100) / 100;
+  const commissionAll =
+    Math.round(
+      (s.totalCommission + side.hostess.totalCommission + side.hookah.totalCommission) * 100,
+    ) / 100;
   const админов = shift ? [shift.admin, shift.admin2].filter((x) => x !== null).length : 1;
 
   /**
@@ -112,13 +127,20 @@ export default function ShiftSummary({
 
       <div className="px-4 pt-4">
         <div className="rounded-xl bg-surface p-4">
-          <div className="text-xs text-fg-muted">заработано за смену</div>
+          {/* «Заработано залом», а не «за смену»: ниже стоит «всего за смену»,
+              и два разных числа под похожими подписями читаются как ошибка. */}
+          <div className="text-xs text-fg-muted">
+            {sideTotal > 0 ? "заработано залом" : "заработано за смену"}
+          </div>
           <div className="text-3xl tabular-nums">
             {formatMoney(s.totalEarned)}
           </div>
           {/* Комиссия названа прямо: иначе итог меньше введённого, и непонятно,
-              куда делись деньги. */}
-          {s.totalCommission > 0 && (
+              куда делись деньги.
+              Пока котёл один, говорим о нём здесь. Когда их три, сумма гостя
+              относится ко всему вечеру и стоит внизу, рядом с «всего
+              за смену», — иначе она спорит с соседней цифрой. */}
+          {s.totalCommission > 0 && sideTotal === 0 && (
             <div className="mt-0.5 text-xs text-fg-muted">
               гости оставили {formatMoney(s.totalGross)} · комиссия −
               {formatMoney(s.totalCommission)}
@@ -154,6 +176,12 @@ export default function ShiftSummary({
                   {formatMoney(s.totalEarned + sideTotal)}
                 </span>
               </div>
+              {commissionAll > 0 && (
+                <div className="text-xs text-fg-muted">
+                  гости оставили {formatMoney(grossAll)} · комиссия −
+                  {formatMoney(commissionAll)}
+                </div>
+              )}
             </>
           )}
         </div>
