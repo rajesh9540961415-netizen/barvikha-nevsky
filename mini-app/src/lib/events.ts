@@ -47,36 +47,12 @@ export function eventKey(row: Pick<EventRow, "id" | "splitGroup">): string {
   return row.splitGroup ?? row.id;
 }
 
-/**
- * Получатель денег и котёл, в который ложится ЕГО доля.
- *
- * Котёл у каждого свой, а не один на событие. Гость за столом оставляет
- * чаевые и просит поделить их между официантом и кальянным баром: сумма
- * одна, событие одно, а правила у долей разные — зальная делится
- * с администратором и кассиром, барская не делится ни с кем.
- *
- * ⚠️ До 20.08.2026 контур был свойством события целиком. Так было верно,
- * пока событие целиком принадлежало одному котлу; смешанное такой моделью
- * не описывается вовсе.
- */
-export type Payee = { id: number; contour: Contour };
-
 export type ShiftEvent<T extends EventRow = EventRow> = {
   key: string;
   rows: T[];
   kind: Kind;
-  /**
-   * Главный котёл события: зал, если в событии есть хоть один зальный
-   * получатель, иначе котёл стороны.
-   *
-   * Одним значением всё событие больше не описывается — смотрите
-   * `contours` и котёл у каждого получателя в `waiters`. Это поле
-   * оставлено для того, что спрашивает про событие в целом: как его
-   * подписать в истории и какие виды денег предлагать при правке.
-   */
+  /** Чьи деньги: зала, хостес или кальянного бара. */
   contour: Contour;
-  /** Все котлы, задетые событием. У смешанного их два. */
-  contours: Contour[];
   /** Сколько оставил гость — до комиссии, по всему событию. */
   gross: number;
   /** Сколько дошло до официантов — после комиссии. */
@@ -85,8 +61,7 @@ export type ShiftEvent<T extends EventRow = EventRow> = {
   hallTitle: string | null;
   tableId: number | null;
   tableTitle: string | null;
-  /** Кому и в какой котёл. Порядок — как в базе, доли считаются по нему же. */
-  waiters: { id: number; name: string; contour: Contour }[];
+  waiters: { id: number; name: string }[];
   createdAt: string;
   /** Кто внёс в смене. */
   operatorName: string;
@@ -119,18 +94,11 @@ export function buildEvents<T extends EventRow>(rows: T[]): ShiftEvent<T>[] {
   const events: ShiftEvent<T>[] = [];
   for (const [key, group] of byKey) {
     const first = group[0];
-    // Котёл берём у каждой строки свой: в смешанном событии первая строка
-    // зальная, вторая барская, и по одной первой судить обо всём событии
-    // значит записать барские деньги в зал.
-    const contours = [
-      ...new Set(group.map((r) => contourOf(r as unknown as Entry))),
-    ];
     events.push({
       key,
       rows: group,
       kind: first.kind,
-      contour: mainContour(contours),
-      contours,
+      contour: contourOf(first as unknown as Entry),
       // Суммы складываем по строкам: у поделённых чаевых событие — это
       // сумма долей, а не сумма одной из них.
       gross: round(group.reduce((s, r) => s + (r.gross ?? r.amount), 0)),
@@ -139,11 +107,7 @@ export function buildEvents<T extends EventRow>(rows: T[]): ShiftEvent<T>[] {
       hallTitle: first.hallTitle,
       tableId: first.tableId,
       tableTitle: first.tableTitle,
-      waiters: group.map((r) => ({
-        id: r.waiterId,
-        name: r.waiterName,
-        contour: contourOf(r as unknown as Entry),
-      })),
+      waiters: group.map((r) => ({ id: r.waiterId, name: r.waiterName })),
       createdAt: first.createdAt,
       operatorName: first.operatorName,
       deletedAt: first.deletedAt ?? null,
@@ -173,85 +137,49 @@ export function buildEvents<T extends EventRow>(rows: T[]): ShiftEvent<T>[] {
 /** Что можно поменять в событии. */
 export type Draft = {
   kind: Kind;
+  /**
+   * Котёл. Правка его не меняет — он переезжает из исходной записи как есть.
+   *
+   * Иначе поправленные чаевые хостес стали бы зальными и начали делиться
+   * с администратором и кассиром: на экране правки не изменилось бы ничего,
+   * а деньги у людей — изменились бы.
+   */
+  contour: Contour;
   /** Сумма, которую оставил гость — до комиссии. Её и вводят. */
   gross: number;
   hallId: number | null;
   hallTitle: string | null;
   tableId: number | null;
   tableTitle: string | null;
-  /**
-   * Кому и в какой котёл. Больше одного — сумма делится поровну.
-   *
-   * Котёл у каждого свой и правкой не меняется: он переезжает из исходной
-   * записи как есть. Иначе поправленные чаевые хостес стали бы зальными
-   * и начали делиться с администратором и кассиром — на экране правки
-   * не изменилось бы ничего, а деньги у людей изменились бы.
-   */
-  payees: Payee[];
+  /** Кому. Больше одного — чаевые делятся поровну. */
+  waiterIds: number[];
 };
 
 export function draftOf(event: ShiftEvent): Draft {
   return {
     kind: event.kind,
+    contour: event.contour,
     gross: event.gross,
     hallId: event.hallId,
     hallTitle: event.hallTitle,
     tableId: event.tableId,
     tableTitle: event.tableTitle,
-    payees: event.waiters.map((w) => ({ id: w.id, contour: w.contour })),
+    waiterIds: event.waiters.map((w) => w.id),
   };
 }
 
-/** Котлы, задетые событием: у смешанного их два. */
-export function contoursOf(payees: Payee[]): Contour[] {
-  return [...new Set(payees.map((p) => p.contour))];
-}
-
 /**
- * Главный котёл: зал, если в событии есть хоть один зальный получатель.
+ * У QR и питания стола нет: гость платит по чеку, а не за столом.
  *
- * Зал главнее не по важности, а потому, что он задаёт правила события:
- * зальные деньги приходят за столом и делятся с администратором и кассиром.
- * Событие без единого зального получателя целиком принадлежит своей стороне.
+ * У хостес и кальянного бара стола нет ни при каком виде денег: хостес
+ * благодарят на выходе, а кальянному бару за стол зала не платят.
  */
-export function mainContour(contours: Contour[]): Contour {
-  if (contours.length === 0 || contours.includes("hall")) return "hall";
-  return contours[0];
-}
-
-/** Бывает ли у такого вида денег стол. У QR и питания — нет. */
-export function canHaveTable(kind: Kind): boolean {
+export function needsTable(kind: Kind, contour: Contour = "hall"): boolean {
+  if (contour !== "hall") return false;
   return kind === "cash" || kind === "terminal" || kind === "service";
 }
 
-/**
- * Обязателен ли стол.
- *
- * Зальные деньги приходят за столом, и без стола запись зала неполна.
- * У хостес и кальянного бара стол не обязателен: хостес благодарят
- * на выходе, а бару платят мимо зала.
- *
- * ⚠️ «Не обязателен» — не то же самое, что «не бывает». С 20.08.2026 гость
- * может попросить поделить чаевые со стола между официантом и баром,
- * и у барской доли стол есть. Стирать его нельзя: он говорит, откуда деньги.
- */
-export function needsTable(
-  kind: Kind,
-  contours: Contour | Contour[] = "hall",
-): boolean {
-  const список = Array.isArray(contours) ? contours : [contours];
-  if (!список.includes("hall")) return false;
-  return canHaveTable(kind);
-}
-
-/**
- * Чем платят хостес и кальянному бару, когда платят им напрямую.
- *
- * Своего терминала у них нет — это решение владельца 18.08.2026, и в этой
- * части оно в силе. Терминал у них появляется только вместе со столом:
- * гость платит на зальном терминале и просит поделить (владелец 20.08.2026).
- * Отдельного экрана для этого нет и не нужно — такое вводится за столом.
- */
+/** Чем платят хостес и кальянному бару. Терминала у них нет. */
 export const SIDE_KINDS: Kind[] = ["cash", "qr", "service"];
 
 /**
@@ -268,38 +196,19 @@ export function draftError(draft: Draft): string | null {
   if (Math.round(draft.gross * 100) !== draft.gross * 100) {
     return "Сумма — не больше двух знаков после запятой";
   }
-  if (draft.payees.length === 0) return "Выберите хотя бы одного получателя";
-  const ids = draft.payees.map((p) => p.id);
-  if (new Set(ids).size !== ids.length) {
-    return "Один и тот же получатель выбран дважды";
+  if (draft.waiterIds.length === 0) return "Выберите хотя бы одного официанта";
+  if (new Set(draft.waiterIds).size !== draft.waiterIds.length) {
+    return "Один и тот же официант выбран дважды";
   }
-  if (draft.kind === "staff" && draft.payees.length > 1) {
+  if (draft.kind === "staff" && draft.waiterIds.length > 1) {
     return "Питание делить между людьми нельзя: это личный вычет";
   }
-  const контуры = contoursOf(draft.payees);
-  if (draft.kind === "staff" && контуры.includes("hookah")) {
-    // Кальянщики у другого юрлица, заведение их не кормит: вычитать
-    // из их чаевых нечего. Решение владельца 18.08.2026.
-    return "Питание кальянному бару не вычитается";
-  }
-  if (needsTable(draft.kind, контуры) && draft.tableId === null) {
+  if (needsTable(draft.kind, draft.contour) && draft.tableId === null) {
     return "Выберите стол";
   }
-  if (
-    draft.kind === "terminal" &&
-    !контуры.includes("hall") &&
-    draft.tableId === null
-  ) {
-    // Своего терминала у хостес и бара нет — решение владельца 18.08.2026,
-    // и в этой части оно в силе. Терминал бывает у них только вместе
-    // со столом: гость платит на зальном терминале и просит поделить.
-    return "Терминал бывает только за столом — своего у хостес и бара нет";
-  }
-  if (draft.kind === "qr" && контуры.length > 1) {
-    // Поступление по QR приходит уже адресованным котлу: Сбер называет
-    // «Официант 5» или «Хостес». Разнести одно поступление сразу в два
-    // котла значит переложить деньги из чужого котла в свой.
-    return "Поступление по QR принадлежит одному котлу — разнести его в два нельзя";
+  if (draft.contour !== "hall" && !SIDE_KINDS.includes(draft.kind)) {
+    // Терминала у хостес и бара нет, питание — вычет у сотрудника зала.
+    return "Такой вид денег у хостес и кальянного бара не бывает";
   }
   return null;
 }
@@ -355,20 +264,14 @@ export type RowTemplate = {
  * показывало бы копейки из ниоткуда.
  */
 export function rowsFromDraft(draft: Draft, t: RowTemplate): DraftRow[] {
-  const split = draft.payees.length > 1;
+  const split = draft.waiterIds.length > 1;
   const group = split ? crypto.randomUUID() : null;
-  // Комиссия снимается со ВСЕЙ суммы гостя сразу, и делится уже дошедшее.
-  // Так доли складываются ровно в то, что дошло, — в том числе когда часть
-  // суммы уходит в другой котёл: Сберу всё равно, между кем её делят.
   const net = netAmount(draft.gross, draft.kind);
-  const parts = shares(net, draft.payees.length);
-  const grossParts = shares(draft.gross, draft.payees.length);
-  // Стол оставляем по виду денег, а не по котлу: у барской доли, которую
-  // гость оставил за столом, стол есть, и стирать его нельзя — он говорит,
-  // откуда деньги. Обязателен он только залу, см. `needsTable`.
-  const table = canHaveTable(draft.kind);
+  const parts = shares(net, draft.waiterIds.length);
+  const grossParts = shares(draft.gross, draft.waiterIds.length);
+  const table = needsTable(draft.kind, draft.contour);
 
-  return draft.payees.map(({ id: waiterId, contour }, i) => ({
+  return draft.waiterIds.map((waiterId, i) => ({
     id: crypto.randomUUID(),
     businessDay: t.businessDay,
     hallId: table ? draft.hallId : null,
@@ -381,7 +284,7 @@ export function rowsFromDraft(draft: Draft, t: RowTemplate): DraftRow[] {
     gross: grossParts[i],
     commissionRate: COMMISSION_RATE[draft.kind],
     kind: draft.kind,
-    contour,
+    contour: draft.contour,
     operatorId: t.operatorId,
     operatorName: t.operatorName,
     createdAt: t.createdAt,

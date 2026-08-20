@@ -385,51 +385,15 @@ export type PayeeSplit = {
   payeeId: number;
   payeeName: string;
   cash: number;
-  /**
-   * Чаевые с терминала — сколько ДОШЛО, после комиссии Сбера.
-   *
-   * ⚠️ Появилось 20.08.2026 и переоткрывает решение от 18.08 «терминала
-   * у хостес и бара не бывает». Оно было верным ровно для тех чаевых,
-   * которые оставляют лично: у бара своего терминала нет.
-   *
-   * Но гость за столом оставляет чаевые на зальном терминале и просит
-   * поделить их с кальянщиком. Деньги при этом приходят в зальный котёл
-   * Сбера, комиссию 8 % он снимает со всей суммы, а долю бара передают
-   * из рук в руки. Записать её надо всё равно — иначе она не попадёт
-   * никуда: раньше этого поля не было, и такая доля молча исчезала бы
-   * из итога бара и из отчёта.
-   *
-   * Решение владельца 20.08.2026.
-   */
-  terminal: number;
-  /**
-   * Сколько гость оставил на терминале ДО комиссии.
-   *
-   * Отдельно от `terminal` по той же причине, что у официантов: кассир
-   * сверяет вечер с лентой терминала, а там пробита полная сумма.
-   */
-  terminalGross: number;
   qr: number;
   service: number;
-  /** Чаевые без сервисного сбора — наличные, терминал и QR. */
+  /** Чаевые без сервисного сбора — наличные и QR. */
   tips: number;
   /**
    * Всё, что человек получил за смену. Начислено ему столько же:
    * отчислений здесь нет ни у кого.
    */
   total: number;
-  /**
-   * Сколько оставили гости — до комиссии Сбера.
-   *
-   * ⚠️ Заведено 20.08.2026. Без этого поля «Гости оставили» на экранах
-   * считалось ТОЛЬКО по залу, а стояло рядом с итогом всего вечера:
-   * гость оставил 3 000 ₽, на экране «оставили 1 000 ₽, всего за смену
-   * 2 760 ₽». Сумма, которая не сходится сама с собой, обесценивает
-   * все остальные — их перестают проверять.
-   */
-  gross: number;
-  /** Сколько из этого удержал Сбер. */
-  commission: number;
   /**
    * Сколько проел за смену — вычет, а не доход.
    *
@@ -446,10 +410,6 @@ export type PayeeSplit = {
 export type SideSplit = {
   rows: PayeeSplit[];
   totalCash: number;
-  /** Дошло с терминала по всему контуру — см. `PayeeSplit.terminal`. */
-  totalTerminal: number;
-  /** Сколько оставили на терминале до комиссии — для сверки с лентой. */
-  totalTerminalGross: number;
   totalQr: number;
   totalService: number;
   totalTips: number;
@@ -462,10 +422,6 @@ export type SideSplit = {
    * на руки после обедов — в `totalNet`.
    */
   total: number;
-  /** Сколько оставили гости по всему контуру — до комиссии. */
-  totalGross: number;
-  /** Сколько из этого удержал Сбер. */
-  totalCommission: number;
   /** Удержано за питание по всему контуру. У кальянного бара всегда ноль. */
   totalStaff: number;
   /** Начислено минус питание. */
@@ -508,41 +464,22 @@ export function splitSide(
       );
 
     const cash = by("cash");
-    const terminal = by("terminal");
-    // Полная сумма с терминала — до того, как Сбер удержал свои 8 %.
-    // У записей без поля `gross` дошло ровно то, что оставили.
-    const terminalGross = money(
-      his
-        .filter((e) => e.kind === "terminal")
-        .reduce((sum, e) => sum + (e.gross ?? e.amount), 0),
-    );
     const qr = by("qr");
     const service = by("service");
-    const tips = money(cash + terminal + qr);
+    const tips = money(cash + qr);
     // Питание вычитается из того, что человек получил. Может увести в минус —
     // тогда так и показываем: обнулять значит скрыть долг, как и у официантов.
     const staff = by("staff");
     const total = money(tips + service);
-    // Что оставили гости — до комиссии. Питание сюда не входит: это вычет,
-    // а не деньги гостя, и попав в эту сумму оно выглядело бы комиссией.
-    const gross = money(
-      his
-        .filter((e) => e.kind !== "staff")
-        .reduce((sum, e) => sum + (e.gross ?? e.amount), 0),
-    );
 
     return {
       payeeId,
       payeeName,
       cash,
-      terminal,
-      terminalGross,
       qr,
       service,
       tips,
       total,
-      gross,
-      commission: money(gross - total),
       staff,
       net: money(total - staff),
     };
@@ -556,14 +493,10 @@ export function splitSide(
   return {
     rows,
     totalCash: sum((r) => r.cash),
-    totalTerminal: sum((r) => r.terminal),
-    totalTerminalGross: sum((r) => r.terminalGross),
     totalQr: sum((r) => r.qr),
     totalService: sum((r) => r.service),
     totalTips: sum((r) => r.tips),
     total: sum((r) => r.total),
-    totalGross: sum((r) => r.gross),
-    totalCommission: sum((r) => r.commission),
     totalStaff: sum((r) => r.staff),
     totalNet: sum((r) => r.net),
   };

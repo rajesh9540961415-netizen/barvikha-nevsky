@@ -7,20 +7,18 @@ import { correctEvent } from "@/lib/db/corrections";
 import { clock, money, twinHint } from "@/lib/format";
 import {
   KIND_TITLE,
-  contoursOf,
   draftError,
   draftOf,
   needsTable,
   rowsFromDraft,
   splitOffice,
   withReplacement,
-  контурНового,
   type Draft,
   type OfficeEntry,
   type ShiftEvent,
 } from "@/lib/office";
 import { netAmount } from "@/lib/split";
-import type { Employee, Kind, Scheme, Shift } from "@/lib/types";
+import type { Employee, Kind, Scheme } from "@/lib/types";
 import Compare from "./Compare";
 
 /**
@@ -45,15 +43,10 @@ type Props = {
   live: OfficeEntry[];
   crew: Employee[];
   people: Employee[];
-  /**
-   * Состав ТОЙ смены — нужен, чтобы понять, в какой котёл кладутся деньги
-   * человека, которого добавляют в событие. См. `контурНового`.
-   */
-  shift: Shift;
   onClose: () => void;
 };
 
-export default function EventEditor({ day, event, live, crew, people, shift, onClose }: Props) {
+export default function EventEditor({ day, event, live, crew, people, onClose }: Props) {
   const router = useRouter();
   const [draft, setDraft] = useState<Draft>(() => draftOf(event));
   const [note, setNote] = useState("");
@@ -85,12 +78,7 @@ export default function EventEditor({ day, event, live, crew, people, shift, onC
   const crewIds = new Set(crew.map((p) => p.id));
   // Официант не в составе смены — деньги за ним просто не попадут в раскладку:
   // она перебирает состав, а не записи. Молча потерять их нельзя.
-  //
-  // Спрашиваем только про зальных: у хостес и кальянного бара свой состав
-  // и свой расчёт, и в зальной раскладке их быть не должно вовсе.
-  const outside = draft.payees
-    .filter((p) => p.contour === "hall" && !crewIds.has(p.id))
-    .map((p) => p.id);
+  const outside = draft.waiterIds.filter((id) => !crewIds.has(id));
   const problem =
     draftError(draft) ??
     (outside.length > 0
@@ -105,26 +93,25 @@ export default function EventEditor({ day, event, live, crew, people, shift, onC
       ...d,
       kind,
       // У QR и питания стола нет: гость платит по чеку, а не за столом.
-      ...(needsTable(kind, contoursOf(d.payees))
+      ...(needsTable(kind)
         ? {}
         : { hallId: null, hallTitle: null, tableId: null, tableTitle: null }),
       // Питание — личный вычет, делить его между людьми нельзя.
-      ...(kind === "staff" && d.payees.length > 1
-        ? { payees: d.payees.slice(0, 1) }
+      ...(kind === "staff" && d.waiterIds.length > 1
+        ? { waiterIds: d.waiterIds.slice(0, 1) }
         : {}),
     }));
   }
 
   function toggleWaiter(id: number) {
-    setDraft((d) => {
-      const был = d.payees.find((p) => p.id === id);
-      if (был) return { ...d, payees: d.payees.filter((p) => p.id !== id) };
-      // Котёл нового получателя берётся из состава той смены: своего у него
-      // ещё нет. У тех, кто в событии уже есть, котёл переезжает из самой
-      // записи и правкой не меняется.
-      const свежий = { id, contour: контурНового(id, shift) };
-      return { ...d, payees: d.kind === "staff" ? [свежий] : [...d.payees, свежий] };
-    });
+    setDraft((d) => ({
+      ...d,
+      waiterIds: d.waiterIds.includes(id)
+        ? d.waiterIds.filter((x) => x !== id)
+        : d.kind === "staff"
+          ? [id]
+          : [...d.waiterIds, id],
+    }));
   }
 
   async function save() {
@@ -190,7 +177,7 @@ export default function EventEditor({ day, event, live, crew, people, shift, onC
           )}
         </Field>
 
-        {needsTable(draft.kind, contoursOf(draft.payees)) && (
+        {needsTable(draft.kind) && (
           <Field label="Стол">
             <div className="flex flex-wrap gap-2">
               <select
@@ -243,8 +230,8 @@ export default function EventEditor({ day, event, live, crew, people, shift, onC
           label={
             draft.kind === "staff"
               ? "Кому вычесть"
-              : draft.payees.length > 1
-                ? `Кому — поровну на ${draft.payees.length}`
+              : draft.waiterIds.length > 1
+                ? `Кому — поровну на ${draft.waiterIds.length}`
                 : "Кому"
           }
         >
@@ -252,7 +239,7 @@ export default function EventEditor({ day, event, live, crew, people, shift, onC
             {crew.map((p) => (
               <Chip
                 key={p.id}
-                on={draft.payees.some((x) => x.id === p.id)}
+                on={draft.waiterIds.includes(p.id)}
                 onClick={() => toggleWaiter(p.id)}
               >
                 {p.short}
@@ -273,9 +260,7 @@ export default function EventEditor({ day, event, live, crew, people, shift, onC
           >
             <option value="">+ кто-то ещё</option>
             {people
-              .filter(
-                (p) => !crewIds.has(p.id) && !draft.payees.some((x) => x.id === p.id),
-              )
+              .filter((p) => !crewIds.has(p.id) && !draft.waiterIds.includes(p.id))
               .map((p) => (
                 <option key={p.id} value={p.id}>
                   {`${p.name}${twinHint(p, people)}`}

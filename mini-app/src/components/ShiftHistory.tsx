@@ -3,7 +3,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { formatBusinessDay, formatMoney } from "@/lib/businessDay";
 import { buildEvents } from "@/lib/events";
-import { HOOKAH_POT_ID } from "@/lib/split";
 import { historyByDay } from "@/lib/storage";
 import type { Entry, Kind } from "@/lib/types";
 
@@ -302,40 +301,15 @@ export default function ShiftHistory({
                         разные: чаевые по QR (гость платил по чеку), хостес
                         и кальянный бар. Написать всем «по QR» значит
                         назвать деньги чужим именем в единственном месте,
-                        где смена себя проверяет.
-
-                        Стол спрашиваем ПЕРВЫМ: у чаевых, которые гость
-                        оставил за столом и попросил поделить с баром, стол
-                        есть — и он говорит, откуда деньги, точнее названия
-                        котла. */}
-                    {head.tableTitle
-                      ? `${head.hallTitle} · ${head.tableTitle}`
-                      : ev.contour === "hookah"
-                        ? "кальянный бар"
-                        : ev.contour === "hostess"
-                          ? "хостес"
+                        где смена себя проверяет. */}
+                    {ev.contour === "hookah"
+                      ? "кальянный бар"
+                      : ev.contour === "hostess"
+                        ? "хостес"
+                        : head.tableTitle
+                          ? `${head.hallTitle} · ${head.tableTitle}`
                           : "по QR"}{" "}
-                    ·{" "}
-                    {ev.waiters
-                      .map(
-                        (w) =>
-                          // У получателя со стороны подписываем котёл прямо
-                          // в строке: «Аня + Дима» ничего не говорит о том,
-                          // что половина ушла в бар, а деньги там считаются
-                          // по другим правилам.
-                          w.name +
-                          // Общий котёл бара не подписываем: его имя
-                          // «Весь бар» и так всё говорит, а «Весь бар (бар)»
-                          // выглядит опечаткой.
-                          (w.id === HOOKAH_POT_ID
-                            ? ""
-                            : w.contour === "hookah"
-                              ? " (бар)"
-                              : w.contour === "hostess"
-                                ? " (хостес)"
-                                : ""),
-                      )
-                      .join(" + ")}
+                    · {ev.waiters.map((w) => w.name).join(" + ")}
                   </span>
                   <span
                     className={`shrink-0 tabular-nums ${

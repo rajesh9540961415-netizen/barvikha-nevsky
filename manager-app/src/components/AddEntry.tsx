@@ -7,17 +7,15 @@ import { добавитьЗапись } from "@/lib/db/corrections";
 import { money, twinHint } from "@/lib/format";
 import {
   KIND_TITLE,
-  contoursOf,
   draftError,
   needsTable,
   rowsFromDraft,
   splitOffice,
-  контурНового,
   type Draft,
   type OfficeEntry,
 } from "@/lib/office";
 import { netAmount } from "@/lib/split";
-import type { Employee, Kind, Shift } from "@/lib/types";
+import type { Employee, Kind } from "@/lib/types";
 import Compare from "./Compare";
 import { Chip, Field, Overlay } from "./EventEditor";
 
@@ -46,28 +44,23 @@ const KINDS: Kind[] = ["cash", "terminal", "qr", "service", "staff"];
 
 const ПУСТОЙ: Draft = {
   kind: "cash",
+  contour: "hall",
   gross: 0,
   hallId: null,
   hallTitle: null,
   tableId: null,
   tableTitle: null,
-  payees: [],
+  waiterIds: [],
 };
 
 type Props = {
   day: string;
   live: OfficeEntry[];
   crew: Employee[];
-  /**
-   * Состав ТОЙ смены — по нему определяется котёл получателя. См.
-   * `контурНового`: у записи, которой не было вовсе, своего котла взяться
-   * неоткуда, и единственный честный источник это состав смены.
-   */
-  shift: Shift;
   onClose: () => void;
 };
 
-export default function AddEntry({ day, live, crew, shift, onClose }: Props) {
+export default function AddEntry({ day, live, crew, onClose }: Props) {
   const router = useRouter();
   const [draft, setDraft] = useState<Draft>(ПУСТОЙ);
   const [время, setВремя] = useState("");
@@ -83,7 +76,7 @@ export default function AddEntry({ day, live, crew, shift, onClose }: Props) {
 
   const свежие = useMemo(
     () =>
-      draft.payees.length === 0 || !draft.gross
+      draft.waiterIds.length === 0 || !draft.gross
         ? []
         : rowsFromDraft(draft, {
             businessDay: day,
@@ -123,11 +116,11 @@ export default function AddEntry({ day, live, crew, shift, onClose }: Props) {
     setDraft((d) => ({
       ...d,
       kind,
-      ...(needsTable(kind, contoursOf(d.payees))
+      ...(needsTable(kind)
         ? {}
         : { hallId: null, hallTitle: null, tableId: null, tableTitle: null }),
-      ...(kind === "staff" && d.payees.length > 1
-        ? { payees: d.payees.slice(0, 1) }
+      ...(kind === "staff" && d.waiterIds.length > 1
+        ? { waiterIds: d.waiterIds.slice(0, 1) }
         : {}),
     }));
   }
@@ -135,11 +128,11 @@ export default function AddEntry({ day, live, crew, shift, onClose }: Props) {
   function toggleWaiter(id: number) {
     setDraft((d) => ({
       ...d,
-      payees: d.payees.some((p) => p.id === id)
-        ? d.payees.filter((p) => p.id !== id)
+      waiterIds: d.waiterIds.includes(id)
+        ? d.waiterIds.filter((x) => x !== id)
         : d.kind === "staff"
-          ? [{ id, contour: контурНового(id, shift) }]
-          : [...d.payees, { id, contour: контурНового(id, shift) }],
+          ? [id]
+          : [...d.waiterIds, id],
     }));
   }
 
@@ -193,7 +186,7 @@ export default function AddEntry({ day, live, crew, shift, onClose }: Props) {
           )}
         </Field>
 
-        {needsTable(draft.kind, contoursOf(draft.payees)) && (
+        {needsTable(draft.kind) && (
           <Field label="Стол">
             <div className="flex flex-wrap gap-2">
               <select
@@ -245,8 +238,8 @@ export default function AddEntry({ day, live, crew, shift, onClose }: Props) {
           label={
             draft.kind === "staff"
               ? "Кому вычесть"
-              : draft.payees.length > 1
-                ? `Кому — поровну на ${draft.payees.length}`
+              : draft.waiterIds.length > 1
+                ? `Кому — поровну на ${draft.waiterIds.length}`
                 : "Кому"
           }
         >
@@ -254,7 +247,7 @@ export default function AddEntry({ day, live, crew, shift, onClose }: Props) {
             {crew.map((p) => (
               <Chip
                 key={p.id}
-                on={draft.payees.some((x) => x.id === p.id)}
+                on={draft.waiterIds.includes(p.id)}
                 onClick={() => toggleWaiter(p.id)}
               >
                 {p.short}
