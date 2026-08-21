@@ -1,9 +1,11 @@
 "use client";
 
 import { useState } from "react";
+import type { PickedPayee } from "./AmountPad";
+import SidePots from "./SidePots";
 import { formatBusinessDay, formatMoney } from "@/lib/businessDay";
 import { shares } from "@/lib/split";
-import type { Employee, QrTip } from "@/lib/types";
+import type { Contour, Employee, QrTip } from "@/lib/types";
 
 /**
  * Распределение поступления по персональному QR.
@@ -15,6 +17,19 @@ import type { Employee, QrTip } from "@/lib/types";
  * Сбер называет не человека, а котёл — «Официант 5». Кто именно обслуживал
  * гостя, не знает никто, поэтому получателей выбирает кассир из состава
  * смены, а сумма делится между ними поровну.
+ *
+ * ⚠️ Получатели бывают из разных котлов — как и за столом. До 21.08.2026
+ * это было запрещено: считалось, что Сбер прислал поступление уже
+ * адресованным котлу, и делить его между котлами значит переложить деньги
+ * из чужого котла в свой. Владелец 21.08.2026 запрет сняла, и вот почему
+ * он не держался: **номер котла за человеком не закреплён** — проверено
+ * 20.08.2026, «Официант 3» 12-го был Яной, 13-го Пархоменко, 16-го Алиной.
+ * Раз номер ничего не говорит о том, кто обслуживал, он тем более ничего
+ * не говорит о том, кому гость хотел оставить.
+ *
+ * 💡 Зальная доля отдаёт 20 % администратору и долю кассира, барская
+ * и хостес — ничего. Это следствие котла у каждой строки, никаких
+ * отдельных правил для QR здесь нет.
  */
 
 type Props = {
@@ -27,10 +42,16 @@ type Props = {
    * кто работал, когда гость платил.
    */
   crew: Employee[];
+  /** Хостес того же вечера. Пусто — значит её не отметили в составе. */
+  hostess: Employee[];
+  /** Кальянщики смены и общий котёл бара. Котёл есть всегда. */
+  hookah: Employee[];
   /** Текущий бизнес-день — чтобы отличить сегодняшнее поступление от забытого. */
   today: string;
+  /** Открыть состав смены — если нужного человека в списке нет. */
+  onCrew: () => void;
   onCancel: () => void;
-  onConfirm: (waiters: Employee[]) => Promise<void>;
+  onConfirm: (payees: PickedPayee[]) => Promise<void>;
 };
 
 /** «01:26» — время поступления, чтобы соотнести его с вечером. */
@@ -42,21 +63,46 @@ function clock(iso: string): string {
 export default function QrTipScreen({
   tip,
   crew,
+  hostess,
+  hookah,
   today,
+  onCrew,
   onCancel,
   onConfirm,
 }: Props) {
   const stale = tip.businessDay !== today;
   const [ids, setIds] = useState<number[]>([]);
+  /** Кто выбран из хостес и кальянного бара — по порядку нажатий. */
+  const [side, setSide] = useState<{ id: number; contour: Contour }[]>([]);
+  /** Какой котёл раскрыт. Раскрытым остаётся и тот, из кого уже выбрали. */
+  const [openSide, setOpenSide] = useState<Contour | null>(null);
   const [saving, setSaving] = useState(false);
   const [failed, setFailed] = useState<string | null>(null);
 
-  const waiters = ids
-    .map((id) => crew.find((w) => w.id === id))
-    .filter((w): w is Employee => w !== undefined);
-  const parts = shares(tip.amount, waiters.length);
-  const ready = waiters.length > 0 && !saving;
+  // Порядок тот же, что и в долях: кто выбран первым, тот первый в раскладке,
+  // ему же достаётся лишняя копейка от нечётной суммы. Зал идёт первым,
+  // сторона за ним — так же они лягут в базу.
+  const payees: PickedPayee[] = [
+    ...ids.map((id) => ({
+      person: crew.find((w) => w.id === id),
+      contour: "hall" as Contour,
+    })),
+    ...side.map(({ id, contour }) => ({
+      person: (contour === "hookah" ? hookah : hostess).find((p) => p.id === id),
+      contour,
+    })),
+  ].filter((p): p is PickedPayee => p.person !== undefined);
+  const parts = shares(tip.amount, payees.length);
+  const ready = payees.length > 0 && !saving;
   const allPicked = crew.length > 0 && ids.length === crew.length;
+  /**
+   * Есть ли получатель со стороны.
+   *
+   * От этого зависит подпись под кнопкой: у зальной доли будут вычтены
+   * 20 % администратору и доля кассира, у барской и хостес — ничего.
+   * Кассир должен видеть это до нажатия, а не узнавать из итогов.
+   */
+  const mixed = side.length > 0;
 
   function toggle(id: number) {
     setFailed(null);
@@ -65,12 +111,22 @@ export default function QrTipScreen({
     );
   }
 
+  /** Отмечает получателя из хостес или кальянного бара — всегда добавлением. */
+  function pickSide(id: number, contour: Contour) {
+    setFailed(null);
+    setSide((current) =>
+      current.some((p) => p.id === id)
+        ? current.filter((p) => p.id !== id)
+        : [...current, { id, contour }],
+    );
+  }
+
   async function confirm() {
     if (!ready) return;
     setSaving(true);
     setFailed(null);
     try {
-      await onConfirm(waiters);
+      await onConfirm(payees);
       // При успехе экран закрывается сверху.
     } catch (error) {
       // Второй кассир мог разнести это поступление секундой раньше —
@@ -127,11 +183,11 @@ export default function QrTipScreen({
       <div className="px-4 pb-3">
         <div className="mb-1.5 flex items-baseline justify-between gap-2">
           <span className="text-xs text-fg-muted">
-            {waiters.length === 0
+            {payees.length === 0
               ? "кому раздать"
-              : waiters.length === 1
+              : payees.length === 1
                 ? "получатель"
-                : `делим поровну на ${waiters.length}`}
+                : `делим поровну на ${payees.length}`}
           </span>
           {crew.length > 1 && (
             <button
@@ -167,10 +223,25 @@ export default function QrTipScreen({
             );
           })}
         </div>
-        {waiters.length > 1 && (
+        {/* Хостес и кальянный бар — тот же кусок, что и на экране суммы
+            за столом: гость по QR тоже платит одной суммой за всех. */}
+        <SidePots
+          hostess={hostess}
+          hookah={hookah}
+          side={side}
+          open={openSide}
+          onOpen={(c) => {
+            setFailed(null);
+            setOpenSide(c);
+          }}
+          onPick={pickSide}
+          onCrew={onCrew}
+        />
+
+        {payees.length > 1 && (
           <div className="mt-2 text-xs text-fg-muted">
-            {waiters
-              .map((w, i) => `${w.short} — ${formatMoney(parts[i])}`)
+            {payees
+              .map((p, i) => `${p.person.short} — ${formatMoney(parts[i])}`)
               .join(" · ")}
           </div>
         )}
@@ -184,7 +255,9 @@ export default function QrTipScreen({
             ? "сохраняю…"
             : failed
               ? failed
-              : "войдут в заработок официанта наравне с остальными чаевыми"}
+              : mixed
+                ? "доля бара и хостес ни с кем не делится — ни администратору, ни кассиру"
+                : "войдут в заработок официанта наравне с остальными чаевыми"}
         </div>
         <button
           disabled={!ready}

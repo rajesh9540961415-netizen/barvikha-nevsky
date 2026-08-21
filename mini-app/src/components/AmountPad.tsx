@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import SidePots from "./SidePots";
 import { formatMoney } from "@/lib/businessDay";
 import { COMMISSION_RATE, netAmount, shares } from "@/lib/split";
 import type { Contour, Employee, Hall, Kind, Table } from "@/lib/types";
@@ -197,22 +198,6 @@ export default function AmountPad({
     );
   }
 
-  /**
-   * Раскрывает котёл стороны.
-   *
-   * Когда выбирать не из кого — не тупик, а повод сказать об этом там же,
-   * где человек понадобился: хостес просто не отметили в составе смены.
-   * У бара так не бывает — «Весь бар» есть всегда.
-   */
-  function toggleSide(contour: Contour) {
-    setFailed(false);
-    if (contour === "hostess" && hostess.length === 0) {
-      onCrew();
-      return;
-    }
-    setOpenSide((current) => (current === contour ? null : contour));
-  }
-
   function toggleSplitting() {
     setFailed(false);
     if (splitting) {
@@ -313,60 +298,20 @@ export default function AmountPad({
             );
           })}
         </div>
-        {/* Хостес и кальянный бар. Их деньги живут в своих котлах и ни с кем
-            не делятся, поэтому и кнопки стоят отдельно от зала: перепутать
-            их значит отдать деньги другим людям, а по цифрам это потом
-            не отличить. */}
-        <div className="mt-2 flex gap-2">
-          {(["hookah", "hostess"] as const).map((c) => {
-            const chosen = side.filter((p) => p.contour === c).length;
-            return (
-              <button
-                key={c}
-                onClick={() => toggleSide(c)}
-                className={`flex-1 rounded-lg border px-2.5 py-2 text-xs ${
-                  chosen > 0
-                    ? "border-sand bg-sand/10 text-fg"
-                    : "border-line bg-surface text-fg-muted active:bg-surface-2"
-                }`}
-              >
-                {c === "hookah" ? "Кальянный бар" : "Хостес"}
-                {chosen > 0 && (
-                  <span className="ml-1.5 tabular-nums">{chosen}</span>
-                )}
-              </button>
-            );
-          })}
-        </div>
-
-        {/* Список котла: раскрыт, пока из него выбирают, и остаётся раскрытым,
-            если кто-то уже выбран — спрятанный выбор хуже отсутствия выбора. */}
-        {(["hookah", "hostess"] as const).map((c) => {
-          const people = c === "hookah" ? hookah : hostess;
-          const open =
-            openSide === c || side.some((p) => p.contour === c);
-          if (!open || people.length === 0) return null;
-          return (
-            <div key={c} className="mt-2 flex flex-wrap gap-2">
-              {people.map((p) => {
-                const on = side.some((x) => x.id === p.id);
-                return (
-                  <button
-                    key={p.id}
-                    onClick={() => pickSide(p.id, c)}
-                    className={`rounded-lg border px-3 py-2 text-sm ${
-                      on
-                        ? "border-sand bg-sand/10 text-fg"
-                        : "border-line bg-surface text-fg-muted active:bg-surface-2"
-                    }`}
-                  >
-                    {p.short}
-                  </button>
-                );
-              })}
-            </div>
-          );
-        })}
+        {/* Хостес и кальянный бар — общий кусок с экраном разнесения QR:
+            вопрос «кому со стороны» у обоих экранов один и тот же. */}
+        <SidePots
+          hostess={hostess}
+          hookah={hookah}
+          side={side}
+          open={openSide}
+          onOpen={(c) => {
+            setFailed(false);
+            setOpenSide(c);
+          }}
+          onPick={pickSide}
+          onCrew={onCrew}
+        />
 
         {/* Раскладку показываем только когда есть что раскладывать: с нулевой
             суммой строка «Анна 0 ₽ · Иван 0 ₽» только мешала бы. */}
