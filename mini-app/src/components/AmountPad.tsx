@@ -17,6 +17,21 @@ import type { Contour, Employee, Hall, Kind, Table } from "@/lib/types";
 export type PickedPayee = { person: Employee; contour: Contour };
 
 /**
+ * Набранное на экране суммы — чтобы отлучка в состав смены его не стирала.
+ *
+ * ⚠️ 22.08.2026: владелец набрала 800 ₽, выбрала официанта и «Весь бар»,
+ * пошла добавить хостес в состав смены — и вернулась к пустому экрану.
+ * Экран суммы при этом закрывается по-настоящему, а не прячется: состав
+ * смены — отдельный экран во весь рост. Поэтому набранное уезжает наверх
+ * и возвращается обратно.
+ */
+export type Draft = {
+  digits: string;
+  ids: number[];
+  side: { id: number; contour: Contour }[];
+};
+
+/**
  * Свежая запись по столу — в том виде, в каком её показывают в вопросе
  * о повторе.
  *
@@ -42,8 +57,13 @@ type Props = {
   hostess: Employee[];
   /** Кальянщики смены и общий котёл бара. Котёл есть всегда. */
   hookah: Employee[];
-  /** Открыть состав смены — если нужного человека в списке нет. */
-  onCrew: () => void;
+  /**
+   * Открыть состав смены — если нужного человека в списке нет.
+   * Отдаёт наверх набранное, чтобы по возвращении оно было на месте.
+   */
+  onCrew: (draft: Draft) => void;
+  /** Что было набрано до отлучки в состав смены. */
+  draft?: Draft | null;
   /**
    * Кого предложить: обычно те, кто уже обслуживал этот стол сегодня.
    *
@@ -96,12 +116,13 @@ export default function AmountPad({
   hostess,
   hookah,
   onCrew,
+  draft,
   suggestedWaiterIds,
   recent,
   onCancel,
   onConfirm,
 }: Props) {
-  const [digits, setDigits] = useState("");
+  const [digits, setDigits] = useState(draft?.digits ?? "");
   const [saving, setSaving] = useState(false);
   const [failed, setFailed] = useState(false);
   // Вопрос о повторе: способ оплаты, который ждёт подтверждения, и готовая
@@ -110,6 +131,8 @@ export default function AmountPad({
   const [asking, setAsking] = useState<{ kind: Kind; ago: string } | null>(null);
   // Официантов может быть несколько — тогда сумма делится поровну.
   const [ids, setIds] = useState<number[]>(() => {
+    // Вернулись из состава смены — берём то, что было выбрано до ухода.
+    if (draft) return draft.ids;
     // Подсказка могла остаться от человека, которого сегодня в смене нет.
     const suggested = suggestedWaiterIds.filter((id) =>
       crew.some((w) => w.id === id),
@@ -125,7 +148,9 @@ export default function AmountPad({
    * никого не выбрать в зале тоже можно — гость мог оставить чаевые только
    * кальянщику.
    */
-  const [side, setSide] = useState<{ id: number; contour: Contour }[]>([]);
+  const [side, setSide] = useState<{ id: number; contour: Contour }[]>(
+    draft?.side ?? [],
+  );
   /** Какой котёл раскрыт. Раскрытым остаётся и тот, из кого уже выбрали. */
   const [openSide, setOpenSide] = useState<Contour | null>(null);
   // Деление включается отдельной кнопкой, а не вторым тапом по имени.
@@ -310,7 +335,7 @@ export default function AmountPad({
             setOpenSide(c);
           }}
           onPick={pickSide}
-          onCrew={onCrew}
+          onCrew={() => onCrew({ digits, ids, side })}
         />
 
         {/* Раскладку показываем только когда есть что раскладывать: с нулевой
