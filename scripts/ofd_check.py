@@ -1,0 +1,240 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""Разведка API Первого ОФД: что нам вообще отдают.
+
+Не выгрузка и не сверка — только «что приходит в ответе». Сделано по образцу
+`qr_check.py`: сначала посмотреть своими глазами, потом строить.
+
+⚠️ Зачем разведка отдельно. Документация описывает, что МОЖЕТ прийти, а прав
+у ключа может не хватать — и тогда поле просто не появится в ответе, молча.
+Для нашей задачи критичны ровно два права:
+
+  universal-api.nomenclature    — состав чека. Без него только суммы,
+                                  а вся проверка построена на позициях.
+  universal-api.operatorInnInfo — ИНН и имя кассира. Без него возврат
+                                  не отнести к человеку, а ради этого
+                                  и заводили персональные входы.
+
+Скрипт спрашивает права ЯВНО (метод «Получение списка разрешений»), а не
+догадывается по наличию полей: отсутствие поля в одном чеке может значить
+и «нет права», и «в этом чеке пусто».
+
+Ключ читается из `.env` (строка OFD_MAV_SVERKA_KEY) и НИГДЕ не печатается —
+ни на экран, ни в журнал. Токен тоже.
+
+Запуск:
+    python3 scripts/ofd_check.py                 организация, права, кассы
+    python3 scripts/ofd_check.py 2026-08-20      плюс документы за этот день
+
+См. plans/2026-08-16-analiz-froda.md
+"""
+
+from __future__ import annotations
+
+import json
+import sys
+import urllib.error
+import urllib.parse
+import urllib.request
+from datetime import date, timedelta
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+ENV = ROOT / ".env"
+HOST = "https://universal-api.1-ofd.ru"
+
+# Реквизиты кассы зала — из письма в ОФД, plans/письмо-в-первый-офд-api.md.
+INN = "9729385147"
+KKM_REG_ID = "0008849127005613"
+# Накопителей два: текущий и прежний. Запрос идёт по одному, поэтому старые
+# периоды спрашиваются отдельно — это был вопрос №4 в письме.
+FS_CURRENT = "7384440901356916"
+FS_PREVIOUS = "7384440800219759"
+
+НУЖНЫЕ_ПРАВА = {
+    "universal-api.transactions": "данные по чекам",
+    "universal-api.nomenclature": "состав чека (позиции)",
+    "universal-api.operatorInnInfo": "ИНН и имя кассира",
+    "universal-api.shifts": "данные по сменам",
+}
+
+
+def читать_ключ() -> str:
+    """Ключ из .env. На экран не выводится никогда."""
+    if not ENV.exists():
+        sys.exit("Нет файла .env рядом с проектом.")
+    for line in ENV.read_text(encoding="utf-8").splitlines():
+        key, _, value = line.partition("=")
+        if key.strip() != "OFD_MAV_SVERKA_KEY":
+            continue
+        value = value.strip().strip('"').strip("'")
+        if not value or value.upper().startswith("ЗАМЕНИТ"):
+            sys.exit("В .env строка OFD_MAV_SVERKA_KEY пустая или заглушка.\n"
+                     "  Вставьте ключ, присланный Первым ОФД, и запустите снова.")
+        return value
+    sys.exit("В .env нет строки OFD_MAV_SVERKA_KEY.")
+
+
+def запрос(путь: str, токен: str | None = None, тело: dict | None = None):
+    """Один вызов API. Ошибку показываем словами, а не кодом."""
+    данные = json.dumps(тело).encode() if тело is not None else None
+    заголовки = {"Accept": "application/json"}
+    if тело is not None:
+        заголовки["Content-Type"] = "application/json"
+    if токен:
+        заголовки["Authorization"] = токен
+    req = urllib.request.Request(HOST + путь, data=данные, headers=заголовки)
+    try:
+        with urllib.request.urlopen(req, timeout=60) as ответ:
+            return json.loads(ответ.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        текст = e.read().decode("utf-8", "replace")[:400]
+        # ⚠️ Путь печатаем, ключ — нет: он в теле запроса, а не в адресе.
+        sys.exit(f"✗ {e.code} на {путь}\n  ответ сервера: {текст}")
+    except urllib.error.URLError as e:
+        sys.exit(f"✗ Не достучались до {HOST}: {e.reason}\n"
+                 "  С этого компьютера часть адресов перехватывает VPN incy — "
+                 "проверьте, что universal-api.1-ofd.ru открывается.")
+
+
+def главное():
+    день = sys.argv[1] if len(sys.argv) > 1 else None
+
+    print("=== 1. ВХОД ===")
+    токен = запрос("/api/auth", тело={"apiKey": читать_ключ()})["token"]
+    print("  ✓ ключ принят, временный токен получен (на экран не выводится)")
+
+    print("\n=== 2. ОРГАНИЗАЦИИ, К КОТОРЫМ ЕСТЬ ДОСТУП ===")
+    орг = запрос("/api/rent/v3/organisations?page=1&pageSize=50", токен)
+    ключи = []
+    for o in орг.get("page", []):
+        ключ = o.get("organisationKey")
+        ключи.append(ключ)
+        print(f"  {o.get('organizationName')} · ИНН {o.get('inn')} · ключ {ключ}")
+    if not ключи:
+        sys.exit("  Ни одной организации. Ключ выдан, но данные к нему не привязаны.")
+
+    # Наша — по ИНН из письма. Ключ может быть «инн» или «инн.кпп».
+    наш = next((k for k in ключи if k.split(".")[0] == INN), ключи[0])
+    print(f"  → работаем с ключом организации {наш}")
+
+    print("\n=== 3. ПРАВА КЛЮЧА — САМОЕ ВАЖНОЕ ===")
+    права = запрос(f"/api/rent/v2/{urllib.parse.quote(наш)}/permissions", токен)
+    выданные = собрать_права(права)
+    for имя, зачем in НУЖНЫЕ_ПРАВА.items():
+        есть = имя in выданные
+        print(f"  {'✓' if есть else '✗'} {имя:<32} {зачем}")
+    лишние = sorted(выданные - set(НУЖНЫЕ_ПРАВА))
+    if лишние:
+        print("  прочие выданные права:", ", ".join(лишние))
+    нет = [и for и in НУЖНЫЕ_ПРАВА if и not in выданные]
+    if нет:
+        print("\n  🔴 Не хватает прав — без них задача не решается целиком.")
+        print("     Писать в ОФД: просим добавить " + ", ".join(нет))
+
+    print("\n=== 4. КАССЫ ===")
+    кассы = запрос(
+        f"/api/rent/v2/organisations/{urllib.parse.quote(наш)}/kkms", токен)
+    for k in (кассы.get("page") or кассы.get("kkms") or []):
+        print("  " + " · ".join(
+            f"{п}={k[п]}" for п in ("kkmRegId", "fsFactoryNumber", "model", "status")
+            if п in k))
+
+    if not день:
+        print("\nЧтобы посмотреть документы за день, добавьте дату:")
+        print("    python3 scripts/ofd_check.py 2026-08-20")
+        return
+
+    print(f"\n=== 5. ДОКУМЕНТЫ ЗА {день} ===")
+    следующий = (date.fromisoformat(день) + timedelta(days=1)).isoformat()
+    params = urllib.parse.urlencode({
+        "kkmRegId": KKM_REG_ID,
+        "fsFactoryNumber": FS_CURRENT,
+        "fromDate": f"{день}T00:00:00",
+        "toDate": f"{следующий}T06:00:00",
+    })
+    ответ = запрос(
+        f"/api/rent/v2/organisations/{urllib.parse.quote(наш)}/documents?{params}",
+        токен)
+    показать_документы(ответ)
+
+
+def собрать_права(права) -> set[str]:
+    """Названия прав лежат в нескольких ветках ответа — собираем все."""
+    найдено: set[str] = set()
+
+    def обойти(узел):
+        if isinstance(узел, dict):
+            for ключ, значение in узел.items():
+                if ключ.startswith("universal-api."):
+                    найдено.add(ключ)
+                обойти(значение)
+        elif isinstance(узел, list):
+            for э in узел:
+                обойти(э)
+        elif isinstance(узел, str):
+            # ⚠️ Права приходят и списком, и ОДНОЙ строкой через разделитель.
+            # 21.08.2026 первый заход этого не учёл: строка «universal-api.revenue
+            # | universal-api.nomenclature | …» целиком сошла за одно название,
+            # и разведка доложила «прав нет», хотя выданы все. Проверка, которая
+            # ошибается в эту сторону, хуже отсутствующей: по ней пишут письмо
+            # в ОФД и ждут ответа неделю.
+            for кусок in узел.replace("|", " ").replace(",", " ").split():
+                if кусок.startswith("universal-api."):
+                    найдено.add(кусок.strip(".;"))
+
+    обойти(права)
+    return найдено
+
+
+def показать_документы(ответ) -> None:
+    """Что реально пришло: сколько, каких видов, какие поля.
+
+    ⚠️ Печатаем СТРУКТУРУ и счётчики, а не содержимое подряд: разведка нужна,
+    чтобы понять форму ответа, а вываленный на экран день чеков её же и прячет.
+    """
+    страница = ответ.get("page") or ответ.get("documents") or []
+    print(f"  документов: {len(страница)}, всего по фильтру: "
+          f"{ответ.get('totalCount', '?')}")
+    if not страница:
+        print("  Пусто. Проверьте дату, номер накопителя и что касса в этот день работала.")
+        return
+
+    виды: dict[str, int] = {}
+    for d in страница:
+        вид = d.get("transactionType") or d.get("documentType") or "?"
+        виды[вид] = виды.get(вид, 0) + 1
+    print("  по видам: " + ", ".join(f"{в} — {n}" for в, n in sorted(виды.items())))
+
+    # ⚠️ Берём именно КАССОВЫЙ ЧЕК, а не первый попавшийся документ. Первым
+    # в дне идёт отчёт об открытии смены — у него нет ни позиций, ни кассира,
+    # и разведка по нему доложила бы «состава чека нет», хотя он есть.
+    первый = next((d for d in страница
+                   if (d.get("transactionType") or "").lower().startswith(("кассовый чек", "ticket"))),
+                  страница[0])
+    print(f"\n  ПОЛЯ ДОКУМЕНТА «{первый.get('transactionType')}»:")
+    for имя in sorted(первый):
+        значение = первый[имя]
+        вид = type(значение).__name__
+        если_список = f" ({len(значение)} шт.)" if isinstance(значение, list) else ""
+        print(f"    {имя:<28} {вид}{если_список}")
+
+    # Два вопроса, ради которых всё затевалось.
+    позиции = None
+    for имя in ("items", "nomenclature", "goods", "positions"):
+        if isinstance(первый.get(имя), list):
+            позиции = имя
+            break
+    print(f"\n  СОСТАВ ЧЕКА: {'✓ есть, поле «' + позиции + '»' if позиции else '✗ НЕТ'}")
+    if позиции and первый[позиции]:
+        print("    поля позиции: " + ", ".join(sorted(первый[позиции][0])))
+
+    кассир = [и for и in первый
+              if "operator" in и.lower() or "cashier" in и.lower()]
+    print(f"  КАССИР: {'✓ есть — ' + ', '.join(кассир) if кассир else '✗ НЕТ'}")
+    if кассир:
+        print("    значения: " + ", ".join(f"{и}={первый[и]}" for и in кассир))
+
+
+if __name__ == "__main__":
+    главное()

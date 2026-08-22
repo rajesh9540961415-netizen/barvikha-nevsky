@@ -471,6 +471,17 @@ export async function saveCrew(input: {
     select distinct waiter_id from entries where business_day = ${input.businessDay}
     union
     select unnest(crew) from shifts where business_day = ${input.businessDay}
+    union
+    -- ⚠️ И роли уже лежащей смены — иначе смена с безымянной ролью замерзает
+    -- навсегда. 21.08.2026 владелец не смогла убрать лишнего официанта
+    -- за 10 августа: администратором там стоял номер, которого нет
+    -- в справочнике, проверка ниже смотрит ВСЕ роли, и сохранение падало
+    -- целиком. Под это попадали девять августовских смен.
+    -- Смысл набора — «кого можно поставить», и человек, который уже стоит
+    -- в этой смене, обязан быть в нём: иначе правка одного поля требует
+    -- правки другого, о которой никто не догадается.
+    select r from shifts, unnest(array[operator_id, admin_id, admin2_id, cashier_id]) as r
+    where business_day = ${input.businessDay} and r is not null
   `;
   const allowed = new Set([
     ...people.map((p) => p.id),

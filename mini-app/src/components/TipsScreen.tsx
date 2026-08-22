@@ -153,6 +153,15 @@ export default function TipsScreen() {
    */
   const [qrCrew, setQrCrew] = useState<Employee[]>([]);
   /**
+   * Хостес и кальянщики того же вечера, что и `qrCrew`.
+   *
+   * Отдельно от текущих намеренно: забытое поступление разносят следующим
+   * вечером, и предложить в получатели надо тех, кто работал ТОГДА. Иначе
+   * доля бара ушла бы кальянщику, которого в тот вечер не было.
+   */
+  const [qrHostess, setQrHostess] = useState<Employee[]>([]);
+  const [qrHookah, setQrHookah] = useState<Employee[]>([]);
+  /**
    * Чтение упёрлось в то, что страница осталась от прошлой версии.
    *
    * Очередь отправки ловит это сама, но чтения идут мимо неё: экран открылся
@@ -609,6 +618,8 @@ export default function TipsScreen() {
   async function openQrTip(tip: QrTip) {
     if (tip.businessDay === day) {
       setQrCrew(crew);
+      setQrHostess(hostessPeople);
+      setQrHookah(hookahPeople);
       setOpenQr(tip);
       return;
     }
@@ -625,26 +636,37 @@ export default function TipsScreen() {
         return;
       }
       setQrCrew(people);
+      setQrHostess(everyone.filter((p) => past.hostess.includes(p.id)));
+      // «Весь бар» есть всегда — как и в текущей смене: администратор мог
+      // не знать, кто обслуживал, а деньги всё равно должны куда-то лечь.
+      setQrHookah([
+        HOOKAH_POT,
+        ...getHookahPeople().filter((p) => past.hookah.includes(p.id)),
+      ]);
       setOpenQr(tip);
     } catch {
       setToast({ text: "Не удалось прочитать ту смену — проверьте связь", bad: true });
     }
   }
 
-  async function distributeQrTip(tip: QrTip, waiters: Employee[]) {
-    if (!operator || waiters.length === 0) return;
-    const group = waiters.length > 1 ? crypto.randomUUID() : null;
-    const parts = shares(tip.amount, waiters.length);
+  async function distributeQrTip(tip: QrTip, payees: PickedPayee[]) {
+    if (!operator || payees.length === 0) return;
+    const group = payees.length > 1 ? crypto.randomUUID() : null;
+    const parts = shares(tip.amount, payees.length);
     const now = new Date().toISOString();
-    const rows: Entry[] = waiters.map((waiter, i) => ({
+    const rows: Entry[] = payees.map(({ person, contour }, i) => ({
       id: crypto.randomUUID(),
       hallId: null,
       hallTitle: null,
       tableId: null,
       tableTitle: null,
-      waiterId: waiter.id,
-      waiterName: waiter.name,
+      waiterId: person.id,
+      waiterName: person.name,
       amount: parts[i],
+      // ⚠️ Котёл у КАЖДОЙ строки свой, а не один на поступление. Зальная доля
+      // отдаёт 20 % администратору и долю кассира, барская и хостес — ничего.
+      // Раньше здесь стоял зал у всех: другого и не бывало.
+      contour,
       // Комиссию Сбер удержал до уведомления — пришедшая сумма уже чистая.
       gross: parts[i],
       commissionRate: 0,
@@ -672,8 +694,8 @@ export default function TipsScreen() {
     setToast({
       text:
         tip.businessDay === day
-          ? `QR ${formatMoney(tip.amount)} · ${waiters.map((w) => w.short).join(", ")}`
-          : `QR ${formatMoney(tip.amount)} за ${formatBusinessDay(tip.businessDay)} · ${waiters.map((w) => w.short).join(", ")}`,
+          ? `QR ${formatMoney(tip.amount)} · ${payees.map((p) => p.person.short).join(", ")}`
+          : `QR ${formatMoney(tip.amount)} за ${formatBusinessDay(tip.businessDay)} · ${payees.map((p) => p.person.short).join(", ")}`,
       bad: false,
     });
     setOpenQr(null);
@@ -1108,9 +1130,15 @@ export default function TipsScreen() {
           tip={openQr}
           // Состав того вечера, а не обязательно текущего: см. openQrTip.
           crew={qrCrew}
+          hostess={qrHostess}
+          hookah={qrHookah}
           today={day}
+          onCrew={() => {
+            setOpenQr(null);
+            setEditingCrew(true);
+          }}
           onCancel={() => setOpenQr(null)}
-          onConfirm={(waiters) => distributeQrTip(openQr, waiters)}
+          onConfirm={(payees) => distributeQrTip(openQr, payees)}
         />
       );
     }

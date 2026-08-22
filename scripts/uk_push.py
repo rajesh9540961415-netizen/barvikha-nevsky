@@ -100,13 +100,27 @@ def read_month(month: str):
                 tips[w["name"]][day] = round(w["accrued"], 2)
             if w["service"]:
                 service[w["name"]][day] = round(w["service"], 2)
-        for роль, куда in (("admin", admin), ("cashier", cashier)):
-            кто = data[роль]
-            if not кто["amount"]:
+        # ⚠️ Администраторов в смене может быть ДВОЕ — смену делят надвое,
+        # и доля делится пополам (решение владельца 18.08.2026). Поле `admin`
+        # держит только первого; список `admins` — всех.
+        #
+        # Читали здесь `admin`, и доля второго молча не доезжала до таблицы УК.
+        # 21.08.2026 так нашлись 2 813,08 ₽ Елизаветы Недорезовой за 5 августа:
+        # в отчёте они стояли, в листе УК их не было, и заметить это можно было
+        # только сложив итог месяца двумя путями. Пропажа не разовая — она
+        # повторялась бы каждую поделённую смену.
+        роли = [("admin", кто, admin)
+                for кто in (data.get("admins") or [data.get("admin")])]
+        роли.append(("cashier", data.get("cashier"), cashier))
+
+        for роль, кто, куда in роли:
+            if not кто or not кто.get("amount"):
                 continue
-            имя = кто["name"] or БЕЗ_ИМЕНИ.get((data["businessDay"], роль))
+            имя = кто.get("name") or БЕЗ_ИМЕНИ.get((data["businessDay"], роль))
             if имя:
-                куда[имя][day] = round(кто["amount"], 2)
+                # Складываем, а не присваиваем: один человек может получить
+                # за день долю дважды, и второе присваивание стёрло бы первое.
+                куда[имя][day] = round(куда[имя].get(day, 0) + кто["amount"], 2)
             else:
                 безымянные.append((data["businessDay"], роль, round(кто["amount"], 2)))
 
@@ -235,23 +249,19 @@ def main():
     # Разложить «начислено» обратно на чай и сбор нельзя честно: доли берутся
     # с общей суммы, а не с каждой части. Понадобится разбивка — считать её
     # надо в приложении, а не делить задним числом на глазок.
-    строки = {
-        "официанты_чаевые": block_rows(tips, *BLOCKS["официанты_чаевые"], title="официанты"),
-        "администраторы": block_rows(admin, *BLOCKS["администраторы"], title="администраторы"),
-        "кассиры": block_rows(cashier, *BLOCKS["кассиры"], title="кассиры"),
-    }
-    данные = {
-        "официанты_чаевые": tips,
-        "администраторы": admin,
-        "кассиры": cashier,
-    }
-
-    for блок, места in строки.items():
+    # ⚠️ Раскладку по строкам ИХ блоков больше не считаем — и `block_rows`
+    # с её проверкой «не влез человек» здесь не зовём. Проверка сторожила
+    # чужой шаблон: в нём под официантов отведено 21 место, и на 22-м она
+    # остановила бы выкладку. В нашем формате столько строк, сколько людей.
+    # BLOCKS и block_rows оставлены: они понадобятся, если когда-нибудь
+    # придётся снова писать в их разметку.
+    данные = {"официанты": tips, "администраторы": admin, "кассиры": cashier}
+    for блок, люди in данные.items():
         print(f"— {блок}:")
-        for имя, строка in места.items():
-            дни = данные[блок][имя]
+        for имя in sorted(люди, key=lambda n: -sum(люди[n].values())):
+            дни = люди[имя]
             всего = sum(дни.values())
-            print(f"    строка {строка:>3}  {имя:<28} дней {len(дни):>2}  всего {всего:>12,.2f} ₽"
+            print(f"    {имя:<28} дней {len(дни):>2}  всего {всего:>12,.2f} ₽"
                   .replace(",", " "))
 
     итог = sum(sum(d.values()) for d in tips.values())
@@ -267,70 +277,154 @@ def main():
         print("\nЭто был холостой прогон. Чтобы записать — добавьте --записать")
         return
 
-    # ── Дубль листа
-    имя_дубля = f"{месяцы[month_num]} {year} — из приложения"
-    if имя_дубля in листы and not args.поверх:
-        sys.exit(f"Лист {имя_дубля!r} уже есть. Заполнить заново — ключ --поверх.")
+    # ── Лист в НАШЕМ формате
+    #
+    # ⚠️ Решение владельца 19.08.2026: лист повторяет наш отчёт целиком,
+    # а строки видов денег спрятаны в свёрнутые группы. Код для этого написали
+    # тогда же (`сетка_и_группы` внизу файла) — и не подключили: `main()`
+    # продолжала заполнять дубль ИХ листа, по клетке на человека. Владелец
+    # увидела это 21.08.2026: «вместо основной сводки — сводка по официантам,
+    # причём без формул, просто цифры».
+    #
+    # 💡 Урок: написанное и неподключённое — то же, что ненаписанное, и хуже:
+    # в файле лежит подробное объяснение того, чего программа не делает.
+    сетка, группы, оформление = сетка_и_группы(args.month)
+    имя_листа = f"{месяцы[month_num]} {year} — из приложения"
+    ширина = max(len(р) for р in сетка)
 
-    if имя_дубля in листы:
-        новый = листы[имя_дубля]
-        print(f"\n✓ Пишу поверх листа {имя_дубля!r} (номер {новый['sheetId']})")
+    # ⚠️ Лист НЕ пересоздаём, а вычищаем и заполняем заново — чтобы у него
+    # не менялся адрес. Удалить и создать проще, но каждое утро выходил бы
+    # новый `gid`, и сохранённая кем-нибудь ссылка назавтра вела бы в пустоту.
+    # Чистить приходится втроём: значения, оформление и группы строк —
+    # группы живут отдельно от клеток и при простой очистке остаются висеть,
+    # а новые легли бы поверх старых.
+    if имя_листа in листы:
+        лист_id = листы[имя_листа]["sheetId"]
+        подробно = api.spreadsheets().get(
+            spreadsheetId=SHEET, ranges=[f"'{имя_листа}'!A1"],
+            fields="sheets(properties(sheetId),rowGroups)").execute()["sheets"][0]
+        прежние = подробно.get("rowGroups") or []
+        очистка = [{"deleteDimensionGroup": {"range": {
+            "sheetId": лист_id, "dimension": "ROWS",
+            "startIndex": г["range"]["startIndex"],
+            "endIndex": г["range"]["endIndex"]}}} for г in прежние]
+        очистка.append({"updateCells": {
+            "range": {"sheetId": лист_id}, "fields": "*"}})
+        очистка.append({"updateSheetProperties": {
+            "properties": {"sheetId": лист_id, "gridProperties": {
+                "rowCount": len(сетка) + 5, "columnCount": ширина + 1,
+                "frozenRowCount": 1, "frozenColumnCount": 1}},
+            "fields": "gridProperties(rowCount,columnCount,"
+                      "frozenRowCount,frozenColumnCount)"}})
+        api.spreadsheets().batchUpdate(
+            spreadsheetId=SHEET, body={"requests": очистка}).execute()
+        print(f"\n✓ Лист {имя_листа!r} очищен (номер {лист_id}, "
+              f"снято прежних групп: {len(прежние)})")
     else:
         ответ = api.spreadsheets().batchUpdate(spreadsheetId=SHEET, body={"requests": [{
-            "duplicateSheet": {
-                "sourceSheetId": источник["sheetId"],
-                "insertSheetIndex": источник["index"] + 1,
-                "newSheetName": имя_дубля,
-            }
+            "addSheet": {"properties": {
+                "title": имя_листа,
+                "index": источник["index"] + 1,
+                "gridProperties": {
+                    "rowCount": len(сетка) + 5,
+                    "columnCount": ширина + 1,
+                    "frozenRowCount": 1,
+                    "frozenColumnCount": 1,
+                },
+            }}
         }]}).execute()
-        новый = ответ["replies"][0]["duplicateSheet"]["properties"]
-        print(f"\n✓ Создан лист {имя_дубля!r} (номер {новый['sheetId']})")
+        лист_id = ответ["replies"][0]["addSheet"]["properties"]["sheetId"]
+        print(f"\n✓ Лист {имя_листа!r} создан (номер {лист_id})")
 
-    # ── Чистим только те блоки, которые заполняем сами.
-    #
-    # Хостес и кальянный бар не трогаем: до 19.08.2026 приложение их не вело,
-    # и заменить их нечем. Стереть чужую работу, не имея что положить взамен,
-    # — это не «наш формат», а потеря данных.
-    наши_блоки = ["официанты_чаевые", "официанты_сбор", "администраторы", "кассиры"]
-    # блок сбора чистим (в дубле там могла остаться рука), но не заполняем
-    чистить = [f"'{имя_дубля}'!A{BLOCKS[b][0]}:AF{BLOCKS[b][1]}" for b in наши_блоки]
+    # ⚠️ USER_ENTERED, а не RAW. RAW положил бы формулы текстом, и вместо
+    # чисел на листе стояло бы «=SUMIF(...)» — ровно то, за что лист выглядел
+    # бы сломанным целиком.
+    api.spreadsheets().values().update(
+        spreadsheetId=SHEET, range=f"'{имя_листа}'!A1",
+        valueInputOption="USER_ENTERED", body={"values": сетка},
+    ).execute()
+    print(f"✓ Записано строк: {len(сетка)}")
 
-    # ⚠️ У нового месяца чистим ВСЁ, включая хостес и кальянный бар.
-    #
-    # В обычный день их не трогают намеренно: до 19.08.2026 приложение эти
-    # котлы не вело, и стереть чужую работу, не имея что положить взамен, —
-    # потеря данных. Но лист нового месяца — это копия ПРОШЛОГО, и цифры
-    # в нём не чужая работа, а прошлый месяц. Оставить их значит показать
-    # УК августовскую хостес в сентябрьском листе.
-    if с_нуля:
-        чистить += [
-            f"'{имя_дубля}'!A{BLOCKS['хостес'][0]}:AF{BLOCKS['хостес'][1]}",
-            f"'{имя_дубля}'!A{HOOKAH_TIPS_ROW}:AF{HOOKAH_SERVICE_ROW}",
-        ]
-        print("  лист новый — чищу и хостес с кальянным баром: это прошлый месяц")
-    api.spreadsheets().values().batchClear(
-        spreadsheetId=SHEET, body={"ranges": чистить}).execute()
-    print(f"✓ Очищены блоки: {len(чистить)}")
+    запросы = []
+    # Группы видов денег — сразу свёрнутые: лист открывается на фамилиях,
+    # а разбивку разворачивает тот, кому она нужна.
+    for первая, последняя in группы:
+        запросы.append({"addDimensionGroup": {"range": {
+            "sheetId": лист_id, "dimension": "ROWS",
+            "startIndex": первая - 1, "endIndex": последняя}}})
+    for первая, последняя in группы:
+        запросы.append({"updateDimensionGroup": {
+            "dimensionGroup": {
+                "range": {"sheetId": лист_id, "dimension": "ROWS",
+                          "startIndex": первая - 1, "endIndex": последняя},
+                "depth": 1, "collapsed": True},
+            "fields": "collapsed"}})
 
-    # ── Пишем наше
-    записи = []
-    for блок, места in строки.items():
-        for имя, строка in места.items():
-            записи.append({"range": f"'{имя_дубля}'!A{строка}", "values": [[имя]]})
-            for день, сумма in sorted(данные[блок][имя].items()):
-                записи.append({
-                    "range": f"'{имя_дубля}'!{column(день)}{строка}",
-                    "values": [[сумма]],
-                })
+    # Заливки и жирный — те же, что в отчёте: роли выделены, люди нет.
+    for номер, цвет, жирная in оформление:
+        if not цвет and not жирная:
+            continue
+        формат, поля = {}, []
+        if цвет:
+            формат["backgroundColor"] = {
+                "red": int(цвет[0:2], 16) / 255,
+                "green": int(цвет[2:4], 16) / 255,
+                "blue": int(цвет[4:6], 16) / 255,
+            }
+            поля.append("backgroundColor")
+        if жирная:
+            формат["textFormat"] = {"bold": True}
+            поля.append("textFormat")
+        запросы.append({"repeatCell": {
+            "range": {"sheetId": лист_id, "startRowIndex": номер - 1,
+                      "endRowIndex": номер, "startColumnIndex": 0,
+                      "endColumnIndex": ширина},
+            "cell": {"userEnteredFormat": формат},
+            "fields": "userEnteredFormat(" + ",".join(поля) + ")",
+        }})
 
-    api.spreadsheets().values().batchUpdate(spreadsheetId=SHEET, body={
-        "valueInputOption": "RAW", "data": записи}).execute()
-    print(f"✓ Записано клеток: {len(записи)}")
-    print(f"\nОткрыть: https://docs.google.com/spreadsheets/d/{SHEET}/edit#gid={новый['sheetId']}")
+    # Деньги — с разделителем тысяч и копейками. Строка процента — процентом:
+    # под общим числовым видом «6 %» превратилось бы в «0,06».
+    # ⚠️ Шапка — ДАТЫ, и числовой вид её ломает. «01.08.2026» Google понимает
+    # как дату и хранит числом; под видом «#,##0.00» строка дней превращается
+    # в «46 235,00». Поймано на первом же прогоне 21.08.2026.
+    запросы.append({"repeatCell": {
+        "range": {"sheetId": лист_id, "startRowIndex": 0, "endRowIndex": 1,
+                  "startColumnIndex": 1, "endColumnIndex": ширина},
+        "cell": {"userEnteredFormat": {"numberFormat": {
+            "type": "DATE", "pattern": "dd.mm.yyyy"}}},
+        "fields": "userEnteredFormat.numberFormat",
+    }})
 
+    for i, ряд in enumerate(сетка, start=1):
+        подпись = str(ряд[0]) if ряд else ""
+        if not подпись or i == 1:
+            continue
+        процент = "% чаевых" in подпись
+        запросы.append({"repeatCell": {
+            "range": {"sheetId": лист_id, "startRowIndex": i - 1, "endRowIndex": i,
+                      "startColumnIndex": 1, "endColumnIndex": ширина},
+            "cell": {"userEnteredFormat": {"numberFormat": {
+                "type": "PERCENT" if процент else "NUMBER",
+                "pattern": "0.0%" if процент else "#,##0.00"}}},
+            "fields": "userEnteredFormat.numberFormat",
+        }})
 
-if __name__ == "__main__":
-    main()
+    запросы.append({"updateDimensionProperties": {
+        "range": {"sheetId": лист_id, "dimension": "COLUMNS",
+                  "startIndex": 0, "endIndex": 1},
+        "properties": {"pixelSize": 260}, "fields": "pixelSize"}})
+
+    # ⚠️ Пачками: у batchUpdate есть предел на число запросов, и на 150+
+    # правках он отвечает отказом целиком — лист остаётся без оформления,
+    # а данные уже записаны.
+    for кусок in range(0, len(запросы), 100):
+        api.spreadsheets().batchUpdate(
+            spreadsheetId=SHEET,
+            body={"requests": запросы[кусок:кусок + 100]}).execute()
+    print(f"✓ Группы, заливки и числовой вид: {len(запросы)} правок, "
+          f"свёрнутых групп {len(группы)}")
+    print(f"\nОткрыть: https://docs.google.com/spreadsheets/d/{SHEET}/edit#gid={лист_id}")
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -444,3 +538,14 @@ def сетка_и_группы(месяц: str):
     if начало_гр is not None:
         группы.append((начало_гр, len(уровни)))
     return сетка, группы, оформление
+
+
+# ⚠️ Запуск — В САМОМ КОНЦЕ ФАЙЛА, и это не мелочь оформления.
+#
+# Питон определяет функции по ходу чтения файла. Пока эта строка стояла
+# посередине, `main()` вызывалась раньше, чем появлялись `сетка_и_группы`
+# и `наш_отчёт`, — и подключить наш формат было нельзя: он падал бы
+# на NameError. Именно поэтому написанный 19.08.2026 формат полтора месяца
+# лежал мёртвым грузом ниже вызова.
+if __name__ == "__main__":
+    main()
