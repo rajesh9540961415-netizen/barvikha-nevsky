@@ -8,7 +8,7 @@ import {
   useSyncExternalStore,
 } from "react";
 import AmountPad from "@/components/AmountPad";
-import type { PickedPayee, RecentEntry } from "@/components/AmountPad";
+import type { Draft, PickedPayee, RecentEntry } from "@/components/AmountPad";
 import ShiftCrew from "@/components/ShiftCrew";
 import ShiftSummary from "@/components/ShiftSummary";
 import TablePicker from "@/components/TablePicker";
@@ -175,6 +175,14 @@ export default function TipsScreen() {
   const [hallId, setHallId] = useState(halls[0].id);
   const [picked, setPicked] = useState<Picked | null>(null);
   const [editingCrew, setEditingCrew] = useState(false);
+  /**
+   * Набранное на экране суммы, пока человек ходит в состав смены.
+   *
+   * ⚠️ Стол при этом НЕ сбрасываем: экран состава рисуется раньше по списку,
+   * поэтому закрыв его, возвращаемся ровно туда, откуда ушли, — и черновик
+   * встаёт на место.
+   */
+  const [padDraft, setPadDraft] = useState<Draft | null>(null);
   const [showSummary, setShowSummary] = useState(false);
   const [showStaff, setShowStaff] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
@@ -1185,14 +1193,24 @@ export default function TipsScreen() {
           crew={crew}
           hostess={hostessPeople}
           hookah={hookahPeople}
-          onCrew={() => {
-            setPicked(null);
+          draft={padDraft}
+          onCrew={(draft) => {
+            // Стол оставляем выбранным — вернёмся на этот же экран.
+            setPadDraft(draft);
             setEditingCrew(true);
           }}
           suggestedWaiterIds={suggested}
           recent={picked.recent}
-          onCancel={() => setPicked(null)}
-          onConfirm={addEntry}
+          onCancel={() => {
+            // Ушли со стола совсем — черновик больше не нужен, иначе он
+            // всплыл бы на следующем столе чужой суммой.
+            setPadDraft(null);
+            setPicked(null);
+          }}
+          onConfirm={async (amount, payees, kind) => {
+            await addEntry(amount, payees, kind);
+            setPadDraft(null);
+          }}
         />
       );
     }
