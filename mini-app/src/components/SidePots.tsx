@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import type { Contour, Employee } from "@/lib/types";
 
 /**
@@ -48,18 +49,29 @@ export default function SidePots({
   onPick,
   onCrew,
 }: Props) {
+  /** Котёл, за которым никого нет: показываем строку, а не уводим с экрана. */
+  const [пусто, setПусто] = useState<Contour | null>(null);
+
   /**
    * Раскрывает котёл.
    *
-   * Когда выбирать не из кого — не тупик, а повод сказать об этом там же,
-   * где человек понадобился: хостес просто не отметили в составе смены.
-   * У бара так не бывает — «Весь бар» есть всегда.
+   * ⚠️ Когда выбирать не из кого, экран НЕ ЗАКРЫВАЕТСЯ. Раньше нажатие
+   * на пустой котёл уводило в состав смены — замысел был «привести туда,
+   * где чинится», а на деле 22.08.2026 владелец нажала «Хостес», оказалась
+   * на другом экране без единого слова объяснения и потеряла набранные
+   * 800 ₽ вместе с выбранными получателями.
+   *
+   * 💡 Общее правило, которое из этого следует: экран, где НАБИРАЮТ деньги,
+   * не должен закрываться сам. Всё, что можно сказать словом, говорится
+   * строкой на месте; уходить или нет — решает человек, и уже осознанно.
    */
   function toggle(contour: Contour) {
-    if (contour === "hostess" && hostess.length === 0) {
-      onCrew();
+    const людей = contour === "hookah" ? hookah : hostess;
+    if (людей.length === 0) {
+      setПусто((текущий) => (текущий === contour ? null : contour));
       return;
     }
+    setПусто(null);
     onOpen(open === contour ? null : contour);
   }
 
@@ -84,6 +96,23 @@ export default function SidePots({
           );
         })}
       </div>
+
+      {/* Пустой котёл объясняется строкой на месте. Кнопка перехода рядом —
+          но нажимает её человек, а не приложение за него. */}
+      {пусто !== null && (
+        <div className="mt-2 flex items-center justify-between gap-3 rounded-lg border border-line bg-surface px-3 py-2">
+          <span className="text-xs text-fg-muted">
+            на смене нет {пусто === "hostess" ? "хостес" : "кальянщиков"} —
+            отметьте в составе смены
+          </span>
+          <button
+            onClick={onCrew}
+            className="shrink-0 rounded-lg border border-sand px-2.5 py-1 text-xs text-fg active:bg-surface-2"
+          >
+            Состав смены
+          </button>
+        </div>
+      )}
 
       {/* Список котла: раскрыт, пока из него выбирают, и остаётся раскрытым,
           если кто-то уже выбран — спрятанный выбор хуже отсутствия выбора. */}
