@@ -99,6 +99,31 @@ def fetch_shifts(cfg, page=300, max_pages=40):
     return all_rows
 
 
+# Наш зал. Облако ИП Шалаевой обслуживает НЕ ТОЛЬКО нас.
+#
+# ⚠️ 22.08.2026: в облаке `gt464` нашлись четыре зала — Невский, Митино,
+# Красная площадь и Москва-Сити. Три чужих появились 21.08, по одной смене
+# каждый, и сразу дали 366 750 ₽ — четверть выручки того дня. Утренняя сводка
+# 22.08 ушла владельцу с этой цифрой внутри.
+#
+# 💡 Пока в облаке был один Невский, отбирать было незачем, и скрипт читал
+# облако целиком. Причина та же, что у чужих кальянщиков в справочнике:
+# облако перестало быть «кассой Невского» и стало кассой сети. Одна причина,
+# а не две.
+#
+# Отбор здесь строгий и без оговорок: у смены зал проставлен ВСЕГДА,
+# в отличие от карточек сотрудников.
+НАШ_ЗАЛ = "Барвиха Lounge Невский"
+
+
+def зал_смены(shift):
+    """Название зала, к которому относится смена. Пусто — зал не указан."""
+    место = shift.get("salePlace") or shift.get("tableScheme")
+    if isinstance(место, dict):
+        return (место.get("name") or место.get("title") or "").strip()
+    return (место or "").strip()
+
+
 def business_day(shift):
     """Дата открытия смены по местному времени."""
     s = shift.get("localOpenedTime") or shift.get("opened")
@@ -116,9 +141,18 @@ def main():
     print(f"касса: {cfg['_title']} ({cfg['QR_URL']})")
     shifts = fetch_shifts(cfg)
     rows = []
+    чужие = {}
     for s in shifts:
         d = business_day(s)
         if not d or s.get("status") != "CLOSED":
+            continue
+        зал = зал_смены(s)
+        if зал and зал != НАШ_ЗАЛ:
+            деньги = ((s.get("totalCash") or 0) - (s.get("totalReturnCash") or 0)
+                      + (s.get("totalCard") or 0) - (s.get("totalReturnCard") or 0))
+            з = чужие.setdefault(зал, [0, 0.0])
+            з[0] += 1
+            з[1] += деньги
             continue
         cash = (s.get("totalCash") or 0) - (s.get("totalReturnCash") or 0)
         card = (s.get("totalCard") or 0) - (s.get("totalReturnCard") or 0)
@@ -128,6 +162,16 @@ def main():
                      "checks": s.get("ordersCount") or 0,
                      "returns": s.get("returnOrdersCount") or 0})
     rows.sort(key=lambda r: (r["date"], r["shift"] or 0))
+
+    # Кричим вслух: молчаливый отбор однажды выбросит наш же зал,
+    # если его переименуют в кассе, и выручка просядет без объяснений.
+    for зал, (смен, деньги) in sorted(чужие.items(), key=lambda x: -x[1][1]):
+        print(f"  ⚠ не наш зал «{зал}»: смен {смен}, "
+              f"{деньги:,.0f} ₽ — в выручку не берём".replace(",", " "))
+    if not rows:
+        raise SystemExit(
+            f"Ни одной смены зала «{НАШ_ЗАЛ}». Если зал переименовали в кассе — "
+            "поправьте НАШ_ЗАЛ в этом скрипте.")
 
     OUT.mkdir(parents=True, exist_ok=True)
     with (OUT / f"qr_sales_{cloud}.csv").open("w", newline="", encoding="utf-8") as f:
