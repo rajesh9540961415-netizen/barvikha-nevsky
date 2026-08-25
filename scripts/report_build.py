@@ -516,21 +516,35 @@ def читать_смены(месяц: str):
 
 
 def выручка(месяц: str) -> dict[str, float]:
-    """Сумма по обеим кассам Quick Resto по дням."""
-    from qr_sales import CLOUDS, business_day, fetch_shifts, read_env
+    """Сумма по обеим кассам Quick Resto по дням.
+
+    ⚠️ Отбор по залу — через `наша_смена` из `qr_sales`, а НЕ своими руками.
+    До 22.08.2026 здесь его не было вовсе, и в отчёт по чаевым за 21.08
+    попадало 366 750 ₽ чужой выручки: облако бара сетевое, в нём кроме
+    Невского живут Митино, Красная площадь и Москва-Сити.
+    """
+    from qr_sales import CLOUDS, business_day, fetch_shifts, наша_смена, read_env
 
     по_дням: dict[str, float] = defaultdict(float)
     for cloud, (_, название) in CLOUDS.items():
         всего = 0.0
+        чужих = 0.0
         for s in fetch_shifts(read_env(cloud)):
             d = business_day(s)
             if not d or s.get("status") != "CLOSED" or d.strftime("%Y-%m") != месяц:
+                continue
+            if not наша_смена(s):
+                чужих += ((s.get("totalCash") or 0) - (s.get("totalReturnCash") or 0)
+                          + (s.get("totalCard") or 0) - (s.get("totalReturnCard") or 0))
                 continue
             сумма = ((s.get("totalCash") or 0) - (s.get("totalReturnCash") or 0)
                      + (s.get("totalCard") or 0) - (s.get("totalReturnCard") or 0))
             по_дням[d.isoformat()] += сумма
             всего += сумма
         print(f"  {название:<14} {всего:>14,.0f} ₽".replace(",", " "))
+        if чужих:
+            print(f"    ⚠ чужие залы облака: {чужих:,.0f} ₽ — "
+                  f"в выручку не взяты".replace(",", " "))
     return по_дням
 
 

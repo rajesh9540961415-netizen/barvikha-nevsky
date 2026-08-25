@@ -5,6 +5,20 @@
 0,0 %, и весь смысл сравнения пропадает: чаевые сами по себе ни о чём не
 говорят, важна их доля от того, что заведение заработало.
 
+🔴 **ОБЛАКО БАРА — СЕТЕВОЕ, и читать его целиком НЕЛЬЗЯ.** В `gt464` кроме
+Невского живут Митино, Красная площадь и Москва-Сити (заведены 13.08.2026).
+Здесь отбора по залу не было до 22.08.2026, и выручка за 21.08 выходила
+1 463 145 ₽ вместо 1 096 395 — на 366 750 ₽ чужих денег.
+
+⚠️ **Ошибка пряталась вдвойне.** В `qr_sales.py` отбор поставили ещё утром
+22.08, и утренняя финсводка стала верной — а этот файл остался прежним.
+Один и тот же вопрос считался двумя путями, и разошлись они молча: процент
+чаевых занижался, блок «ДОХОД» финсвода завышался. **Нашлось только тем,
+что две цифры одного дня легли рядом на экран.**
+
+💡 Отбор кричит вслух о каждом выброшенном зале — молчаливый отбор однажды
+выбросит наш собственный, если его переименуют в кассе.
+
 ⚠️ **Касс две, и складывать надо обе.** С 7 июля 2026 в заведении работают
 два юрлица со своими облаками Quick Resto: ООО «МАВ» и ИП Шалаева. Выручка
 заведения — это сумма. Взять одну кассу значит занизить выручку почти вдвое
@@ -32,7 +46,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from openpyxl import load_workbook  # noqa: E402
 
-from qr_sales import CLOUDS, business_day, fetch_shifts, read_env  # noqa: E402
+from qr_sales import (  # noqa: E402
+    CLOUDS, business_day, fetch_shifts, наша_смена, read_env, зал_смены,
+)
 from report_path import describe, report_dir  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -48,6 +64,7 @@ def выручка_по_дням(месяц: str) -> tuple[dict[date, float], di
     for cloud, (_, название) in CLOUDS.items():
         cfg = read_env(cloud)
         всего = 0.0
+        чужие: dict[str, float] = defaultdict(float)
         for s in fetch_shifts(cfg):
             d = business_day(s)
             # Открытые смены не берём: суммы в них ещё меняются, и вчерашний
@@ -56,12 +73,19 @@ def выручка_по_дням(месяц: str) -> tuple[dict[date, float], di
                 continue
             if d.strftime("%Y-%m") != месяц:
                 continue
+            if not наша_смена(s):
+                чужие[зал_смены(s)] += ((s.get("totalCash") or 0) - (s.get("totalReturnCash") or 0)
+                               + (s.get("totalCard") or 0) - (s.get("totalReturnCard") or 0))
+                continue
             нал = (s.get("totalCash") or 0) - (s.get("totalReturnCash") or 0)
             безнал = (s.get("totalCard") or 0) - (s.get("totalReturnCard") or 0)
             по_дням[d] += нал + безнал
             всего += нал + безнал
         по_кассам[название] = всего
         print(f"  {название:<14} {всего:>14,.0f} ₽".replace(",", " "))
+        for зал, деньги in sorted(чужие.items(), key=lambda x: -x[1]):
+            print(f"    ⚠ не наш зал «{зал}»: {деньги:,.0f} ₽ — "
+                  f"в выручку не берём".replace(",", " "))
 
     return по_дням, по_кассам
 
@@ -89,6 +113,11 @@ def разбивка(месяц: str) -> dict[str, dict[str, float]]:
             if not d or s.get("status") != "CLOSED":
                 continue
             if d.strftime("%Y-%m") != месяц:
+                continue
+            # ⚠️ Тот же отбор, что и в выручке выше. Две функции читают одно
+            # облако — забыть его здесь значит развести «ДОХОД» финсвода
+            # с процентом чаевых, считая при этом одно и то же.
+            if not наша_смена(s):
                 continue
             нал += (s.get("totalCash") or 0) - (s.get("totalReturnCash") or 0)
             безнал += (s.get("totalCard") or 0) - (s.get("totalReturnCard") or 0)

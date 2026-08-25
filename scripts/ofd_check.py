@@ -31,8 +31,10 @@
 
 from __future__ import annotations
 
+import http.client
 import json
 import sys
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -51,6 +53,25 @@ KKM_REG_ID = "0008849127005613"
 FS_CURRENT = "7384440901356916"
 FS_PREVIOUS = "7384440800219759"
 
+# Реквизиты кассы БАРА — ИП Шалаева. Ключ пришёл 23.08.2026.
+#
+# ⚠️ Идентификатор организации у ИП — это ОГРНИП, а не «ИНН.КПП», как у ООО.
+# КПП у предпринимателя нет вовсе. Взято из ответа самого API, не из догадки.
+ОРГ_ШАЛАЕВА = "324774600144142"
+ИНН_ШАЛАЕВА = "771570971401"
+
+# 🔴 ПОД ЭТИМ ИП ПЯТЬ КАСС, и наша из них ОДНА. Та же история, что с облаком
+# Quick Resto: юрлицо обслуживает несколько заведений сети. Спросить «все
+# документы организации» значит принести чужую выручку в наш разбор — молча.
+# Наша касса — из письма в ОФД и из ручных выгрузок владельца, адрес установки
+# 191186, СПб, Малая Конюшенная, 16/26.
+KKM_REG_ID_ШАЛАЕВА = "0010354115057052"
+FS_ШАЛАЕВА = "7384440901562658"
+
+# Остальные четыре — чужие заведения, держим списком, чтобы было видно,
+# что они известны и отброшены нарочно, а не забыты:
+# 0008241341000196, 0010481238005528, 0010481223057038, 0010481194006565.
+
 НУЖНЫЕ_ПРАВА = {
     "universal-api.transactions": "данные по чекам",
     "universal-api.nomenclature": "состав чека (позиции)",
@@ -59,20 +80,27 @@ FS_PREVIOUS = "7384440800219759"
 }
 
 
-def читать_ключ() -> str:
-    """Ключ из .env. На экран не выводится никогда."""
+# Юрлиц два, и у каждого свой ключ ОФД. Имя строки в .env — параметр,
+# а не константа: 23.08.2026 пришёл ключ по ИП Шалаевой, и без этого
+# пришлось бы копировать половину файла ради одной строки.
+КЛЮЧ_МАВ = "OFD_MAV_SVERKA_KEY"
+КЛЮЧ_ШАЛАЕВА = "OFD_SHALAEVA_SVERKA_KEY"
+
+
+def читать_ключ(имя: str = КЛЮЧ_МАВ) -> str:
+    """Ключ из .env по имени строки. На экран не выводится никогда."""
     if not ENV.exists():
         sys.exit("Нет файла .env рядом с проектом.")
     for line in ENV.read_text(encoding="utf-8").splitlines():
         key, _, value = line.partition("=")
-        if key.strip() != "OFD_MAV_SVERKA_KEY":
+        if key.strip() != имя:
             continue
         value = value.strip().strip('"').strip("'")
         if not value or value.upper().startswith("ЗАМЕНИТ"):
-            sys.exit("В .env строка OFD_MAV_SVERKA_KEY пустая или заглушка.\n"
+            sys.exit(f"В .env строка {имя} пустая или заглушка.\n"
                      "  Вставьте ключ, присланный Первым ОФД, и запустите снова.")
         return value
-    sys.exit("В .env нет строки OFD_MAV_SVERKA_KEY.")
+    sys.exit(f"В .env нет строки {имя}.")
 
 
 def запрос(путь: str, токен: str | None = None, тело: dict | None = None):
@@ -85,8 +113,24 @@ def запрос(путь: str, токен: str | None = None, тело: dict | 
         заголовки["Authorization"] = токен
     req = urllib.request.Request(HOST + путь, data=данные, headers=заголовки)
     try:
-        with urllib.request.urlopen(req, timeout=60) as ответ:
-            return json.loads(ответ.read().decode("utf-8"))
+        # ⚠️ ОФД рвёт длинный ответ на середине: приходит IncompleteRead,
+        # и это НЕ ошибка сети в понимании urllib — её не ловит ни HTTPError,
+        # ни URLError. 22.08.2026 из-за неё дважды подряд упала пересборка
+        # файла возвратов, а она же стоит в утренней задаче: месячная выгрузка
+        # чеков весит мегабайты и рвётся тем охотнее, чем больше месяц.
+        # Лечение — просто повторить: со второго-третьего раза проходит.
+        for попытка in range(4):
+            try:
+                with urllib.request.urlopen(req, timeout=120) as ответ:
+                    return json.loads(ответ.read().decode("utf-8"))
+            except (http.client.IncompleteRead, ConnectionResetError,
+                    TimeoutError, json.JSONDecodeError) as e:
+                if попытка == 3:
+                    sys.exit(f"✗ Ответ на {путь} оборвался четыре раза подряд: "
+                             f"{type(e).__name__}.\n"
+                             "  Это обрыв на стороне ОФД, а не отказ: "
+                             "попробуйте ещё раз через несколько минут.")
+                time.sleep(3 * (попытка + 1))
     except urllib.error.HTTPError as e:
         текст = e.read().decode("utf-8", "replace")[:400]
         # ⚠️ Путь печатаем, ключ — нет: он в теле запроса, а не в адресе.
