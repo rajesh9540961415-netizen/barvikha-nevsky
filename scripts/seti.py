@@ -85,10 +85,21 @@ if __name__ == "__main__":
     адрес = sys.argv[1] if len(sys.argv) > 1 else "https://chaevye-borzovavv.amvera.io/api/health"
     сколько = int(sys.argv[2]) if len(sys.argv) > 2 else 10
     дошло = 0
+    коды = {}
     for i in range(сколько):
         try:
-            urllib.request.urlopen(адрес, timeout=10).read()
+            ответ = urllib.request.urlopen(адрес, timeout=10)
+            ответ.read()
             дошло += 1
-        except Exception:  # noqa: BLE001 — считаем отказы, причина здесь не важна
+            коды[ответ.status] = коды.get(ответ.status, 0) + 1
+        except urllib.error.HTTPError as e:
+            # ⚠️ 401 и 404 — это ОТВЕТ сервера, значит связь есть. Раньше они
+            # считались потерей, и пробник врал: 28.08.2026 он показал «дошло
+            # 0 из 6» на живом API, который исправно отвечал «неверный ключ».
+            дошло += 1
+            коды[e.code] = коды.get(e.code, 0) + 1
+        except ОБРЫВЫ:
             pass
-    print(f"{адрес}: дошло {дошло} из {сколько}, потеряно {сколько - дошло}")
+    расшифровка = ", ".join(f"{к}: {n}" for к, n in sorted(коды.items()))
+    print(f"{адрес}: дошло {дошло} из {сколько}, потеряно {сколько - дошло}"
+          + (f"  (ответы — {расшифровка})" if коды else ""))
