@@ -29,6 +29,8 @@ import urllib.request
 from collections import Counter
 from pathlib import Path
 
+from seti import достучаться  # noqa: E402 — после sys.path
+
 ROOT = Path(__file__).resolve().parent.parent
 ENV = ROOT / ".env"
 API_PREFIX = "/platform/online"
@@ -179,8 +181,7 @@ def fetch(cfg, prefix):
             "Connection": "keep-alive",
         },
     )
-    with urllib.request.urlopen(req, timeout=90) as resp:
-        return json.loads(resp.read().decode("utf-8"))
+    return json.loads(достучаться(req, таймаут=90).decode("utf-8"))
 
 
 def people_from(raw, offset=0, prefix=None, строго=False):

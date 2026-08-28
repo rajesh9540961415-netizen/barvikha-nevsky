@@ -36,6 +36,8 @@ import urllib.request
 from datetime import date
 from pathlib import Path
 
+from seti import достучаться  # noqa: E402 — после sys.path
+
 ROOT = Path(__file__).resolve().parent.parent
 DDS = ROOT / "data" / "dds"
 АДРЕС_ПО_УМОЛЧАНИЮ = "https://nevsky-office-borzovavv.amvera.io"
@@ -83,8 +85,7 @@ def запрос(путь: str, тело: dict | None = None) -> dict:
         headers={"X-Finance-Key": ключ, "Content-Type": "application/json"},
     )
     try:
-        with urllib.request.urlopen(req, timeout=120) as ответ:
-            return json.loads(ответ.read())
+        return json.loads(достучаться(req, таймаут=120))
     except urllib.error.HTTPError as e:
         подробности = e.read().decode("utf-8", errors="replace")
         try:

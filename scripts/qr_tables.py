@@ -14,6 +14,8 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
+from seti import достучаться  # noqa: E402 — после sys.path
+
 ROOT = Path(__file__).resolve().parent.parent
 ENV = ROOT / ".env"
 OUT = ROOT / "data" / "tables.json"
@@ -47,8 +49,7 @@ def main():
             "Connection": "keep-alive",
         },
     )
-    with urllib.request.urlopen(req, timeout=90) as resp:
-        schemes = json.loads(resp.read().decode("utf-8"))
+    schemes = json.loads(достучаться(req, таймаут=90).decode("utf-8"))
 
     if not schemes:
         sys.exit("Quick Resto не вернул ни одной схемы залов.")

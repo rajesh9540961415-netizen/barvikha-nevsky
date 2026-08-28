@@ -41,6 +41,8 @@ import urllib.request
 from datetime import date, timedelta
 from pathlib import Path
 
+from seti import достучаться  # noqa: E402 — после sys.path
+
 ROOT = Path(__file__).resolve().parent.parent
 ENV = ROOT / ".env"
 HOST = "https://universal-api.1-ofd.ru"
@@ -113,18 +115,20 @@ def запрос(путь: str, токен: str | None = None, тело: dict | 
         заголовки["Authorization"] = токен
     req = urllib.request.Request(HOST + путь, data=данные, headers=заголовки)
     try:
-        # ⚠️ ОФД рвёт длинный ответ на середине: приходит IncompleteRead,
-        # и это НЕ ошибка сети в понимании urllib — её не ловит ни HTTPError,
+        # ⚠️ Здесь два разных обрыва, и лечатся они одинаково — повтором.
+        # Первый: ОФД рвёт длинный ответ на середине, приходит IncompleteRead.
+        # Это НЕ ошибка сети в понимании urllib, её не ловит ни HTTPError,
         # ни URLError. 22.08.2026 из-за неё дважды подряд упала пересборка
-        # файла возвратов, а она же стоит в утренней задаче: месячная выгрузка
-        # чеков весит мегабайты и рвётся тем охотнее, чем больше месяц.
-        # Лечение — просто повторить: со второго-третьего раза проходит.
+        # файла возвратов, а она же стоит в утренней задаче.
+        # Второй: соединение не устанавливается вовсе — теряет VPN incy
+        # на компьютере владельца, наружу не доходит каждый третий запрос
+        # (разобрано 28.08.2026). Прежний цикл повторов этот случай пропускал:
+        # URLError в его список не входил и уходил сразу в отказ ниже.
+        # Оба случая теперь у общего `достучаться`, вместе с JSONDecodeError.
         for попытка in range(4):
             try:
-                with urllib.request.urlopen(req, timeout=120) as ответ:
-                    return json.loads(ответ.read().decode("utf-8"))
-            except (http.client.IncompleteRead, ConnectionResetError,
-                    TimeoutError, json.JSONDecodeError) as e:
+                return json.loads(достучаться(req, таймаут=120).decode("utf-8"))
+            except json.JSONDecodeError as e:
                 if попытка == 3:
                     sys.exit(f"✗ Ответ на {путь} оборвался четыре раза подряд: "
                              f"{type(e).__name__}.\n"
@@ -136,9 +140,10 @@ def запрос(путь: str, токен: str | None = None, тело: dict | 
         # ⚠️ Путь печатаем, ключ — нет: он в теле запроса, а не в адресе.
         sys.exit(f"✗ {e.code} на {путь}\n  ответ сервера: {текст}")
     except urllib.error.URLError as e:
-        sys.exit(f"✗ Не достучались до {HOST}: {e.reason}\n"
-                 "  С этого компьютера часть адресов перехватывает VPN incy — "
-                 "проверьте, что universal-api.1-ofd.ru открывается.")
+        sys.exit(f"✗ Не достучались до {HOST} за пять попыток: {e.reason}\n"
+                 "  Связь с этого компьютера идёт через VPN incy и теряет часть "
+                 "запросов;\n  пять попыток подряд мимо — значит дело не в потере "
+                 "пакета, а в самом ОФД\n  или в том, что адрес не открывается вовсе.")
 
 
 def главное():
