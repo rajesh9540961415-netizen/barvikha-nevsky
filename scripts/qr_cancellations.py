@@ -381,7 +381,16 @@ def главное() -> None:
     p = argparse.ArgumentParser(description="Отмены Quick Resto из обеих касс")
     p.add_argument("--с", dest="с", default="2026-01-01", help="с какого дня")
     p.add_argument("--день", dest="день", help="блок за один торговый день")
+    p.add_argument("--позавчера", action="store_true", dest="позавчера",
+                   help="то же, что --день с позавчерашним днём: дата считается "
+                        "сама, чтобы текст команды не менялся изо дня в день")
     a = p.parse_args()
+
+    # ⚠️ См. тот же комментарий в tg_kassa.py: разрешение на запуск хранится
+    # строкой команды целиком, и дата внутри неё делала команду новой каждое
+    # утро — утренняя задача вставала и ждала человека.
+    if a.позавчера and not a.день:
+        a.день = (date.today() - timedelta(days=2)).isoformat()
 
     if a.день:
         for строка in блок_за_день(date.fromisoformat(a.день)):

@@ -26,12 +26,13 @@ Telegram рвёт ключ, работающий с двух адресов ср
     python3 scripts/tg_kassa.py --robot-stopped              последние 200
     python3 scripts/tg_kassa.py --robot-stopped --с 2026-08-01
     python3 scripts/tg_kassa.py --мак --с 2026-08-01         под своим номером
+    python3 scripts/tg_kassa.py --мак --позавчера           дата считается сама
 """
 
 import argparse
 import json
 import sys
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -66,11 +67,23 @@ def главное() -> None:
                    help="сколько последних сообщений смотреть")
     p.add_argument("--с", dest="с", metavar="ГГГГ-ММ-ДД",
                    help="брать только с этого торгового дня")
+    p.add_argument("--позавчера", action="store_true", dest="позавчера",
+                   help="то же, что --с с позавчерашним днём: дата считается "
+                        "сама, чтобы текст команды не менялся изо дня в день")
     p.add_argument("--мак", action="store_true",
                    help="читать под отдельной сессией Мака (свой номер)")
     p.add_argument("--robot-stopped", action="store_true", dest="робот_стоит",
                    help="подтверждаю: читалка на Amvera остановлена")
     a = p.parse_args()
+
+    # ⚠️ Дата внутри команды ломала утреннюю задачу. Разрешение на запуск
+    # хранится СТРОКОЙ КОМАНДЫ ЦЕЛИКОМ: «--с 2026-08-27» — это не то же самое,
+    # что «--с 2026-08-26», и каждое утро задача упиралась в новый вопрос
+    # и стояла до тех пор, пока владелец его не заметит. 29.08.2026 простояла
+    # так пять часов. С ключом --позавчера текст команды один и тот же всегда.
+    if a.позавчера and not a.с:
+        a.с = (date.today() - timedelta(days=2)).isoformat()
+        print(f"Позавчерашний торговый день: {a.с}")
 
     сессия = ПАПКА / (".tg-mac-session" if a.мак else ".tg-session")
 
