@@ -44,6 +44,7 @@ from __future__ import annotations
 import argparse
 import base64
 import json
+import re
 import sys
 import time
 import urllib.error
@@ -141,6 +142,35 @@ def страницами(url: str, head: dict, module: str, класс: str,
     return всё
 
 
+СТОЛЫ_МОДУЛЬ = "front.tablemanagement"
+СТОЛЫ_КЛАСС = "ru.edgex.quickresto.modules.front.tablemanagement.TableScheme"
+
+
+def столы(url: str, head: dict) -> dict:
+    """Идентификатор стола → его название («Н11», «BOSS», «Бар 2»).
+
+    💡 Как стол вообще находится. В отмене названия стола нет, есть только
+    `tableOrderDocId` вида `table_order-240429074706063E|00000584=...`.
+    Первая часть после дефиса — это идентификатор САМОГО СТОЛА: тот же заказ
+    у оплаченного чека лежит рядом с полем `tableDocId = table-240429074706063E`.
+    Значит стол достаётся из строки, без второго запроса за заказом.
+
+    ⚠️ Проверено 31.08.2026 на 300 отменах подряд: стол определился у 300.
+    """
+    из_docid = {}
+    for схема in страницами(url, head, СТОЛЫ_МОДУЛЬ, СТОЛЫ_КЛАСС, размер=50):
+        for т in (схема.get("tables") or []):
+            if т.get("_id"):
+                из_docid[т["_id"]] = т.get("title") or ""
+    return из_docid
+
+
+def стол_заказа(table_order_doc_id: str, схема: dict) -> str:
+    """Название стола по идентификатору заказа. Пусто — если стол незнакомый."""
+    m = re.match(r"table_order-([^|]+)\|", table_order_doc_id or "")
+    return схема.get(f"table-{m.group(1)}", "") if m else ""
+
+
 def сотрудники(url: str, head: dict) -> dict:
     """Номер учётки → имя. Имя в отмене не приходит, приходит только номер."""
     люди = страницами(url, head, EMPLOYEE_MODULE, EMPLOYEE_CLASS, размер=300)
@@ -180,6 +210,7 @@ def отмены(с: date, по: date | None = None, с_по_кассе: dict | 
 
         сырые = страницами(url, head, MODULE, CLASS, стоп=стоп)
         имена = сотрудники(url, head)
+        схема = столы(url, head)
         for x in сырые:
             день = торговый_день(x["localCreateTime"])
             if день < с_кассы or (по and день > по):
@@ -200,6 +231,7 @@ def отмены(с: date, по: date | None = None, с_по_кассе: dict | 
                 "время": т.strftime("%H:%M"),
                 "учётка": имена.get(номер, f"учётка №{номер}"),
                 "номер_учётки": номер,
+                "стол": стол_заказа(x.get("tableOrderDocId"), схема),
                 "причина": причина.get("description") or "",
                 "комментарий": (x.get("comment") or "").strip(),
                 "со_списанием": bool(причина.get("withdrawFromStore")),
@@ -372,7 +404,10 @@ def блок_за_день(день: date) -> list:
                            f"в этот день НЕ БЫЛО ни в одной роли")
             вых.append("     это работа под чужой учёткой; с 21.08 её быть не должно")
     for р in со_списанием:
-        вых.append(f"  списание {р['время']} · {р['касса']} · {р['учётка']}: "
+        # 💡 Стол в строке — чтобы вопрос смене был не «что было в 20:53»,
+        # а «что было за столом Н13 в 20:53». На следующий день это ещё помнят.
+        стол = f" · стол {р['стол']}" if р.get("стол") else ""
+        вых.append(f"  списание {р['время']}{стол} · {р['касса']} · {р['учётка']}: "
                    f"{р['комментарий'] or '— без комментария —'}")
     return вых
 
