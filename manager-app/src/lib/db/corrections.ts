@@ -475,8 +475,10 @@ export async function saveCrew(input: {
   businessDay: string;
   shift: Shift;
   note: string;
+  /** Кем подписать. Задаёт только служебный ключ; экран не передаёт. */
+  manager?: Manager;
 }): Promise<Answer> {
-  const manager = await currentManager();
+  const manager = await ктоПравит(input.manager);
   if (!manager) return { error: "Вход истёк — войдите заново" };
   if (!DAY.test(input.businessDay)) return { error: "Непонятная смена" };
 

@@ -3,6 +3,7 @@ import {
   cancelEvent,
   correctEvent,
   readDay,
+  saveCrew,
   добавитьЗапись,
 } from "@/lib/db/corrections";
 import { db } from "@/lib/db/sql";
@@ -137,6 +138,32 @@ export async function POST(request: Request) {
       continue;
     }
     const живые = данные.events.filter((e) => e.deletedAt === null);
+
+    if (оп.вид === "состав") {
+      // ⚠️ Замена официанта — это ДВА действия, и порядок между ними важен.
+      // Деньги нельзя записать на человека вне состава (проверка в
+      // `correctEvent`), а убрать человека, за которым ещё висят записи,
+      // значит отдать его долю кассира остальным. Поэтому: сперва добавить
+      // нового, потом перенести записи, и только потом убрать прежнего.
+      const добавить = Array.isArray(оп.добавить) ? оп.добавить.map(Number) : [];
+      const убрать = Array.isArray(оп.убрать) ? оп.убрать.map(Number) : [];
+      if (добавить.some((n) => !Number.isInteger(n)) || убрать.some((n) => !Number.isInteger(n))) {
+        итог.отказы.push("номера в «добавить» и «убрать» должны быть целыми");
+        continue;
+      }
+      const состав = new Set(данные.shift.crew);
+      for (const id of добавить) состав.add(id);
+      for (const id of убрать) состав.delete(id);
+      const ответ = await saveCrew({
+        businessDay: день,
+        note: почему,
+        manager,
+        shift: { ...данные.shift, crew: [...состав] },
+      });
+      if ("error" in ответ) итог.отказы.push(ответ.error);
+      else итог.сделано += 1;
+      continue;
+    }
 
     if (оп.вид === "отмена") {
       const кто = Number(оп.кто);
