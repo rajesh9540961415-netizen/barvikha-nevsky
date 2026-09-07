@@ -30,6 +30,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 import urllib.error
 import urllib.request
 from datetime import date, timedelta
@@ -38,6 +39,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from db import load_env  # noqa: E402
+from seti import достучаться  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 СКАЧАННЫЕ = ROOT / "data" / "выгрузки-смен"
@@ -66,8 +68,7 @@ def забрать_неразнесённые(ключ: str) -> dict | None:
         f"{адрес()}/api/qr-tips", headers={"X-Export-Key": ключ}
     )
     try:
-        with urllib.request.urlopen(запрос, timeout=60) as ответ:
-            данные = json.loads(ответ.read().decode("utf-8"))
+        данные = json.loads(достучаться(запрос).decode("utf-8"))
     except Exception as e:  # noqa: BLE001 — причина печатается, работа продолжается
         print(f"⚠️  Не удалось спросить про неразнесённые чаевые: {e}")
         return None
@@ -90,8 +91,7 @@ def забрать(день: str, ключ: str) -> dict:
         headers={"X-Export-Key": ключ},
     )
     try:
-        with urllib.request.urlopen(запрос, timeout=60) as ответ:
-            return json.loads(ответ.read().decode("utf-8"))
+        return json.loads(достучаться(запрос).decode("utf-8"))
     except urllib.error.HTTPError as e:
         тело = e.read().decode("utf-8", "replace")
         try:
@@ -112,7 +112,15 @@ def забрать(день: str, ключ: str) -> dict:
             )
         sys.exit(f"✗ Приложение ответило {e.code}: {причина}")
     except urllib.error.URLError as e:
-        sys.exit(f"✗ Не достучаться до приложения: {e.reason}")
+        sys.exit(
+            f"✗ Не достучаться до приложения за {ПОПЫТОК} попыток: {e.reason}\n"
+            "  Похоже, приложение на Amvera лежит или перегружено."
+        )
+    except Exception as e:  # noqa: BLE001 — таймаут TLS приходит не как URLError
+        sys.exit(
+            f"✗ Не достучаться до приложения за {ПОПЫТОК} попыток: {e}\n"
+            "  Похоже, приложение на Amvera лежит или перегружено."
+        )
 
 
 def собрать_отчёт(месяц: str) -> bool:
@@ -139,7 +147,6 @@ def дни_месяца(месяц: str, по: date) -> list[str]:
     последний = calendar.monthrange(год, мес)[1]
     все = [date(год, мес, д) for д in range(1, последний + 1)]
     return [d.isoformat() for d in все if d <= по]
-
 
 
 def обновить_ук(месяц: str) -> None:

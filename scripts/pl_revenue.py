@@ -1,0 +1,58 @@
+# -*- coding: utf-8 -*-
+"""Выручка по категориям P&L помесячно, по чекам ОФД. Нал/безнал — долей чека."""
+import sys, json, glob, collections
+from datetime import datetime, timedelta
+sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parent))
+from pl_menu import категория
+
+СУТКИ_С = 11  # ресторанные сутки: с 11:00 до 10:59, как в приложении
+
+def месяц(ч):
+    t = datetime.fromisoformat(ч["время"])
+    if t.hour < СУТКИ_С:
+        t -= timedelta(days=1)
+    return t.strftime("%Y-%m")
+
+def собрать(файлы):
+    """{(месяц, категория): {'нал':..,'безнал':..}}"""
+    res = collections.defaultdict(lambda: collections.defaultdict(float))
+    for f in файлы:
+        for ч in json.load(open(f)):
+            знак = 1 if ч.get("вид") == 1 else -1
+            поз = ч.get("позиции") or []
+            всего = sum(s for _, _, s in поз)
+            if not всего:
+                continue
+            m = месяц(ч)
+            нал, безнал = ч.get("нал") or 0, ч.get("безнал") or 0
+            for n, q, s in поз:
+                k = категория(n)
+                доля = s / всего
+                res[(m, k)]["нал"] += знак * нал * доля
+                res[(m, k)]["безнал"] += знак * безнал * доля
+    return res
+
+if __name__ == "__main__":
+    зал = собрать(sorted(glob.glob("data/ofd/чеки-2026-0[1-8].json")))
+    бар = собрать(sorted(glob.glob("data/ofd/чеки-бар-2026-0[78].json")))
+    свод = collections.defaultdict(lambda: collections.defaultdict(float))
+    for src in (зал, бар):
+        for (m, k), v in src.items():
+            свод[(m, k)]["нал"] += v["нал"]; свод[(m, k)]["безнал"] += v["безнал"]
+    месяцы = sorted({m for m, _ in свод})
+    кат = ["кухня", "бар", "кальяны", "аренда"]
+    print(f"{'месяц':<9}" + "".join(f"{k:>14}" for k in кат) + f"{'ИТОГО':>15}")
+    for m in месяцы:
+        строка = f"{m:<9}"
+        итог = 0
+        for k in кат:
+            v = свод[(m, k)]["нал"] + свод[(m, k)]["безнал"]
+            итог += v
+            строка += f"{v:>14,.0f}".replace(",", " ")
+        print(строка + f"{итог:>15,.0f}".replace(",", " "))
+    print()
+    print(f"{'месяц':<9}{'нал':>15}{'безнал':>15}{'доля нал':>10}")
+    for m in месяцы:
+        н = sum(свод[(m, k)]["нал"] for k in кат)
+        б = sum(свод[(m, k)]["безнал"] for k in кат)
+        print(f"{m:<9}{н:>15,.0f}{б:>15,.0f}{н/(н+б)*100:>9.1f}%".replace(",", " "))

@@ -38,6 +38,8 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
+from seti import достучаться  # noqa: E402 — после sys.path
+
 ROOT = Path(__file__).resolve().parent.parent
 ВЫПИСКИ = ROOT / "data" / "dds" / "выписки"
 КОРЕНЬ = ROOT / "data" / "certs" / "russian_trusted_root_ca.cer"
@@ -112,8 +114,7 @@ def скачать(ссылка: str) -> bytes:
 
     контекст = ssl.create_default_context(cafile=str(КОРЕНЬ))
     try:
-        with urllib.request.urlopen(ссылка, timeout=90, context=контекст) as ответ:
-            return ответ.read()
+        return достучаться(ссылка, таймаут=90, context=контекст)
     except urllib.error.HTTPError as e:
         if e.code == 404:
             raise SystemExit(

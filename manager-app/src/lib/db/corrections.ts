@@ -14,8 +14,25 @@ import {
 } from "../office";
 import { HOOKAH_POT_ID } from "../split";
 import type { Employee, Shift } from "../types";
-import { currentManager } from "./managers";
+import { currentManager, type Manager } from "./managers";
 import { db } from "./sql";
+
+/**
+ * Кем подписана правка.
+ *
+ * Обычно — тем, кто вошёл в бэк-офис. Но у правок есть второй путь: служебный
+ * ключ, которым идут пачки сверки (см. `app/api/tips-fix`). Сотню записей
+ * через экран руками не проведёшь, а правило «правка не стирает запись»
+ * обязано работать одинаково на обоих путях. Поэтому ключ не пишет в базу
+ * сам: он вызывает эти же функции и лишь подставляет, кем подписаться.
+ *
+ * ⚠️ Подставлять управляющего разрешено ТОЛЬКО коду, который сам проверил
+ * ключ. Ни одна форма экрана этот параметр не передаёт — там он остаётся
+ * пустым, и подпись берётся из сессии, как раньше.
+ */
+async function ктоПравит(явный?: Manager): Promise<Manager | null> {
+  return явный ?? (await currentManager());
+}
 
 /**
  * Исправления.
@@ -304,8 +321,10 @@ export async function correctEvent(input: {
   key: string;
   draft: Draft;
   note: string;
+  /** Кем подписать. Задаёт только служебный ключ; экран не передаёт. */
+  manager?: Manager;
 }): Promise<Answer> {
-  const manager = await currentManager();
+  const manager = await ктоПравит(input.manager);
   if (!manager) return { error: "Вход истёк — войдите заново" };
   if (!DAY.test(input.businessDay)) return { error: "Непонятная смена" };
   if (!UUID.test(input.key)) return { error: "Непонятная запись" };
@@ -409,8 +428,10 @@ export async function cancelEvent(input: {
   businessDay: string;
   key: string;
   note: string;
+  /** Кем подписать. Задаёт только служебный ключ; экран не передаёт. */
+  manager?: Manager;
 }): Promise<Answer> {
-  const manager = await currentManager();
+  const manager = await ктоПравит(input.manager);
   if (!manager) return { error: "Вход истёк — войдите заново" };
   if (!DAY.test(input.businessDay)) return { error: "Непонятная смена" };
   if (!UUID.test(input.key)) return { error: "Непонятная запись" };
@@ -454,8 +475,10 @@ export async function saveCrew(input: {
   businessDay: string;
   shift: Shift;
   note: string;
+  /** Кем подписать. Задаёт только служебный ключ; экран не передаёт. */
+  manager?: Manager;
 }): Promise<Answer> {
-  const manager = await currentManager();
+  const manager = await ктоПравит(input.manager);
   if (!manager) return { error: "Вход истёк — войдите заново" };
   if (!DAY.test(input.businessDay)) return { error: "Непонятная смена" };
 
@@ -630,8 +653,10 @@ export async function добавитьЗапись(input: {
   /** Время события внутри смены, как на бумаге: «19:40». */
   время: string;
   note: string;
+  /** Кем подписать. Задаёт только служебный ключ; экран не передаёт. */
+  manager?: Manager;
 }): Promise<Answer> {
-  const manager = await currentManager();
+  const manager = await ктоПравит(input.manager);
   if (!manager) return { error: "Вход истёк — войдите заново" };
   if (!DAY.test(input.businessDay)) return { error: "Непонятная смена" };
 
