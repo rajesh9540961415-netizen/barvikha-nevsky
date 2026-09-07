@@ -3,10 +3,7 @@ import { redirect } from "next/navigation";
 import Nav from "@/components/Nav";
 import { requireManager } from "@/lib/db/managers";
 import { money, plural } from "@/lib/format";
-import {
-  ПЕРИОДЫ, заПериод, годНазад, окно, рост, собрано, последнийДень,
-  type Показатели,
-} from "@/lib/dashboard";
+import { заПериод, состояние, type Показатели } from "@/lib/db/dashboard";
 
 export const dynamic = "force-dynamic";
 
@@ -17,17 +14,44 @@ export const dynamic = "force-dynamic";
  * показателями работы заведения». До этого корень бэк-офиса просто
  * перенаправлял на «Финансы», и общей картины не было нигде.
  *
- * Пять блоков — ровно те, что считаются по имеющимся данным, без новых
- * выгрузок: главные числа, направления, часы, дни недели, возвраты
- * и чаевые. Столы, оборачиваемость и повторные гости сюда НЕ вошли
+ * Пять блоков — ровно те, что считаются без новых выгрузок: главные числа
+ * с ростом год к году, выручка по направлениям, часы суток, дни недели,
+ * возвраты и чаевые. Столы, оборачиваемость и повторные гости сюда НЕ вошли
  * сознательно: привязки чека к столу в фискальных данных нет, а рисовать
  * пустой блок — обещать то, чего нет.
+ *
+ * Числа берутся из `dashboard_days` — живьём из базы. В первой версии того
+ * же дня они лежали файлом внутри сборки и обновлялись только с выкладкой;
+ * владелец 07.09.2026: «делай живое обновление через базу». Наполняет
+ * таблицу `scripts/dashboard_push.py` через служебную дверь `/api/dashboard`.
  *
  * Управляющего сюда не пускаем: обзор — это выручка и прибыль, его экран
  * начинается с чаевых.
  */
 
 const ДНИ_НЕДЕЛИ = ["пн", "вт", "ср", "чт", "пт", "сб", "вс"];
+
+/**
+ * Сдвинуть день на столько-то суток.
+ *
+ * Живёт здесь, а не рядом с чтением из базы: тот файл помечен "use server",
+ * и в нём каждый вывоз обязан быть асинхронной функцией. Обычная функция
+ * там роняет разом и эту страницу, и служебную дверь, и /api/health.
+ */
+function сдвинуть(день: string, наДней: number): string {
+  const d = new Date(день + "T12:00:00Z");
+  d.setUTCDate(d.getUTCDate() + наДней);
+  return d.toISOString().slice(0, 10);
+}
+
+const ПЕРИОДЫ = [
+  { ключ: "1", подпись: "Вчера", дней: 1 },
+  { ключ: "7", подпись: "7 дней", дней: 7 },
+  { ключ: "30", подпись: "30 дней", дней: 30 },
+  { ключ: "90", подпись: "90 дней", дней: 90 },
+  { ключ: "365", подпись: "Год", дней: 365 },
+];
+const ПО_УМОЛЧАНИЮ = "30";
 
 /** «12,4 млн» — на плитке важен порядок величины, а не рубль. */
 function крупно(v: number): string {
@@ -37,27 +61,14 @@ function крупно(v: number): string {
   if (Math.abs(v) >= 10_000) {
     return Math.round(v / 1000).toLocaleString("ru-RU") + " тыс";
   }
-  return money(v);
-}
-
-function Дельта({ значение, чтоЗначит }: { значение: number | null; чтоЗначит: string }) {
-  if (значение === null) {
-    return <p className="mt-1.5 text-xs text-fg-muted">не с чем сравнить</p>;
-  }
-  const вверх = значение >= 0;
-  return (
-    <p className={"mt-1.5 text-xs " + (вверх ? "text-sand" : "text-alert")}>
-      {вверх ? "↑" : "↓"} {Math.abs(значение).toLocaleString("ru-RU", { maximumFractionDigits: 0 })} %{" "}
-      <span className="text-fg-muted">{чтоЗначит}</span>
-    </p>
-  );
+  return money(Math.round(v));
 }
 
 function Плитка({
-  подпись, значение, единица, дельта,
+  подпись, значение, единица, дельта, пояснение,
 }: {
   подпись: string; значение: string; единица?: string;
-  дельта?: { значение: number | null; чтоЗначит: string } | { текст: string };
+  дельта?: number | null; пояснение?: string;
 }) {
   return (
     <div className="bg-surface p-4">
@@ -66,11 +77,16 @@ function Плитка({
         {значение}
         {единица ? <span className="ml-1 text-base text-fg-muted">{единица}</span> : null}
       </p>
-      {дельта && "текст" in дельта
-        ? <p className="mt-1.5 text-xs text-fg-muted">{дельта.текст}</p>
-        : дельта
-          ? <Дельта значение={дельта.значение} чтоЗначит={дельта.чтоЗначит} />
-          : null}
+      {дельта === undefined ? null : дельта === null ? (
+        <p className="mt-1.5 text-xs text-fg-muted">не с чем сравнить</p>
+      ) : (
+        <p className={"mt-1.5 text-xs " + (дельта >= 0 ? "text-sand" : "text-alert")}>
+          {дельта >= 0 ? "↑" : "↓"}{" "}
+          {Math.abs(дельта).toLocaleString("ru-RU", { maximumFractionDigits: 0 })} %{" "}
+          <span className="text-fg-muted">к прошлому году</span>
+        </p>
+      )}
+      {пояснение ? <p className="mt-1.5 text-xs text-fg-muted">{пояснение}</p> : null}
     </div>
   );
 }
@@ -102,13 +118,44 @@ function Столбики({
             <div
               className={"w-full rounded-sm " + (i === выделить ? "bg-sand" : "bg-sand-dim")}
               style={{ height: `${Math.max((v / макс) * 100, v > 0 ? 1.5 : 0)}%` }}
-              title={`${подписи[i]} — ${money(Math.round(v))}`}
+              title={`${подписи[i] || i} — ${money(Math.round(v))}`}
             />
           </div>
           <span className="text-[10px] leading-none text-fg-muted">{подписи[i]}</span>
         </div>
       ))}
     </div>
+  );
+}
+
+/** Насколько выросло. `null` — сравнивать не с чем, а не «ноль». */
+function рост(сейчас: number, было: number): number | null {
+  if (!было) return null;
+  return ((сейчас - было) / было) * 100;
+}
+
+function Пусто({ обновлено }: { обновлено: string | null }) {
+  return (
+    <section className="rounded-lg border border-line bg-surface p-6">
+      <h2 className="text-base font-medium">Чисел пока нет</h2>
+      <p className="mt-3 max-w-[62ch] text-sm leading-relaxed text-fg-muted">
+        Дневные итоги считаются на компьютере владельца из фискальных чеков
+        и заливаются сюда отдельной командой: до сервера папка с чеками
+        не доезжает, а напрямую в базу с Мака не достучаться — мешает VPN.
+      </p>
+      <p className="mt-3 max-w-[62ch] text-sm leading-relaxed text-fg-muted">
+        Залить: <code className="text-fg">python3 scripts/dashboard_push.py</code> в папке
+        проекта. Если команда ругается на ключ — значит в панели Amvera
+        у приложения <span className="text-fg">nevsky-office</span> не задана
+        переменная <span className="text-fg">DASHBOARD_KEY</span>.
+      </p>
+      {обновлено ? (
+        <p className="mt-3 text-xs text-fg-muted">
+          Последняя заливка была {обновлено.replace("T", ", ").slice(0, 16)}, но за
+          выбранный период данных нет — попробуйте период длиннее.
+        </p>
+      ) : null}
+    </section>
   );
 }
 
@@ -121,66 +168,100 @@ export default async function Обзор({
   if (manager.role !== "owner") redirect("/tips");
 
   const параметры = await searchParams;
-  const выбран = ПЕРИОДЫ.find((п) => п.ключ === параметры.период) ?? ПЕРИОДЫ[2];
-  const { с, по } = окно(выбран.дней);
-  const сейчас: Показатели = заПериод(с, по);
-  const было: Показатели = годНазад(с, по);
+  const выбран =
+    ПЕРИОДЫ.find((п) => п.ключ === параметры.период) ??
+    ПЕРИОДЫ.find((п) => п.ключ === ПО_УМОЛЧАНИЮ)!;
+
+  const { последний, обновлено } = await состояние();
+
+  const полоса = (
+    <div className="mb-5 flex flex-wrap items-baseline gap-x-2 gap-y-3">
+      {ПЕРИОДЫ.map((п) => (
+        <Link
+          key={п.ключ}
+          href={п.ключ === ПО_УМОЛЧАНИЮ ? "/" : `/?период=${п.ключ}`}
+          aria-current={п.ключ === выбран.ключ ? "page" : undefined}
+          className={
+            "rounded-full border px-3.5 py-1.5 text-sm transition-colors " +
+            (п.ключ === выбран.ключ
+              ? "border-sand bg-sand/15 font-medium text-sand"
+              : "border-line text-fg-muted hover:border-sand-dim hover:text-fg")
+          }
+        >
+          {п.подпись}
+        </Link>
+      ))}
+    </div>
+  );
+
+  if (!последний) {
+    return (
+      <>
+        <Nav раздел="обзор" />
+        <main className="mx-auto max-w-[1600px] px-6 py-6">
+          <Пусто обновлено={обновлено} />
+        </main>
+      </>
+    );
+  }
+
+  const по = последний;
+  const с = сдвинуть(по, -(выбран.дней - 1));
+  const сейчас: Показатели = await заПериод(с, по);
+  const было: Показатели = await заПериод(сдвинуть(с, -365), сдвинуть(по, -365));
+
+  if (сейчас.днейСЧеками === 0) {
+    return (
+      <>
+        <Nav раздел="обзор" />
+        <main className="mx-auto max-w-[1600px] px-6 py-6">
+          {полоса}
+          <Пусто обновлено={обновлено} />
+        </main>
+      </>
+    );
+  }
 
   const пикЧаса = сейчас.часы.indexOf(Math.max(...сейчас.часы));
   const пикДня = сейчас.дниНедели.indexOf(Math.max(...сейчас.дниНедели));
-  const тихийДень = сейчас.дниНедели.indexOf(
-    Math.min(...сейчас.дниНедели.filter((v) => v > 0)));
+  const живыеДни = сейчас.дниНедели.filter((v) => v > 0);
+  const тихийДень = живыеДни.length
+    ? сейчас.дниНедели.indexOf(Math.min(...живыеДни))
+    : -1;
   const выручкаВДень = сейчас.дней ? сейчас.выручка / сейчас.дней : 0;
 
   return (
     <>
       <Nav раздел="обзор" />
       <main className="mx-auto max-w-[1600px] px-6 py-6">
-
-        <div className="mb-5 flex flex-wrap items-baseline gap-x-2 gap-y-3">
-          {ПЕРИОДЫ.map((п) => (
-            <Link
-              key={п.ключ}
-              href={п.ключ === "30" ? "/" : `/?период=${п.ключ}`}
-              aria-current={п.ключ === выбран.ключ ? "page" : undefined}
-              className={
-                "rounded-full border px-3.5 py-1.5 text-sm transition-colors " +
-                (п.ключ === выбран.ключ
-                  ? "border-sand bg-sand/15 font-medium text-sand"
-                  : "border-line text-fg-muted hover:border-sand-dim hover:text-fg")
-              }
-            >
-              {п.подпись}
-            </Link>
-          ))}
-          <span className="ml-1 text-xs text-fg-muted">
-            {сейчас.с} — {сейчас.по} · сравнение с тем же периодом год назад
-          </span>
-        </div>
+        {полоса}
+        <p className="-mt-2 mb-5 text-xs text-fg-muted">
+          {сейчас.с} — {сейчас.по} · сравнение с тем же периодом год назад
+        </p>
 
         {/* ── 1. Главные числа ─────────────────────────────── */}
         <div className="grid grid-cols-2 gap-px overflow-hidden rounded-lg border border-line bg-line sm:grid-cols-3 lg:grid-cols-5">
           <Плитка
             подпись="Выручка" значение={крупно(сейчас.выручка)} единица="₽"
-            дельта={{ значение: рост(сейчас.выручка, было.выручка), чтоЗначит: "к прошлому году" }}
+            дельта={рост(сейчас.выручка, было.выручка)}
           />
           <Плитка
             подпись="Чеков" значение={сейчас.чеков.toLocaleString("ru-RU")}
-            дельта={{ значение: рост(сейчас.чеков, было.чеков), чтоЗначит: "к прошлому году" }}
+            дельта={рост(сейчас.чеков, было.чеков)}
           />
           <Плитка
             подпись="Средний чек" значение={money(Math.round(сейчас.среднийЧек))}
-            дельта={{ текст: "с июля — две кассы, сравнивать с прошлым нельзя" }}
+            пояснение="с июля — две кассы, с прошлым не сравнивать"
           />
           <Плитка
             подпись="Наличными"
             значение={сейчас.долянала.toLocaleString("ru-RU", { maximumFractionDigits: 1 })}
             единица="%"
-            дельта={{ текст: `остальное — терминал и QR` }}
+            пояснение="остальное — терминал и QR"
           />
           <Плитка
             подпись="В день" значение={крупно(выручкаВДень)} единица="₽"
-            дельта={{ текст: `${сейчас.дней} ${plural(сейчас.дней, "день", "дня", "дней")} в периоде` }}
+            пояснение={`${сейчас.дней} ${plural(сейчас.дней, "день", "дня", "дней")} в периоде, из них с чеками ${сейчас.днейСЧеками}`}
           />
         </div>
 
@@ -192,7 +273,7 @@ export default async function Обзор({
               {сейчас.направления.map((н) => {
                 const макс = сейчас.направления[0]?.сумма || 1;
                 return (
-                  <div key={н.имя} className="grid grid-cols-[84px_1fr_104px] items-center gap-3">
+                  <div key={н.имя} className="grid grid-cols-[84px_1fr_112px] items-center gap-3">
                     <span className="text-sm text-fg-muted">{н.имя}</span>
                     <span className="h-2 overflow-hidden rounded-full bg-line">
                       <span
@@ -216,7 +297,7 @@ export default async function Обзор({
           <Карточка
             заголовок="Дни недели"
             пояснение={
-              сейчас.дниНедели[пикДня] && сейчас.дниНедели[тихийДень]
+              тихийДень >= 0 && сейчас.дниНедели[тихийДень] > 0 && пикДня !== тихийДень
                 ? `${ДНИ_НЕДЕЛИ[пикДня]} даёт в ${(сейчас.дниНедели[пикДня] / сейчас.дниНедели[тихийДень]).toLocaleString("ru-RU", { maximumFractionDigits: 1 })} раза больше, чем ${ДНИ_НЕДЕЛИ[тихийДень]}`
                 : undefined
             }
@@ -241,7 +322,10 @@ export default async function Обзор({
 
         {/* ── 5. Возвраты и чаевые ─────────────────────────── */}
         <div className="mt-4 grid gap-4 lg:grid-cols-2">
-          <Карточка заголовок="Возвраты и отмены" пояснение="единственное число здесь, которое смотрят как тревогу">
+          <Карточка
+            заголовок="Возвраты и отмены"
+            пояснение="единственное число здесь, которое смотрят как тревогу"
+          >
             <div className="flex flex-wrap items-baseline gap-x-8 gap-y-3">
               <div>
                 <p className="text-2xl tabular-nums">
@@ -262,7 +346,11 @@ export default async function Обзор({
 
           <Карточка
             заголовок="Чаевые"
-            пояснение={сейчас.днейСЧаевыми ? `по ${сейчас.днейСЧаевыми} ${plural(сейчас.днейСЧаевыми, "смене", "сменам", "сменам")} из приложения` : "нет данных за период"}
+            пояснение={
+              сейчас.днейСЧаевыми
+                ? `по ${сейчас.днейСЧаевыми} ${plural(сейчас.днейСЧаевыми, "смене", "сменам", "сменам")} из приложения`
+                : undefined
+            }
           >
             {сейчас.чаевые > 0 ? (
               <div className="flex flex-wrap items-baseline gap-x-8 gap-y-3">
@@ -279,19 +367,19 @@ export default async function Обзор({
                 </Link>
               </div>
             ) : (
-              <p className="text-sm text-fg-muted">
-                За этот период смен в приложении нет. Чаевые появились в учёте
-                с августа 2026 — на длинных периодах доля будет заниженной.
+              <p className="text-sm leading-relaxed text-fg-muted">
+                За этот период смен в приложении нет. Чаевые ведутся с августа
+                2026 — на длинных периодах их доля будет заниженной.
               </p>
             )}
           </Карточка>
         </div>
 
-        <p className="mt-6 text-xs text-fg-muted">
+        <p className="mt-6 max-w-[92ch] text-xs leading-relaxed text-fg-muted">
           Числа — фискальные чеки обеих касс, торговые сутки с 11:00 до 10:59.
-          Слепок собран {собрано().replace("T", ", ")}, последний день с чеками —{" "}
-          {последнийДень()}. Столы, оборачиваемость и повторные гости сюда пока
-          не вошли: привязки чека к столу в фискальных данных нет.
+          {обновлено ? ` Залито ${обновлено.replace("T", ", ").slice(0, 16)}.` : ""} Последний
+          день с чеками — {последний}. Столы, оборачиваемость и повторные гости
+          сюда пока не вошли: привязки чека к столу в фискальных данных нет.
         </p>
       </main>
     </>
