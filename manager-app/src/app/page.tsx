@@ -97,10 +97,10 @@ function Плитка({
 }) {
   return (
     <div className="bg-surface p-4">
-      <p className="text-[11px] font-medium uppercase tracking-wider text-fg-muted">{подпись}</p>
-      <p className="mt-2 text-2xl leading-none tabular-nums">
+      <p className="text-[11px] font-semibold uppercase tracking-wider text-fg-muted">{подпись}</p>
+      <p className="mt-2 text-2xl font-medium leading-none tabular-nums">
         {значение}
-        {единица ? <span className="ml-1 text-base text-fg-muted">{единица}</span> : null}
+        {единица ? <span className="ml-1 text-base font-normal text-fg-muted">{единица}</span> : null}
       </p>
       {дельта === undefined ? null : дельта === null ? (
         <p className="mt-1.5 text-xs text-fg-muted">не с чем сравнить</p>
@@ -122,7 +122,7 @@ function Карточка({
   return (
     <section className="rounded-lg border border-line bg-surface p-5">
       <div className="mb-4 flex items-baseline justify-between gap-3">
-        <h2 className="text-base font-medium">{заголовок}</h2>
+        <h2 className="text-base font-semibold">{заголовок}</h2>
         {пояснение ? <p className="text-right text-xs text-fg-muted">{пояснение}</p> : null}
       </div>
       {children}
@@ -160,7 +160,7 @@ function Столбики({
               title={`${подписи[i] || i} — ${money(Math.round(v))}`}
             />
           </div>
-          <span className="text-[10px] leading-none text-fg-muted">{подписи[i]}</span>
+          <span className="text-[11px] font-medium leading-none text-fg-muted">{подписи[i]}</span>
         </div>
       ))}
     </div>
@@ -358,7 +358,7 @@ export default async function Сводка({
                 const макс = сейчас.направления[0]?.сумма || 1;
                 return (
                   <div key={н.имя} className="grid grid-cols-[84px_1fr_112px] items-center gap-3">
-                    <span className="text-sm text-fg-muted">{н.имя}</span>
+                    <span className="text-sm font-medium text-fg">{н.имя}</span>
                     <span className="h-2.5 overflow-hidden rounded-full bg-line">
                       <span
                         className="block h-full rounded-full"
