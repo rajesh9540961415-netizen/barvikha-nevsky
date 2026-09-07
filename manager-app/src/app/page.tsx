@@ -33,6 +33,21 @@ export const dynamic = "force-dynamic";
 const ДНИ_НЕДЕЛИ = ["пн", "вт", "ср", "чт", "пт", "сб", "вс"];
 
 /**
+ * Цвет закреплён за НАПРАВЛЕНИЕМ, а не за местом в списке.
+ *
+ * Список отсортирован по сумме, и порядок меняется от периода к периоду:
+ * в июне первым был бар, за вчера — кальяны. Крась мы по месту, у бара
+ * при каждом переключении менялся бы цвет, и глаз перестал бы узнавать
+ * направление без чтения подписи.
+ */
+const ЦВЕТ_НАПРАВЛЕНИЯ: Record<string, string> = {
+  "Бар": "var(--color-chart-1)",
+  "Кухня": "var(--color-chart-2)",
+  "Кальяны": "var(--color-chart-3)",
+  "Аренда VIP": "var(--color-chart-4)",
+};
+
+/**
  * Сдвинуть день на столько-то суток.
  *
  * Живёт здесь, а не рядом с чтением из базы: тот файл помечен "use server",
@@ -236,7 +251,7 @@ export default async function Сводка({
             type="date" name="с" defaultValue={свой?.с ?? ""}
             min={первый ?? undefined} max={последний ?? undefined}
             className="rounded-md border border-line bg-surface px-2.5 py-1.5 text-sm text-fg
-                       [color-scheme:dark] focus:border-sand focus:outline-none"
+                       focus:border-sand focus:outline-none"
           />
         </label>
         <label className="flex flex-col gap-1">
@@ -245,7 +260,7 @@ export default async function Сводка({
             type="date" name="по" defaultValue={свой?.по ?? ""}
             min={первый ?? undefined} max={последний ?? undefined}
             className="rounded-md border border-line bg-surface px-2.5 py-1.5 text-sm text-fg
-                       [color-scheme:dark] focus:border-sand focus:outline-none"
+                       focus:border-sand focus:outline-none"
           />
         </label>
         <button
@@ -344,10 +359,13 @@ export default async function Сводка({
                 return (
                   <div key={н.имя} className="grid grid-cols-[84px_1fr_112px] items-center gap-3">
                     <span className="text-sm text-fg-muted">{н.имя}</span>
-                    <span className="h-2 overflow-hidden rounded-full bg-line">
+                    <span className="h-2.5 overflow-hidden rounded-full bg-line">
                       <span
-                        className="block h-full rounded-full bg-sand-dim"
-                        style={{ width: `${(н.сумма / макс) * 100}%` }}
+                        className="block h-full rounded-full"
+                        style={{
+                          width: `${(н.сумма / макс) * 100}%`,
+                          background: ЦВЕТ_НАПРАВЛЕНИЯ[н.имя] ?? "var(--color-sand-dim)",
+                        }}
                       />
                     </span>
                     <span className="text-right text-sm tabular-nums">

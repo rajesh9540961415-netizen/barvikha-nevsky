@@ -387,7 +387,7 @@ export function Overlay({
 }) {
   return (
     <div
-      className="fixed inset-0 z-10 overflow-y-auto bg-ink/80 p-4 sm:p-8"
+      className="fixed inset-0 z-10 overflow-y-auto bg-scrim/40 p-4 sm:p-8"
       onClick={(e) => e.target === e.currentTarget && onClose()}
     >
       <div className="mx-auto max-w-2xl rounded-2xl border border-line bg-surface">
