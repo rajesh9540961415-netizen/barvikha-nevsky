@@ -4,6 +4,7 @@ import Nav from "@/components/Nav";
 import { requireManager } from "@/lib/db/managers";
 import { money, plural } from "@/lib/format";
 import { заПериод, состояние, type Показатели } from "@/lib/db/dashboard";
+import { затратыЗаПериод, type ЗатратыПериода } from "@/lib/db/finance";
 
 export const dynamic = "force-dynamic";
 
@@ -346,6 +347,16 @@ export default async function Сводка({
   }
 
   const выручкаВДень = сейчас.дней ? сейчас.выручка / сейчас.дней : 0;
+  const затраты: ЗатратыПериода = await затратыЗаПериод(с, по);
+  const прибыль = сейчас.выручка - затраты.затраты;
+  const маржа = сейчас.выручка ? (прибыль / сейчас.выручка) * 100 : 0;
+  // Восемь строк и «остальное»: двадцать статей подряд — это уже не сводка,
+  // а таблица, за ней ходят в «Финансы».
+  const ГЛАВНЫХ = 8;
+  const главные = затраты.статьи.slice(0, ГЛАВНЫХ);
+  const остальные = затраты.статьи.slice(ГЛАВНЫХ);
+  const остальныеСумма = остальные.reduce((s, а) => s + а.сумма, 0);
+  const выпискиОтстают = затраты.источникиДо !== null && затраты.источникиДо < по;
 
   return (
     <>
@@ -389,7 +400,122 @@ export default async function Сводка({
           </Карточка>
         </div>
 
-        {/* ── 3. Возвраты и чаевые ─────────────────────────── */}
+        {/* ── 3. Затраты и прибыль ─────────────────────────── */}
+        <div className="mt-4">
+          <Карточка
+            заголовок="Затраты и прибыль"
+            пояснение="выручка по кассам, затраты по банку и наличным"
+          >
+            <div className="grid gap-6 lg:grid-cols-[minmax(0,260px)_1fr] lg:gap-10">
+
+              <div className="space-y-4">
+                <div>
+                  <p className="text-[11px] font-semibold uppercase tracking-wider text-fg-muted">
+                    Прибыль
+                  </p>
+                  <p className={"mt-2 text-3xl font-medium leading-none tabular-nums " +
+                                (прибыль >= 0 ? "text-fg" : "text-alert")}>
+                    {крупно(прибыль)} <span className="text-lg font-normal text-fg-muted">₽</span>
+                  </p>
+                  <p className="mt-1.5 text-xs text-fg-muted">
+                    {маржа.toLocaleString("ru-RU", { maximumFractionDigits: 1 })} % от выручки
+                  </p>
+                </div>
+
+                <div className="space-y-1.5 border-t border-line pt-4 text-sm">
+                  <div className="flex justify-between gap-4">
+                    <span className="text-fg-muted">Выручка</span>
+                    <span className="tabular-nums">{money(Math.round(сейчас.выручка))}</span>
+                  </div>
+                  <div className="flex justify-between gap-4">
+                    <span className="text-fg-muted">Затраты</span>
+                    <span className="tabular-nums">− {money(Math.round(затраты.затраты))}</span>
+                  </div>
+                </div>
+
+                {затраты.вывод > 0 || затраты.заимствования > 0 ? (
+                  <div className="space-y-1.5 border-t border-line pt-4 text-xs text-fg-muted">
+                    <p>В затраты не входят и в прибыли не участвуют:</p>
+                    {затраты.вывод > 0 ? (
+                      <div className="flex justify-between gap-4">
+                        <span>Вывод собственнику</span>
+                        <span className="tabular-nums">{money(Math.round(затраты.вывод))}</span>
+                      </div>
+                    ) : null}
+                    {затраты.заимствования > 0 ? (
+                      <div className="flex justify-between gap-4">
+                        <span>Займы московской площадке</span>
+                        <span className="tabular-nums">{money(Math.round(затраты.заимствования))}</span>
+                      </div>
+                    ) : null}
+                  </div>
+                ) : null}
+              </div>
+
+              <div className="min-w-0">
+                {затраты.статьи.length === 0 ? (
+                  <p className="text-sm text-fg-muted">
+                    За этот период расходов в учёте нет. Либо выписки ещё не загружены,
+                    либо период короче одного платёжного дня.
+                  </p>
+                ) : (
+                  <div className="space-y-2">
+                    {главные.map((а) => (
+                      <div key={а.статья}
+                           className="grid grid-cols-[minmax(0,1fr)_84px_112px] items-center gap-x-3">
+                        <span className="truncate text-sm">{а.статья}</span>
+                        <span className="h-2 overflow-hidden rounded-full bg-line">
+                          <span className="block h-full rounded-full bg-sand-dim"
+                                style={{ width: `${(а.сумма / (главные[0]?.сумма || 1)) * 100}%` }} />
+                        </span>
+                        <span className="text-right text-sm tabular-nums">
+                          {крупно(а.сумма)}
+                          <span className="ml-1.5 text-xs text-fg-muted">
+                            {а.доля.toLocaleString("ru-RU", { maximumFractionDigits: 1 })}%
+                          </span>
+                        </span>
+                      </div>
+                    ))}
+                    {остальные.length > 0 ? (
+                      <div className="grid grid-cols-[minmax(0,1fr)_84px_112px] items-center gap-x-3 pt-1">
+                        <span className="truncate text-sm text-fg-muted">
+                          ещё {остальные.length} {plural(остальные.length, "статья", "статьи", "статей")}
+                        </span>
+                        <span />
+                        <span className="text-right text-sm tabular-nums text-fg-muted">
+                          {крупно(остальныеСумма)}
+                        </span>
+                      </div>
+                    ) : null}
+                  </div>
+                )}
+
+                <div className="mt-4 space-y-1.5 border-t border-line pt-3 text-xs text-fg-muted">
+                  {выпискиОтстают ? (
+                    <p className="text-alert">
+                      ⚠ Выписки загружены только по {затраты.источникиДо}. Затраты за
+                      период неполные, а прибыль поэтому завышена.
+                    </p>
+                  ) : null}
+                  {затраты.неопознано > 0 ? (
+                    <p>
+                      Из них {money(Math.round(затраты.неопознано))} — платежи, статью
+                      которых определить не удалось. Это не «прочие расходы»,
+                      а вопрос: разбирать в «Финансах».
+                    </p>
+                  ) : null}
+                  <p>
+                    Прибыль здесь — оборотная: выручка по кассам минус то, что ушло
+                    со счетов и из кассы. Это не бухгалтерская прибыль и не заменяет
+                    месячный P&amp;L.
+                  </p>
+                </div>
+              </div>
+            </div>
+          </Карточка>
+        </div>
+
+        {/* ── 4. Возвраты и чаевые ─────────────────────────── */}
         <div className="mt-4 grid gap-4 lg:grid-cols-2">
           <Карточка
             заголовок="Возвраты и отмены"
