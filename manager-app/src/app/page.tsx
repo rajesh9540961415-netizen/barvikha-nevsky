@@ -30,8 +30,6 @@ export const dynamic = "force-dynamic";
  * начинается с чаевых.
  */
 
-const ДНИ_НЕДЕЛИ = ["пн", "вт", "ср", "чт", "пт", "сб", "вс"];
-
 /**
  * Цвет закреплён за НАПРАВЛЕНИЕМ, а не за местом в списке.
  *
@@ -131,38 +129,79 @@ function Карточка({
 }
 
 /**
- * Столбики. Высота от максимума в наборе — сравниваем внутри графика.
+ * Кольцо «Откуда выручка» с подписями сбоку.
  *
- * ⚠️ Высота считается В ТОЧКАХ, а не в процентах. 07.09.2026 проценты дали
- * пустые графики в бою: процент высоты берётся от родителя, а у родителя
- * с `flex-1` своей высоты нет, и браузер считает такую высоту нулевой.
- * Подписи при этом рисовались, и на первый взгляд график выглядел «пустым
- * периодом», а не поломкой — худший вид ошибки.
+ * Кольцом, а не полосами, — просьба владельца 07.09.2026 по образцу
+ * аналитики Quick Resto. Для четырёх долей одного целого это и правда
+ * честнее: полосы сравнивают направления между собой, кольцо показывает,
+ * из чего складывается выручка.
+ *
+ * ⚠️ Дуги рисуются штрихом по окружности (`stroke-dasharray`), а не
+ * путями с дугами: у путей на долю в 0 % вырождается геометрия и браузер
+ * рисует артефакт. Штрих на нулевой длине просто не виден.
  */
-const ВЫСОТА_ГРАФИКА = 112;
+const РАДИУС = 64;
+const ТОЛЩИНА = 26;
+const ОКРУЖНОСТЬ = 2 * Math.PI * РАДИУС;
 
-function Столбики({
-  значения, подписи, выделить,
-}: { значения: number[]; подписи: string[]; выделить?: number }) {
-  const макс = Math.max(...значения, 1);
+function Кольцо({
+  доли, всего,
+}: { доли: { имя: string; сумма: number; доля: number }[]; всего: number }) {
+  let пройдено = 0;
+  const дуги = доли.map((д) => {
+    const длина = (д.доля / 100) * ОКРУЖНОСТЬ;
+    const дуга = {
+      имя: д.имя,
+      цвет: ЦВЕТ_НАПРАВЛЕНИЯ[д.имя] ?? "var(--color-sand-dim)",
+      // Зазор в 2 точки между секторами, но только если сектор его переживёт:
+      // на доле в полпроцента зазор съел бы её целиком.
+      длина: длина > 5 ? длина - 2 : длина,
+      смещение: -пройдено,
+    };
+    пройдено += длина;
+    return дуга;
+  });
+
   return (
-    <div className="flex items-end gap-[3px]">
-      {значения.map((v, i) => (
-        <div key={i} className="flex flex-1 flex-col items-center gap-1.5">
-          <div className="flex w-full items-end" style={{ height: ВЫСОТА_ГРАФИКА }}>
-            <div
-              className={"w-full rounded-sm " + (i === выделить ? "bg-sand" : "bg-sand-dim")}
-              style={{
-                // Ненулевую сумму рисуем хотя бы двумя точками: иначе тихий
-                // час выглядит так же, как час без выручки вовсе.
-                height: v > 0 ? Math.max(Math.round((v / макс) * ВЫСОТА_ГРАФИКА), 2) : 0,
-              }}
-              title={`${подписи[i] || i} — ${money(Math.round(v))}`}
+    <div className="flex flex-col items-center gap-6 sm:flex-row sm:items-center sm:gap-8">
+      <svg viewBox="0 0 180 180" className="h-44 w-44 shrink-0" role="img"
+           aria-label={"Выручка по направлениям: " +
+             доли.map((д) => `${д.имя} ${Math.round(д.доля)} %`).join(", ")}>
+        <g transform="rotate(-90 90 90)">
+          <circle cx="90" cy="90" r={РАДИУС} fill="none"
+                  stroke="var(--color-line)" strokeWidth={ТОЛЩИНА} />
+          {дуги.map((д) => (
+            <circle
+              key={д.имя} cx="90" cy="90" r={РАДИУС} fill="none"
+              stroke={д.цвет} strokeWidth={ТОЛЩИНА}
+              strokeDasharray={`${д.длина} ${ОКРУЖНОСТЬ - д.длина}`}
+              strokeDashoffset={д.смещение}
             />
+          ))}
+        </g>
+        <text x="90" y="84" textAnchor="middle"
+              className="fill-[var(--color-fg-muted)] text-[11px] font-medium uppercase tracking-wider">
+          всего
+        </text>
+        <text x="90" y="106" textAnchor="middle"
+              className="fill-[var(--color-fg)] text-[19px] font-semibold tabular-nums">
+          {крупно(всего)}
+        </text>
+      </svg>
+
+      <div className="w-full min-w-0 space-y-2.5">
+        {доли.map((д) => (
+          <div key={д.имя} className="grid grid-cols-[14px_46px_1fr_auto] items-center gap-x-3">
+            <span className="h-3 w-3 rounded-sm"
+                  style={{ background: ЦВЕТ_НАПРАВЛЕНИЯ[д.имя] ?? "var(--color-sand-dim)" }} />
+            <span className="text-sm font-semibold tabular-nums">
+              {д.доля.toLocaleString("ru-RU", { maximumFractionDigits: 1 })}%
+            </span>
+            <span className="truncate text-sm text-fg-muted">{д.имя}</span>
+            <span className="text-right text-sm font-medium tabular-nums">{money(Math.round(д.сумма))}</span>
           </div>
-          <span className="text-[11px] font-medium leading-none text-fg-muted">{подписи[i]}</span>
-        </div>
-      ))}
+        ))}
+      </div>
     </div>
   );
 }
@@ -306,12 +345,6 @@ export default async function Сводка({
     );
   }
 
-  const пикЧаса = сейчас.часы.indexOf(Math.max(...сейчас.часы));
-  const пикДня = сейчас.дниНедели.indexOf(Math.max(...сейчас.дниНедели));
-  const живыеДни = сейчас.дниНедели.filter((v) => v > 0);
-  const тихийДень = живыеДни.length
-    ? сейчас.дниНедели.indexOf(Math.min(...живыеДни))
-    : -1;
   const выручкаВДень = сейчас.дней ? сейчас.выручка / сейчас.дней : 0;
 
   return (
@@ -349,65 +382,14 @@ export default async function Сводка({
           />
         </div>
 
-        <div className="mt-4 grid gap-4 lg:grid-cols-2">
-
-          {/* ── 2. Направления ─────────────────────────────── */}
-          <Карточка заголовок="Откуда выручка" пояснение="по позициям чеков">
-            <div className="space-y-3">
-              {сейчас.направления.map((н) => {
-                const макс = сейчас.направления[0]?.сумма || 1;
-                return (
-                  <div key={н.имя} className="grid grid-cols-[84px_1fr_112px] items-center gap-3">
-                    <span className="text-sm font-medium text-fg">{н.имя}</span>
-                    <span className="h-2.5 overflow-hidden rounded-full bg-line">
-                      <span
-                        className="block h-full rounded-full"
-                        style={{
-                          width: `${(н.сумма / макс) * 100}%`,
-                          background: ЦВЕТ_НАПРАВЛЕНИЯ[н.имя] ?? "var(--color-sand-dim)",
-                        }}
-                      />
-                    </span>
-                    <span className="text-right text-sm tabular-nums">
-                      {крупно(н.сумма)}
-                      <span className="ml-1.5 text-xs text-fg-muted">
-                        {н.доля.toLocaleString("ru-RU", { maximumFractionDigits: 1 })} %
-                      </span>
-                    </span>
-                  </div>
-                );
-              })}
-            </div>
-          </Карточка>
-
-          {/* ── 3. Дни недели ──────────────────────────────── */}
-          <Карточка
-            заголовок="Дни недели"
-            пояснение={
-              тихийДень >= 0 && сейчас.дниНедели[тихийДень] > 0 && пикДня !== тихийДень
-                ? `${ДНИ_НЕДЕЛИ[пикДня]} даёт в ${(сейчас.дниНедели[пикДня] / сейчас.дниНедели[тихийДень]).toLocaleString("ru-RU", { maximumFractionDigits: 1 })} раза больше, чем ${ДНИ_НЕДЕЛИ[тихийДень]}`
-                : undefined
-            }
-          >
-            <Столбики значения={сейчас.дниНедели} подписи={ДНИ_НЕДЕЛИ} выделить={пикДня} />
-          </Карточка>
-        </div>
-
-        {/* ── 4. Часы ──────────────────────────────────────── */}
+        {/* ── 2. Откуда выручка ────────────────────────────── */}
         <div className="mt-4">
-          <Карточка
-            заголовок="Когда приходят деньги"
-            пояснение={`пик — ${String(пикЧаса).padStart(2, "0")}:00 · час суток, не торговые сутки`}
-          >
-            <Столбики
-              значения={сейчас.часы}
-              подписи={Array.from({ length: 24 }, (_, ч) => (ч % 2 === 0 ? String(ч) : ""))}
-              выделить={пикЧаса}
-            />
+          <Карточка заголовок="Откуда выручка" пояснение="по позициям чеков">
+            <Кольцо доли={сейчас.направления} всего={сейчас.выручка} />
           </Карточка>
         </div>
 
-        {/* ── 5. Возвраты и чаевые ─────────────────────────── */}
+        {/* ── 3. Возвраты и чаевые ─────────────────────────── */}
         <div className="mt-4 grid gap-4 lg:grid-cols-2">
           <Карточка
             заголовок="Возвраты и отмены"
