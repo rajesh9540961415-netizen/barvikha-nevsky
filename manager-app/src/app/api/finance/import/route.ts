@@ -339,15 +339,21 @@ export async function POST(request: Request) {
     // Вывести её из самих строк нельзя: три дня без наличных расходов —
     // это не пробел, а просто три дня без расходов.
     const отметка = т.filledTo as Record<string, unknown> | undefined;
+    // Отвечаем тем, что в базе ОСТАЛОСЬ. Отметка только растёт, и присланная
+    // может оказаться старее сохранённой — отправка августа рядом с уже
+    // залитым сентябрём именно такова. Скажи мы в ответ присланное, отправитель
+    // напечатал бы «заполнено по 31 августа» там, где в базе шестое сентября,
+    // и человек пошёл бы чинить работающее. 07.09.2026 так и вышло, дважды.
+    const источники: Record<string, string> = {};
     if (отметка && typeof отметка === "object") {
       for (const [источник, дата] of Object.entries(отметка)) {
         if (typeof дата === "string" && ДЕНЬ.test(дата)) {
-          await saveFinanceSource(источник, дата);
+          источники[источник] = await saveFinanceSource(источник, дата);
         }
       }
     }
 
-    return Response.json({ ok: true, ...итог });
+    return Response.json({ ok: true, ...итог, источники });
   } catch (e) {
     const err = e as { message?: string };
     return Response.json(

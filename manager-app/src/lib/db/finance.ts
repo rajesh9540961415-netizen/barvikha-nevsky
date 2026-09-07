@@ -336,7 +336,7 @@ export async function saveFinance(
  * на три дня, хотя данные полные. Экран, построенный на такой отметке,
  * ежедневно пугал бы пропуском, которого нет.
  */
-export async function saveFinanceSource(source: string, filledTo: string) {
+export async function saveFinanceSource(source: string, filledTo: string): Promise<string> {
   const sql = db();
   // ⚠️ Отметка только растёт, назад не ходит. Отправитель присылает последний
   // день СВОЕЙ пачки, а пачка бывает и за старый месяц: 15.08.2026 отправка
@@ -345,13 +345,19 @@ export async function saveFinanceSource(source: string, filledTo: string) {
   //
   // Сравнение строкой годится: даты в виде ГГГГ-ММ-ДД сортируются как текст
   // в том же порядке, что и как даты.
-  await sql`
+  // Возвращаем то, что в базе ОСТАЛОСЬ, а не то, что прислали. 07.09.2026
+  // отправка августа печатала «отмечено заполнено по 2026-08-31», хотя база
+  // честно сохранила 2026-09-06 — и это дважды за день заставило меня
+  // «чинить» то, что работало. Отчёт о записи должен говорить про базу.
+  const [строка] = await sql<{ filled_to: string }[]>`
     insert into fin_sources (source, filled_to)
     values (${source}, ${filledTo})
     on conflict (source) do update set
       filled_to  = greatest(fin_sources.filled_to, excluded.filled_to),
       updated_at = now()
+    returning filled_to
   `;
+  return строка?.filled_to ?? filledTo;
 }
 
 export type СостояниеФинансов = {
