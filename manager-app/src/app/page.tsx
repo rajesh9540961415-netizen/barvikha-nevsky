@@ -4,7 +4,10 @@ import Nav from "@/components/Nav";
 import { requireManager } from "@/lib/db/managers";
 import { money, plural } from "@/lib/format";
 import { заПериод, состояние, type Показатели } from "@/lib/db/dashboard";
-import { затратыЗаПериод, type ЗатратыПериода } from "@/lib/db/finance";
+import {
+  затратыЗаПериод, свежестьВыписок,
+  type ЗатратыПериода, type СвежестьИсточника,
+} from "@/lib/db/finance";
 
 export const dynamic = "force-dynamic";
 
@@ -356,7 +359,12 @@ export default async function Сводка({
   const главные = затраты.статьи.slice(0, ГЛАВНЫХ);
   const остальные = затраты.статьи.slice(ГЛАВНЫХ);
   const остальныеСумма = остальные.reduce((s, а) => s + а.сумма, 0);
-  const выпискиОтстают = затраты.источникиДо !== null && затраты.источникиДо < по;
+  const свежесть: СвежестьИсточника[] = await свежестьВыписок(по);
+  // Три дня — обычный ход дела: выписка за пятницу приходит в понедельник,
+  // касса перепроверяется руками раз в 7–10 дней. Кричать на этом нельзя,
+  // иначе крик перестанут читать. Больше трёх — уже вопрос.
+  const ПОРОГ_ОТСТАВАНИЯ = 3;
+  const отстают = свежесть.filter((и) => и.отстаёт > ПОРОГ_ОТСТАВАНИЯ);
 
   return (
     <>
@@ -490,11 +498,32 @@ export default async function Сводка({
                   </div>
                 )}
 
-                <div className="mt-4 space-y-1.5 border-t border-line pt-3 text-xs text-fg-muted">
-                  {выпискиОтстают ? (
+                <div className="mt-4 space-y-2 border-t border-line pt-3 text-xs text-fg-muted">
+                  <div>
+                    <p className="mb-1.5 font-semibold uppercase tracking-wider">
+                      Выписки загружены
+                    </p>
+                    <div className="grid gap-x-6 gap-y-1 sm:grid-cols-2">
+                      {свежесть.map((и) => {
+                        const плохо = и.отстаёт > ПОРОГ_ОТСТАВАНИЯ;
+                        return (
+                          <div key={и.ключ} className="flex justify-between gap-3">
+                            <span className={плохо ? "text-alert" : undefined}>{и.подпись}</span>
+                            <span className={"tabular-nums " + (плохо ? "text-alert" : "")}>
+                              {и.последний
+                                ? `по ${и.последний}${и.отстаёт > 0 ? ` · ${и.отстаёт} ${plural(и.отстаёт, "день", "дня", "дней")}` : ""}`
+                                : "нет данных"}
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                  {отстают.length > 0 ? (
                     <p className="text-alert">
-                      ⚠ Выписки загружены только по {затраты.источникиДо}. Затраты за
-                      период неполные, а прибыль поэтому завышена.
+                      ⚠ {отстают.map((и) => и.подпись).join(", ")} —{" "}
+                      {отстают.length === 1 ? "отстаёт" : "отстают"}. Затраты за период
+                      неполные, а прибыль поэтому завышена.
                     </p>
                   ) : null}
                   {затраты.неопознано > 0 ? (
