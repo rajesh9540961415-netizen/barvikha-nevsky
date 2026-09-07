@@ -8,7 +8,8 @@ import { заПериод, состояние, type Показатели } from 
 export const dynamic = "force-dynamic";
 
 /**
- * Обзор — первый экран владельца.
+ * Сводка — первый экран владельца. Название её же: сначала было «Обзор»,
+ * 07.09.2026 она выбрала «Сводка».
  *
  * Заведён 07.09.2026 по её задаче: «первая страничка с основными
  * показателями работы заведения». До этого корень бэк-офиса просто
@@ -25,7 +26,7 @@ export const dynamic = "force-dynamic";
  * владелец 07.09.2026: «делай живое обновление через базу». Наполняет
  * таблицу `scripts/dashboard_push.py` через служебную дверь `/api/dashboard`.
  *
- * Управляющего сюда не пускаем: обзор — это выручка и прибыль, его экран
+ * Управляющего сюда не пускаем: сводка — это выручка и прибыль, его экран
  * начинается с чаевых.
  */
 
@@ -159,7 +160,7 @@ function Пусто({ обновлено }: { обновлено: string | null 
   );
 }
 
-export default async function Обзор({
+export default async function Сводка({
   searchParams,
 }: {
   searchParams: Promise<{ [k: string]: string | undefined }>;
@@ -197,7 +198,7 @@ export default async function Обзор({
   if (!последний) {
     return (
       <>
-        <Nav раздел="обзор" />
+        <Nav раздел="сводка" />
         <main className="mx-auto max-w-[1600px] px-6 py-6">
           <Пусто обновлено={обновлено} />
         </main>
@@ -213,7 +214,7 @@ export default async function Обзор({
   if (сейчас.днейСЧеками === 0) {
     return (
       <>
-        <Nav раздел="обзор" />
+        <Nav раздел="сводка" />
         <main className="mx-auto max-w-[1600px] px-6 py-6">
           {полоса}
           <Пусто обновлено={обновлено} />
@@ -232,7 +233,7 @@ export default async function Обзор({
 
   return (
     <>
-      <Nav раздел="обзор" />
+      <Nav раздел="сводка" />
       <main className="mx-auto max-w-[1600px] px-6 py-6">
         {полоса}
         <p className="-mt-2 mb-5 text-xs text-fg-muted">
