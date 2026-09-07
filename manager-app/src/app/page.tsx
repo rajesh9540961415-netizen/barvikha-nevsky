@@ -53,6 +53,15 @@ const ПЕРИОДЫ = [
   { ключ: "365", подпись: "Год", дней: 365 },
 ];
 const ПО_УМОЛЧАНИЮ = "30";
+const ДАТА = /^\d{4}-\d{2}-\d{2}$/;
+
+/** «7 сентября, 13:42» по Москве — время заливки читает человек в Петербурге. */
+function когда(iso: string): string {
+  return new Date(iso).toLocaleString("ru-RU", {
+    timeZone: "Europe/Moscow",
+    day: "numeric", month: "long", hour: "2-digit", minute: "2-digit",
+  });
+}
 
 /** «12,4 млн» — на плитке важен порядок величины, а не рубль. */
 function крупно(v: number): string {
@@ -106,19 +115,33 @@ function Карточка({
   );
 }
 
-/** Столбики. Высота от максимума в наборе — сравниваем внутри графика. */
+/**
+ * Столбики. Высота от максимума в наборе — сравниваем внутри графика.
+ *
+ * ⚠️ Высота считается В ТОЧКАХ, а не в процентах. 07.09.2026 проценты дали
+ * пустые графики в бою: процент высоты берётся от родителя, а у родителя
+ * с `flex-1` своей высоты нет, и браузер считает такую высоту нулевой.
+ * Подписи при этом рисовались, и на первый взгляд график выглядел «пустым
+ * периодом», а не поломкой — худший вид ошибки.
+ */
+const ВЫСОТА_ГРАФИКА = 112;
+
 function Столбики({
   значения, подписи, выделить,
 }: { значения: number[]; подписи: string[]; выделить?: number }) {
   const макс = Math.max(...значения, 1);
   return (
-    <div className="flex items-end gap-[3px]" style={{ height: 132 }}>
+    <div className="flex items-end gap-[3px]">
       {значения.map((v, i) => (
         <div key={i} className="flex flex-1 flex-col items-center gap-1.5">
-          <div className="flex w-full flex-1 items-end">
+          <div className="flex w-full items-end" style={{ height: ВЫСОТА_ГРАФИКА }}>
             <div
               className={"w-full rounded-sm " + (i === выделить ? "bg-sand" : "bg-sand-dim")}
-              style={{ height: `${Math.max((v / макс) * 100, v > 0 ? 1.5 : 0)}%` }}
+              style={{
+                // Ненулевую сумму рисуем хотя бы двумя точками: иначе тихий
+                // час выглядит так же, как час без выручки вовсе.
+                height: v > 0 ? Math.max(Math.round((v / макс) * ВЫСОТА_ГРАФИКА), 2) : 0,
+              }}
               title={`${подписи[i] || i} — ${money(Math.round(v))}`}
             />
           </div>
@@ -152,7 +175,7 @@ function Пусто({ обновлено }: { обновлено: string | null 
       </p>
       {обновлено ? (
         <p className="mt-3 text-xs text-fg-muted">
-          Последняя заливка была {обновлено.replace("T", ", ").slice(0, 16)}, но за
+          Последняя заливка была {когда(обновлено)}, но за
           выбранный период данных нет — попробуйте период длиннее.
         </p>
       ) : null}
@@ -169,22 +192,30 @@ export default async function Сводка({
   if (manager.role !== "owner") redirect("/tips");
 
   const параметры = await searchParams;
-  const выбран =
-    ПЕРИОДЫ.find((п) => п.ключ === параметры.период) ??
-    ПЕРИОДЫ.find((п) => п.ключ === ПО_УМОЛЧАНИЮ)!;
+  const { первый, последний, обновлено } = await состояние();
 
-  const { последний, обновлено } = await состояние();
+  // Свой период: обе даты заданы и разобрались. Одной даты мало — окно
+  // с открытым концом пришлось бы чем-то достраивать, и владелец увидела бы
+  // не тот отрезок, который просила.
+  const свойС = ДАТА.test(параметры.с ?? "") ? параметры.с! : null;
+  const свойПо = ДАТА.test(параметры.по ?? "") ? параметры.по! : null;
+  const свой = свойС && свойПо && свойС <= свойПо ? { с: свойС, по: свойПо } : null;
+
+  const выбран = свой
+    ? null
+    : ПЕРИОДЫ.find((п) => п.ключ === параметры.период) ??
+      ПЕРИОДЫ.find((п) => п.ключ === ПО_УМОЛЧАНИЮ)!;
 
   const полоса = (
-    <div className="mb-5 flex flex-wrap items-baseline gap-x-2 gap-y-3">
+    <div className="mb-5 flex flex-wrap items-end gap-x-2 gap-y-3">
       {ПЕРИОДЫ.map((п) => (
         <Link
           key={п.ключ}
           href={п.ключ === ПО_УМОЛЧАНИЮ ? "/" : `/?период=${п.ключ}`}
-          aria-current={п.ключ === выбран.ключ ? "page" : undefined}
+          aria-current={п.ключ === выбран?.ключ ? "page" : undefined}
           className={
             "rounded-full border px-3.5 py-1.5 text-sm transition-colors " +
-            (п.ключ === выбран.ключ
+            (п.ключ === выбран?.ключ
               ? "border-sand bg-sand/15 font-medium text-sand"
               : "border-line text-fg-muted hover:border-sand-dim hover:text-fg")
           }
@@ -192,6 +223,43 @@ export default async function Сводка({
           {п.подпись}
         </Link>
       ))}
+
+      {/*
+        Свои даты — обычная форма с методом GET: она складывает адрес сама,
+        и страница остаётся серверной. Ни кнопок на JS, ни библиотеки выбора
+        дат: календарь тут и так свой, браузерный.
+      */}
+      <form method="get" className="ml-2 flex flex-wrap items-end gap-2">
+        <label className="flex flex-col gap-1">
+          <span className="text-[11px] uppercase tracking-wider text-fg-muted">с</span>
+          <input
+            type="date" name="с" defaultValue={свой?.с ?? ""}
+            min={первый ?? undefined} max={последний ?? undefined}
+            className="rounded-md border border-line bg-surface px-2.5 py-1.5 text-sm text-fg
+                       [color-scheme:dark] focus:border-sand focus:outline-none"
+          />
+        </label>
+        <label className="flex flex-col gap-1">
+          <span className="text-[11px] uppercase tracking-wider text-fg-muted">по</span>
+          <input
+            type="date" name="по" defaultValue={свой?.по ?? ""}
+            min={первый ?? undefined} max={последний ?? undefined}
+            className="rounded-md border border-line bg-surface px-2.5 py-1.5 text-sm text-fg
+                       [color-scheme:dark] focus:border-sand focus:outline-none"
+          />
+        </label>
+        <button
+          type="submit"
+          className={
+            "rounded-full border px-3.5 py-1.5 text-sm transition-colors " +
+            (свой
+              ? "border-sand bg-sand/15 font-medium text-sand"
+              : "border-line text-fg-muted hover:border-sand-dim hover:text-fg")
+          }
+        >
+          Показать
+        </button>
+      </form>
     </div>
   );
 
@@ -206,8 +274,8 @@ export default async function Сводка({
     );
   }
 
-  const по = последний;
-  const с = сдвинуть(по, -(выбран.дней - 1));
+  const по = свой ? свой.по : последний;
+  const с = свой ? свой.с : сдвинуть(по, -(выбран!.дней - 1));
   const сейчас: Показатели = await заПериод(с, по);
   const было: Показатели = await заПериод(сдвинуть(с, -365), сдвинуть(по, -365));
 
@@ -378,7 +446,7 @@ export default async function Сводка({
 
         <p className="mt-6 max-w-[92ch] text-xs leading-relaxed text-fg-muted">
           Числа — фискальные чеки обеих касс, торговые сутки с 11:00 до 10:59.
-          {обновлено ? ` Залито ${обновлено.replace("T", ", ").slice(0, 16)}.` : ""} Последний
+          {обновлено ? ` Залито ${когда(обновлено)}.` : ""} Последний
           день с чеками — {последний}. Столы, оборачиваемость и повторные гости
           сюда пока не вошли: привязки чека к столу в фискальных данных нет.
         </p>

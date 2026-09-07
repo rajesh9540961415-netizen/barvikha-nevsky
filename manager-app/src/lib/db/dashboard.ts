@@ -85,14 +85,19 @@ function ключДня(v: unknown): string {
   return String(v).slice(0, 10);
 }
 
-/** Последний день, за который вообще есть чеки, и когда слепок обновляли. */
-export async function состояние(): Promise<{ последний: string | null; обновлено: string | null }> {
+/** Границы имеющихся данных и когда их последний раз заливали. */
+export async function состояние(): Promise<{
+  первый: string | null; последний: string | null; обновлено: string | null;
+}> {
   const sql = db();
-  const [строка] = await sql<{ последний: unknown; обновлено: Date | null }[]>`
-    select max(business_day) as последний, max(updated_at) as обновлено
+  const [строка] = await sql<{ первый: unknown; последний: unknown; обновлено: Date | null }[]>`
+    select min(business_day) as первый,
+           max(business_day) as последний,
+           max(updated_at)   as обновлено
       from dashboard_days
   `;
   return {
+    первый: строка?.первый ? ключДня(строка.первый) : null,
     последний: строка?.последний ? ключДня(строка.последний) : null,
     обновлено: строка?.обновлено ? строка.обновлено.toISOString() : null,
   };
