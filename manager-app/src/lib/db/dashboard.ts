@@ -10,6 +10,12 @@ import { db } from "./sql";
  * лежат в `dashboard_days`, а кладёт их туда `scripts/dashboard_push.py`
  * через служебную дверь `/api/dashboard`.
  *
+ * 🔴 **Выручка здесь НЕТТО, минус возвраты.** Решение владельца 07.09.2026.
+ * Отменённый чек пробивают заново, и в кассе остаются обе продажи с одним
+ * возвратом; не вычтешь — стол посчитан дважды. Вычитает `dashboard_push.py`
+ * ещё до заливки, поэтому в `revenue` уже лежит чистое число. Возвраты
+ * при этом видны своими полями, `refunds` и `refund_count`.
+ *
  * ⚠️ Складываем дни в приложении, а не в базе — намеренно, вопреки правилу
  * из `shifts.ts` «считать в базе». Причина в том, что складывать надо не
  * только числа, но и два поля jsonb: направления и 24 часа. Сложение jsonb
@@ -41,6 +47,13 @@ export type ДеньОбзора = {
   направления: Record<string, number>;
   часы: number[];
   чаевые: number | null;
+  /**
+   * Посадки и гости из Рестоплейс. `null` — «не знаем», а не «ноль»:
+   * Рестоплейс отдаёт скользящее окно в 33 дня, глубже 27.07.2026 столов
+   * нет и не будет. Ноль означал бы, что зал стоял пустым.
+   */
+  столов: number | null;
+  гостей: number | null;
 };
 
 export type Показатели = {
@@ -55,6 +68,18 @@ export type Показатели = {
   доляВозвратов: number;
   чаевые: number;
   днейСЧаевыми: number;
+  столов: number;
+  гостей: number;
+  /**
+   * Считаются по дням, где посадки известны, — и выручка в них берётся
+   * та же, за те же дни. Поделить выручку всего периода на посадки его
+   * части значило бы завысить чек на столько, на сколько период длиннее
+   * покрытия: на годе — в девять раз.
+   */
+  среднийЧекПоСтолу: number;
+  среднийЧекНаГостя: number;
+  гостейНаСтол: number;
+  днейСоСтолами: number;
   направления: { имя: string; сумма: number; доля: number }[];
   часы: number[];
   дниНедели: number[];
@@ -75,6 +100,8 @@ type Строка = {
   directions: Record<string, number>;
   hours: number[];
   tips: string | null;
+  tables: number | null;
+  guests: number | null;
 };
 
 const ч = (v: string | number | null | undefined): number => Number(v ?? 0);
@@ -107,7 +134,7 @@ export async function дниЗаПериод(с: string, по: string): Promise<
   const sql = db();
   const строки = await sql<Строка[]>`
     select business_day, revenue, checks, cash, cashless,
-           refunds, refund_count, directions, hours, tips
+           refunds, refund_count, directions, hours, tips, tables, guests
       from dashboard_days
      where business_day between ${с}::date and ${по}::date
      order by business_day
@@ -123,6 +150,8 @@ export async function дниЗаПериод(с: string, по: string): Promise<
     направления: с.directions ?? {},
     часы: Array.isArray(с.hours) ? с.hours.map(ч) : [],
     чаевые: с.tips === null ? null : ч(с.tips),
+    столов: с.tables === null ? null : ч(с.tables),
+    гостей: с.guests === null ? null : ч(с.guests),
   }));
 }
 
@@ -138,6 +167,7 @@ export async function заПериод(с: string, по: string): Promise<Пок
 
   let выручка = 0, чеков = 0, нал = 0, безнал = 0;
   let возвраты = 0, возвратов = 0, чаевые = 0, днейСЧаевыми = 0;
+  let столов = 0, гостей = 0, днейСоСтолами = 0, выручкаСоСтолами = 0;
   const напр: Record<string, number> = {};
   const часы = new Array(24).fill(0);
   const дниНедели = new Array(7).fill(0);
@@ -152,6 +182,14 @@ export async function заПериод(с: string, по: string): Promise<Пок
     if (д.чаевые !== null) {
       чаевые += д.чаевые;
       днейСЧаевыми += 1;
+    }
+    // Выручку копим ту же, за те же дни: чек на стол — это дробь, у которой
+    // числитель и знаменатель обязаны быть об одном и том же периоде.
+    if (д.столов !== null) {
+      столов += д.столов;
+      гостей += д.гостей ?? 0;
+      выручкаСоСтолами += д.выручка;
+      днейСоСтолами += 1;
     }
     for (const н of НАПРАВЛЕНИЯ) напр[н] = (напр[н] ?? 0) + (д.направления[н] ?? 0);
     for (let i = 0; i < 24; i++) часы[i] += д.часы[i] ?? 0;
@@ -172,6 +210,10 @@ export async function заПериод(с: string, по: string): Promise<Пок
     возвраты, возвратов,
     доляВозвратов: выручка ? (возвраты / выручка) * 100 : 0,
     чаевые, днейСЧаевыми,
+    столов, гостей, днейСоСтолами,
+    среднийЧекПоСтолу: столов ? выручкаСоСтолами / столов : 0,
+    среднийЧекНаГостя: гостей ? выручкаСоСтолами / гостей : 0,
+    гостейНаСтол: столов ? гостей / столов : 0,
     направления: НАПРАВЛЕНИЯ.map((н) => ({
       имя: ПОДПИСЬ_НАПРАВЛЕНИЯ[н],
       сумма: напр[н] ?? 0,
@@ -206,13 +248,14 @@ export async function залить(дни: ДеньОбзора[]): Promise<numb
       await sql`
         insert into dashboard_days
           (business_day, revenue, checks, cash, cashless,
-           refunds, refund_count, directions, hours, tips, updated_at)
+           refunds, refund_count, directions, hours, tips,
+           tables, guests, updated_at)
         values
           (${д.день}::date, ${д.выручка}, ${д.чеков}, ${д.нал}, ${д.безнал},
            ${д.возвраты}, ${д.возвратов},
            ${sql.json(д.направления)},
            ${sql.json(д.часы)},
-           ${д.чаевые}, now())
+           ${д.чаевые}, ${д.столов}, ${д.гостей}, now())
         on conflict (business_day) do update set
           revenue      = excluded.revenue,
           checks       = excluded.checks,
@@ -223,6 +266,8 @@ export async function залить(дни: ДеньОбзора[]): Promise<numb
           directions   = excluded.directions,
           hours        = excluded.hours,
           tips         = excluded.tips,
+          tables       = excluded.tables,
+          guests       = excluded.guests,
           updated_at   = excluded.updated_at
       `;
     }
