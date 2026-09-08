@@ -162,7 +162,12 @@ def предыдущий_лист(листы, месяцы, year: int, month_num
 
 def main():
     parser = argparse.ArgumentParser(description="Наш месяц → таблица УК.")
-    parser.add_argument("month", help="месяц вида 2026-08")
+    # ⚠️ Месяц НЕОБЯЗАТЕЛЕН, и это не мелочь. Разрешение задачи по расписанию
+    # хранится текстом команды целиком: «uk_push.py 2026-09 …» в октябре
+    # станет другой командой и повиснет без человека. Тот же урок, что
+    # у proverka_utra.py — даты внутри команды быть не должно.
+    parser.add_argument("month", nargs="?", default=date.today().strftime("%Y-%m"),
+                        help="месяц вида 2026-08; по умолчанию текущий")
     parser.add_argument("--записать", action="store_true",
                         help="создать дубль листа и заполнить (без него — вхолостую)")
     parser.add_argument("--лист", help="имя листа-образца; по умолчанию «<Месяц> <год> » ")
