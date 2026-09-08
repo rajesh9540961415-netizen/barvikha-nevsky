@@ -17,11 +17,18 @@ import { businessDayKey, formatBusinessDay, formatMoney } from "@/lib/businessDa
 import { buildExport, downloadExport } from "@/lib/exportShift";
 import type { Shift } from "@/lib/crew";
 import { EMPTY_SHIFT, getLastShift, getShift, isReady, setShift } from "@/lib/crew";
-import { HOOKAH_POT, getHookahPeople, getManualPeople, getQuickRestoPeople } from "@/lib/people";
+import {
+  HOOKAH_POT,
+  getHookahCrew,
+  getHookahPeople,
+  getManualPeople,
+  getQuickRestoPeople,
+} from "@/lib/people";
 import ShiftHistory from "@/components/ShiftHistory";
 import EntryEditor from "@/components/EntryEditor";
 import { buildEvents } from "@/lib/events";
 import QrTipScreen from "@/components/QrTipScreen";
+import MotivationScreen from "@/components/MotivationScreen";
 import SideScreen from "@/components/SideScreen";
 import StaffScreen from "@/components/StaffScreen";
 import { COMMISSION_RATE, netAmount, shares, splitShift, splitSide } from "@/lib/split";
@@ -198,6 +205,19 @@ export default function TipsScreen() {
    * местом под имя того, кто вносит записи, — оно и так обрезается.
    */
   const [showSide, setShowSide] = useState<Contour | null>(null);
+  /**
+   * Открыт ли экран мотивации кальянного бара.
+   *
+   * Кнопки в шапке у него нет намеренно: место там уже кончилось, и ради
+   * второй кнопки хостес с кальяном свели на один экран (см. выше). Поэтому
+   * вход сюда стоит там, где о деньгах бара и так говорят, — на экране
+   * «Хостес и кальянный бар», в котле кальянщиков.
+   *
+   * ⚠️ Мотивация — НЕ чаевые: её платит заведение, в отчёт по чаевым она
+   * не идёт и в итог смены внизу не входит. Поэтому она и не стоит рядом
+   * с суммой за смену, хотя место там есть.
+   */
+  const [showMotivation, setShowMotivation] = useState(false);
   const [editing, setEditing] = useState<string | null>(null);
   const [toast, setToast] = useState<Toast | null>(null);
 
@@ -402,12 +422,21 @@ export default function TipsScreen() {
     [everyone, shift.hostess],
   );
   /**
-   * Кальянщики смены и общий котёл бара.
+   * Кому в баре можно записать ДЕНЬГИ.
    *
    * Котёл стоит первым и есть всегда, даже когда никого не отметили: бывает,
    * что администратор не знает, кто обслуживал, и деньги всё равно должны
    * куда-то лечь. Запасной путь, который видно, лучше записи, которой
    * не случилось.
+   *
+   * 🔴 **Сейчас здесь получается ровно один котёл, и это нарочно.** Отбор
+   * идёт по `getHookahPeople`, а он отдаёт только «Весь бар»: чаевые бара
+   * поимённо не делим, решение владельца 07.09.2026 «не пересматриваем».
+   *
+   * ⚠️ **Не подставляйте сюда `getHookahCrew`.** Тот список — про состав
+   * смены, про то, кто вышел работать; он появился 08.09.2026, чтобы делить
+   * МОТИВАЦИЮ, и он полон имён. Подставленный сюда, он молча отменил бы
+   * решение о котле и начал бы раскладывать чаевые по людям.
    */
   const hookahPeople = useMemo(() => {
     const onShift = getHookahPeople().filter((p) => shift.hookah.includes(p.id));
@@ -473,7 +502,15 @@ export default function TipsScreen() {
       // ищется в справочнике — и человек, убранный из дописанных вручную,
       // превращается в безымянные деньги. За август 2026 так выпало
       // 44 998,72 ₽ по девяти сменам.
-      const справочник = [...everyone, ...getHookahPeople()];
+      // ⚠️ Кальянщики поимённо — обязательно: без них имя отмеченного
+      // кальянщика в смену не сохранялось бы вовсе, и в отчёте на его месте
+      // остался бы голый номер. Ровно так за август 2026 стали безымянными
+      // 44 998,72 ₽ по девяти сменам.
+      const справочник = [
+        ...everyone,
+        ...getHookahPeople(),
+        ...getHookahCrew(),
+      ];
       const names: Record<string, string> = { ...(next.names ?? {}) };
       // ⚠️ Второго администратора здесь не было до 19.08.2026. Роль завели
       // 18.08, а этот список забыли дописать — и имя второго администратора
@@ -1089,6 +1126,14 @@ export default function TipsScreen() {
       );
     }
 
+    // Стоит выше экрана хостес и бара: уходим на мотивацию оттуда, а вернуться
+    // должны туда же, поэтому сам showSide при этом не сбрасываем.
+    if (showMotivation) {
+      return (
+        <MotivationScreen day={day} onClose={() => setShowMotivation(false)} />
+      );
+    }
+
     if (showSide) {
       return (
         <SideScreen
@@ -1101,6 +1146,7 @@ export default function TipsScreen() {
             setShowSide(null);
             setEditingCrew(true);
           }}
+          onMotivation={() => setShowMotivation(true)}
           onCancel={() => setShowSide(null)}
           onConfirm={addSide}
         />

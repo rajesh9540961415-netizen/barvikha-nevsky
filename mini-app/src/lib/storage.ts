@@ -5,8 +5,10 @@ import {
   listPendingQrTips,
   markExported,
   readExportMark,
+  readHookahMotivation,
 } from "./db/actions";
 import type { ExportMark } from "./db/actions";
+import type { МотивацияСмены } from "./hookahMotivation";
 import { enqueueAndSend } from "./offline";
 import type { Entry, QrTip } from "./types";
 
@@ -45,6 +47,18 @@ export async function markShiftExported(
   by: string,
 ): Promise<ExportMark> {
   return markExported(businessDay, by);
+}
+
+/**
+ * Мотивация кальянного бара за последнюю посчитанную смену.
+ *
+ * Чтение, и только чтение: сама доплата считается на Маке и приезжает
+ * в базу готовой. Без связи экран честно откажет — как и вся история.
+ */
+export async function hookahMotivation(
+  businessDay: string,
+): Promise<МотивацияСмены> {
+  return readHookahMotivation(businessDay);
 }
 
 /**
