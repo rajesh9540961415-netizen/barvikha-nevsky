@@ -2,6 +2,7 @@
 
 import { СТАВКИ_ПО_УМОЛЧАНИЮ } from "../hookahMotivation";
 import type { МотивацияСмены, СтрокаСчёта } from "../hookahMotivation";
+import { HOOKAH_POT_ID } from "../split";
 import type { Contour, Employee, Entry, Kind, QrTip, Shift } from "../types";
 import { db } from "./sql";
 
@@ -830,7 +831,13 @@ export async function readHookahMotivation(
      limit 1
   `;
 
-  if (!последний) return { день: null, продажи: [], ставки: {} };
+  if (!последний) {
+    return { день: null, продажи: [], ставки: {}, бар: [], имена: {} };
+  }
+
+  // Состав ТОЙ смены, а не сегодняшней: доплату делят между теми, кто
+  // работал в тот вечер. Экран обычно показывает вчерашний.
+  const смена = await readShift(последний.day);
 
   const [продажи, строкиСтавок] = await Promise.all([
     sql<СтрокаСчёта[]>`
@@ -849,7 +856,16 @@ export async function readHookahMotivation(
   const ставки: Record<string, number> = { ...СТАВКИ_ПО_УМОЛЧАНИЮ };
   for (const с of строкиСтавок) ставки[с.category] = с.rate;
 
-  return { день: последний.day, продажи: [...продажи], ставки };
+  return {
+    день: последний.day,
+    продажи: [...продажи],
+    ставки,
+    // ⚠️ Общий котёл в составе — не человек, и в делителе ему не место:
+    // попади он туда, доля каждого молча уменьшилась бы. В выборе состава
+    // его нет, но данные приходят и из прошлого, а прошлое чинить поздно.
+    бар: (смена?.hookah ?? []).filter((id) => id !== HOOKAH_POT_ID),
+    имена: смена?.names ?? {},
+  };
 }
 
 // Та же функция и с тем же телом, что в offline.ts и на пяти экранах:

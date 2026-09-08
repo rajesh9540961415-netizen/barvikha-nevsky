@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { formatBusinessDay, formatMoney } from "@/lib/businessDay";
 import { посчитать } from "@/lib/hookahMotivation";
 import type { МотивацияСмены } from "@/lib/hookahMotivation";
+import { getHookahCrew } from "@/lib/people";
 import { hookahMotivation } from "@/lib/storage";
 
 /**
@@ -179,8 +180,71 @@ function Таблица({
               </tr>
             </tfoot>
           </table>
+
+          <НаЧеловека всего={всего} данные={данные} />
         </div>
       )}
     </>
   );
+}
+
+/**
+ * Сколько выходит каждому.
+ *
+ * Мотивация бара — котёл на смену, и владелец делит его ПОРОВНУ между теми,
+ * кто в неё работал (формат листа УК, 08.09.2026): 13 600 ÷ 6 = 2 266.
+ *
+ * ⚠️ **Копейки не прячем.** Доля редко делится нацело, и «2 266» вместо
+ * «2 266,67» — это не округление, а потерянные деньги, которых потом никто
+ * не досчитается. Здесь то же правило, что и у долей зала в split.ts.
+ *
+ * 💡 Имена показываем нарочно, мелкой строкой. Число, на которое делят,
+ * проверить больше нечем: неотмеченный кальянщик уменьшает долю остальных
+ * молча, и увидеть это можно только глазами, узнав в списке всех, кто вышел.
+ */
+function НаЧеловека({
+  всего,
+  данные,
+}: {
+  всего: number;
+  данные: МотивацияСмены;
+}) {
+  if (данные.бар.length === 0) {
+    return (
+      <p className="pt-4 text-sm text-fg-muted">
+        Состав бара в ту смену не отмечен — делить не на кого. Кальянщиков
+        отмечают в составе смены, там же, где официантов.
+      </p>
+    );
+  }
+
+  const справочник = getHookahCrew();
+  const имена = данные.бар.map(
+    (id) =>
+      справочник.find((p) => p.id === id)?.short ??
+      данные.имена[String(id)] ??
+      `№${id}`,
+  );
+
+  return (
+    <div className="pt-4">
+      <p className="text-base">
+        Поровну на {данные.бар.length}{" "}
+        {plural(данные.бар.length, "человека", "человека", "человек")} — по{" "}
+        <span className="tabular-nums">
+          {formatMoney(всего / данные.бар.length)}
+        </span>
+      </p>
+      <p className="pt-1 text-xs text-fg-muted">{имена.join(", ")}</p>
+    </div>
+  );
+}
+
+/** «на 1 человека», «на 2 человек» — в строке про долю. */
+function plural(n: number, one: string, few: string, many: string): string {
+  const mod10 = n % 10;
+  const mod100 = n % 100;
+  if (mod10 === 1 && mod100 !== 11) return one;
+  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return few;
+  return many;
 }
