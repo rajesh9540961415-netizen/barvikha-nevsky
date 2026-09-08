@@ -544,3 +544,46 @@ alter table shifts add column if not exists names jsonb not null default '{}'::j
 --
 -- Пусто в обычную смену: тогда вся доля уходит одному, как и раньше.
 alter table shifts add column if not exists admin2_id integer;
+
+-- ─── Мотивация кальянного бара ──────────────────────────────────────────
+--
+-- Кальянщики продают разные типы кальянов, и за каждый тип положена доплата
+-- рублями за штуку. Мотивация ОБЩАЯ НА СМЕНУ, не личная (владелец 06.09.2026).
+--
+-- ⚠️ Продажи приходят СЮДА, а не считаются на месте: состав заказа Quick Resto
+-- через API не отдаёт — `front.orders` возвращает 50 полей без позиций. Позиции
+-- берутся из фискальных чеков ОФД на компьютере владельца и уезжают сюда
+-- отдельной командой. Возвраты в них уже вычтены.
+create table if not exists hookah_sales (
+  business_day text          not null,
+  position     text          not null,
+  -- Категория мотивации, посчитанная на Маке. Здесь она ХРАНИТСЯ, а не
+  -- выводится: решение «что чем считается» принимается один раз в
+  -- scripts/hookah_push.py, потому что только там виден состав чека.
+  -- Доплата за «ЧМ» положена лишь в комплекте с электронной чашей, а в базу
+  -- приезжают уже сложенные продажи дня — по ним комплект не разглядеть.
+  category     text          not null default '',
+  -- Количество, за которое положена ДОПЛАТА, а не проданное. У электронной
+  -- чаши внутри комплекта это ноль: её оплатили через «ЧМ».
+  qty          numeric(10,2) not null,
+  amount       numeric(12,2) not null,
+  updated_at   timestamptz   not null default now(),
+  primary key (business_day, position)
+);
+
+-- Таблица могла быть заведена до 08.09.2026, когда категории тут не было.
+alter table hookah_sales add column if not exists category text not null default '';
+
+create index if not exists hookah_sales_day_idx on hookah_sales (business_day);
+
+-- Ставки: рубли за штуку по категории.
+--
+-- Живут в базе, а не в файле, потому что их правит владелец прямо на экране
+-- бэк-офиса. Правила отнесения позиции к категории — наоборот, в файле
+-- `src/data/hookah-motivation.json`: это код, а не решение на каждый день.
+create table if not exists hookah_rates (
+  category   text          primary key,
+  rate       numeric(10,2) not null default 0,
+  updated_at timestamptz   not null default now(),
+  updated_by text
+);

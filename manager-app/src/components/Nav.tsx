@@ -35,6 +35,7 @@ export default async function Nav({ раздел }: { раздел?: string }) {
         ]
       : []),
     { ключ: "tips", подпись: "Чаевые", адрес: "/tips" },
+    { ключ: "motivaciya", подпись: "Мотивация бара", адрес: "/motivaciya" },
     { ключ: "people", подпись: "Сотрудники", адрес: "/people" },
     ...(manager.role === "owner"
       ? [{ ключ: "access", подпись: "Доступ", адрес: "/access" }]
