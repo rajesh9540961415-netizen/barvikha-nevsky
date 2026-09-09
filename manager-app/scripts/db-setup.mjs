@@ -87,6 +87,10 @@ try {
 
   await sql.unsafe(readFileSync(join(here, "schema.sql"), "utf8"));
 
+  // Дневные итоги «Обзора» — отдельным файлом, см. schema-dashboard.sql.
+  // Порядок важен: schema.sql первым, он заводит схему и всё остальное.
+  await sql.unsafe(readFileSync(join(here, "schema-dashboard.sql"), "utf8"));
+
   // ⚠️ Список полный нарочно, вместе с финансовыми таблицами. Проверка стоит
   // перед запуском (`db-setup && npm start` в Dockerfile) ровно затем, чтобы
   // приложение не поднялось с неполной схемой и не упало потом на живом
@@ -98,6 +102,7 @@ try {
     "entries", "shifts", "manual_people", "qr_tips",
     "managers", "manager_logins", "shift_changes",
     "fin_operations", "fin_days", "fin_revenue", "fin_balances", "fin_sources",
+    "dashboard_days",
   ];
   const есть = await sql`
     select table_name from information_schema.tables

@@ -4,10 +4,9 @@ import { useState } from "react";
 import { formatBusinessDay, formatMoney } from "@/lib/businessDay";
 import { cashierPool } from "@/lib/split";
 import type { Shift } from "@/lib/crew";
-import { HOOKAH_POT_ID } from "@/lib/split";
 import {
   addManualPerson,
-  getHookahPeople,
+  getHookahCrew,
   getQuickRestoPeople,
   removeManualPerson,
 } from "@/lib/people";
@@ -16,10 +15,10 @@ import { BUILD } from "@/lib/version";
 
 const FROM_QUICK_RESTO = getQuickRestoPeople();
 
-// Кальянщики из кассы ИП Шалаевой. Общий котёл бара («Весь бар») идёт
-// первым в getHookahPeople, но в составе смены ему не место: это получатель
-// денег, а не человек, который вышел работать.
-const FROM_SHALAEVA = getHookahPeople().filter((p) => p.id !== HOOKAH_POT_ID);
+// Кальянщики поимённо. Общий котёл бара («Весь бар») сюда не входит: это
+// получатель денег, а не человек, который вышел работать, — и списки эти
+// разные, см. getHookahCrew.
+const FROM_SHALAEVA = getHookahCrew();
 
 type Props = {
   day: string;
@@ -398,9 +397,13 @@ export default function ShiftCrew({
         />
       </Section>
 
+      {/* ⚠️ Отметить надо ВСЕХ, кто вышел в бар, а не только того, кто пробивал
+          чеки. Мотивацию бара владелец делит между отмеченными поровну, и
+          неотмеченный человек остаётся без своей доли — молча: на экране
+          это никак не видно, видно только в деньгах и через месяц. */}
       <Section
         title="Кальянный бар"
-        hint="касса ИП Шалаевой, чаевые не делятся"
+        hint="все, кто вышел, — на них делится мотивация"
         summary={listOf(FROM_SHALAEVA, shift.hookah)}
         open={open === "hookah"}
         onToggle={() => setOpen(open === "hookah" ? null : "hookah")}

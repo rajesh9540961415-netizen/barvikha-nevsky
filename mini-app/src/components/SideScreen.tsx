@@ -51,6 +51,8 @@ type Props = {
   split: Record<"hostess" | "hookah", SideSplit>;
   /** Открыть состав смены — если нужного человека в списке нет. */
   onCrew: () => void;
+  /** Открыть мотивацию бара. Показывается только в котле кальянщиков. */
+  onMotivation: () => void;
   onCancel: () => void;
   onConfirm: (input: {
     amount: number;
@@ -67,6 +69,7 @@ export default function SideScreen({
   hookah,
   split,
   onCrew,
+  onMotivation,
   onCancel,
   onConfirm,
 }: Props) {
@@ -121,6 +124,18 @@ export default function SideScreen({
           ‹
         </button>
         <div className="text-base">Хостес и кальянный бар</div>
+        {/* Мотивация бара — не чаевые: её платит заведение за проданные
+            кальяны, и в суммы этого экрана она не входит. Но спрашивают про
+            неё здесь же, в разговоре про деньги бара, поэтому вход стоит
+            рядом. В шапке главного экрана места под ещё одну кнопку нет. */}
+        {side === "hookah" && (
+          <button
+            onClick={onMotivation}
+            className="ml-auto rounded-lg border border-line px-3 py-1.5 text-xs text-fg-muted active:bg-surface"
+          >
+            мотивация
+          </button>
+        )}
       </header>
 
       {/* Переключатель котлов. Выбранный котёл виден постоянно: перепутать
