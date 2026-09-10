@@ -162,6 +162,7 @@ export default function ShiftCrew({
       // вписывали в зал: у официантов состав влияет на долю кассира.
       if (section === "crew") toggleCrew(fresh.id);
       else if (section === "hostess") toggleHostess(fresh.id);
+      else if (section === "hookah") toggleHookah(fresh.id);
       else if (
         section === "operator" ||
         section === "admin" ||
@@ -186,6 +187,7 @@ export default function ShiftCrew({
       ...s,
       crew: s.crew.filter((x) => x !== person.id),
       hostess: s.hostess.filter((x) => x !== person.id),
+      hookah: s.hookah.filter((x) => x !== person.id),
       operator: s.operator === person.id ? null : s.operator,
       admin: s.admin === person.id ? null : s.admin,
       admin2: s.admin2 === person.id ? null : s.admin2,
@@ -404,14 +406,32 @@ export default function ShiftCrew({
       <Section
         title="Кальянный бар"
         hint="все, кто вышел, — на них делится мотивация"
-        summary={listOf(FROM_SHALAEVA, shift.hookah)}
+        summary={listOf([...FROM_SHALAEVA, ...manual], shift.hookah)}
         open={open === "hookah"}
         onToggle={() => setOpen(open === "hookah" ? null : "hookah")}
       >
         <MultiPicker
-          people={FROM_SHALAEVA}
+          people={[...FROM_SHALAEVA, ...manualВыбор]}
           selected={shift.hookah}
           onToggle={toggleHookah}
+        />
+        {/* ⚠️ «Кого нет в списке» здесь появилась 09.09.2026, и вот почему.
+            Раздел бара был единственным из шести без неё: его делали накануне
+            под мотивацию и кнопку не поставили. В тот же вечер один кальянщик
+            не вышел, вместо него отработал другой человек — вписать его было
+            нечем, администратор оставил отмеченным того, кто не работал,
+            и смена записала чужую фамилию.
+
+            💡 Делить это не сломало: делят на число отмеченных, а вышло их
+            столько же. Сломало СЛЕД — кто в тот вечер работал; по нему потом
+            сверяют мотивацию, и подмену в нём не видно ничем. */}
+        <AddPerson
+          section="hookah"
+          openIn={addingIn}
+          name={name}
+          onName={setName}
+          onOpen={setAddingIn}
+          onAdd={add}
         />
       </Section>
 

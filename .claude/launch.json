@@ -32,6 +32,18 @@
       ],
       "cwd": "/Users/user/Documents/Невский/manager-app",
       "port": 3101
+    },
+    {
+      "name": "мотивация",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": [
+        "-m",
+        "http.server",
+        "8899",
+        "--directory",
+        "/Users/user/Documents/Невский"
+      ],
+      "port": 8899
     }
   ]
 }
