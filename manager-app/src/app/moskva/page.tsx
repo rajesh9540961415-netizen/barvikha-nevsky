@@ -158,6 +158,9 @@ function Таблица({
         <thead className="text-xs text-fg-muted">
           <tr className="border-b border-line">
             <th className="px-4 py-2 text-left font-normal">Дата</th>
+            {/* Номер документа из выписки — по нему владелец ищет платёж
+                в банке. Просьба владельца 11.09.2026. */}
+            <th className="px-4 py-2 text-left font-normal">Документ</th>
             <th className="px-4 py-2 text-left font-normal">Куда</th>
             <th className="px-4 py-2 text-right font-normal">Сумма</th>
             <th className="px-4 py-2 text-left font-normal">
@@ -170,6 +173,11 @@ function Таблица({
             <tr key={`${д.день}-${д.документ}-${д.сумма}`} className="border-b border-line last:border-0">
               <td className="whitespace-nowrap px-4 py-2.5 align-top text-fg-muted">
                 {dayLabel(д.день)}
+              </td>
+              <td className="whitespace-nowrap px-4 py-2.5 align-top tabular-nums text-fg-muted">
+                {/* Пусто — у части движений номера в выписке нет вовсе.
+                    Прочерк честнее пустой клетки: видно, что не потеряли. */}
+                {д.документ || "—"}
               </td>
               <td className="whitespace-nowrap px-4 py-2.5 align-top">
                 {/* Направление словами, а не стрелкой: стрелку читают
