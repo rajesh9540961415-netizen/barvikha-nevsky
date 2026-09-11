@@ -409,7 +409,16 @@ export default async function Сводка({
             Стол здесь — закрытая бронь Рестоплейс, то есть посадка.  */}
         {сейчас.столов > 0 ? (
           <>
-            <div className="mt-4 grid grid-cols-1 gap-px overflow-hidden rounded-lg border border-line bg-line sm:grid-cols-3">
+            <div className="mt-4 grid grid-cols-2 gap-px overflow-hidden rounded-lg border border-line bg-line lg:grid-cols-4">
+              {/* Столов — первой плиткой, а не подписью под «гостями на стол».
+                  Просьба владельца 10.09.2026. Это число, на которое делятся
+                  три остальных: не видя его, невозможно понять, посчитаны они
+                  по трёмстам посадкам или по трём. */}
+              <Плитка
+                подпись="Столов"
+                значение={сейчас.столов.toLocaleString("ru-RU")}
+                пояснение="закрытые посадки Рестоплейс"
+              />
               <Плитка
                 подпись="Средний чек по столу"
                 значение={money(Math.round(сейчас.среднийЧекПоСтолу))}
@@ -425,7 +434,7 @@ export default async function Сводка({
                 значение={сейчас.гостейНаСтол.toLocaleString("ru-RU", {
                   minimumFractionDigits: 2, maximumFractionDigits: 2,
                 })}
-                пояснение={`посадок за период: ${сейчас.столов.toLocaleString("ru-RU")}`}
+                пояснение={`гостей за период: ${сейчас.гостей.toLocaleString("ru-RU")}`}
               />
             </div>
             {/* Период почти всегда шире того, что знает Рестоплейс: он отдаёт

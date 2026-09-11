@@ -1,5 +1,5 @@
 import type { Shift } from "./crew";
-import { getHookahPeople } from "./people";
+import { getHookahCrew, getHookahPeople } from "./people";
 import { HOOKAH_POT_ID, adminShares, splitShift, splitSide } from "./split";
 import type { Employee, Entry } from "./types";
 
@@ -66,6 +66,25 @@ export type ShiftExport = {
    */
   hostess: SideExport;
   hookah: SideExport;
+  /**
+   * Кто вышел в бар в этот вечер — поимённо, полными именами.
+   *
+   * ⚠️ Это НЕ получатели денег и не строки блока `hookah`. Там «Весь бар»:
+   * чаевые бара — общий котёл, поимённо не делятся (решение владельца
+   * 22.08.2026). Здесь другое — состав смены, и он нужен МОТИВАЦИИ: её
+   * владелец делит поровну между теми, кто работал, и без имён делить
+   * не на кого.
+   *
+   * Появилось 10.09.2026. До этого состав бара жил только в базе приложения
+   * и до отчёта не доезжал: в листе УК под строкой «КАЛЬЯННЫЙ БАР Мотивация»
+   * вместо людей стояла разбивка по типам кальянов — заглушка, поставленная
+   * потому, что имён взять было неоткуда.
+   *
+   * Пусто — значит, в тот вечер бар не отмечали. У смен до 08.09.2026 так
+   * и будет: раздела «Кальянный бар» в составе тогда ещё не было. Это
+   * «не вели», а не «никто не работал», и путать эти два случая дорого.
+   */
+  hookahCrew: { name: string }[];
   totals: {
     cash: number;
     terminal: number;
@@ -179,6 +198,19 @@ export function buildExport(
     cashier: { name: nameOf(shift.cashier), amount: s.cashierTotal },
     hostess: side("hostess", hostessPeople),
     hookah: side("hookah", hookahPeople),
+    // Имя ищем сперва в справочнике бара, потом среди зальных и дописанных
+    // руками (в бар можно вписать кого угодно), и только затем в именах,
+    // сохранённых вместе со сменой. Последнее — страховка: справочник
+    // меняется, а смена это документ того вечера.
+    hookahCrew: shift.hookah
+      .filter((id) => id !== HOOKAH_POT_ID)
+      .map((id) => ({
+        name:
+          getHookahCrew().find((p) => p.id === id)?.name ??
+          everyone.find((p) => p.id === id)?.name ??
+          shift.names?.[String(id)] ??
+          `№${id}`,
+      })),
     totals: {
       // ⚠️ Зальные итоги намеренно остались зальными: отчёт читает их
       // с 01.08.2026, и менять их смысл нельзя. Деньги хостес и бара —
