@@ -94,6 +94,9 @@ try {
   // Заимствования между площадками — экран «Москва», см. schema-zaimy.sql.
   await sql.unsafe(readFileSync(join(here, "schema-zaimy.sql"), "utf8"));
 
+  // Вознаграждение собственнику — экран «Вознаграждение босса».
+  await sql.unsafe(readFileSync(join(here, "schema-boss.sql"), "utf8"));
+
   // ⚠️ Список полный нарочно, вместе с финансовыми таблицами. Проверка стоит
   // перед запуском (`db-setup && npm start` в Dockerfile) ровно затем, чтобы
   // приложение не поднялось с неполной схемой и не упало потом на живом
@@ -105,7 +108,7 @@ try {
     "entries", "shifts", "manual_people", "qr_tips",
     "managers", "manager_logins", "shift_changes",
     "fin_operations", "fin_days", "fin_revenue", "fin_balances", "fin_sources",
-    "dashboard_days", "interbranch_moves",
+    "dashboard_days", "interbranch_moves", "owner_payouts",
   ];
   const есть = await sql`
     select table_name from information_schema.tables
