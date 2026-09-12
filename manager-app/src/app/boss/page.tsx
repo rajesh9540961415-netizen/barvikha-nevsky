@@ -34,7 +34,7 @@ export default async function BossPage() {
     return (
       <>
         <Nav раздел="boss" />
-        <main className="mx-auto max-w-5xl px-6 py-8">
+        <main className="mx-auto max-w-7xl px-6 py-8">
           <h1 className="text-2xl font-medium">Вознаграждение босса</h1>
           <p className="mt-3 text-sm text-fg-muted">
             Выплат пока нет. Их присылает с компьютера владельца{" "}
@@ -55,7 +55,7 @@ export default async function BossPage() {
   return (
     <>
       <Nav раздел="boss" />
-      <main className="mx-auto max-w-5xl px-6 py-8">
+      <main className="mx-auto max-w-7xl px-6 py-8">
         <h1 className="text-2xl font-medium">Вознаграждение босса</h1>
         <p className="mt-1 text-sm text-fg-muted">
           Что выведено, за какой месяц и с каких юрлиц
