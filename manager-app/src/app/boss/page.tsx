@@ -1,21 +1,10 @@
 import Nav from "@/components/Nav";
+import ВыплатыБосса from "@/components/ВыплатыБосса";
 import { требоватьВладельца } from "@/lib/db/managers";
 import { вознаграждение, ЮРЛИЦА } from "@/lib/db/boss";
-import { dayLabel, money, moment, plural } from "@/lib/format";
+import { money, moment, plural } from "@/lib/format";
 
 export const dynamic = "force-dynamic";
-
-const МЕСЯЦЫ = [
-  "январь", "февраль", "март", "апрель", "май", "июнь",
-  "июль", "август", "сентябрь", "октябрь", "ноябрь", "декабрь",
-];
-
-/** «2026-07» → «июль 2026». Null — месяц не назван. */
-function названиеМесяца(м: string | null): string {
-  if (!м) return "месяц не назван";
-  const [год, номер] = м.split("-");
-  return `${МЕСЯЦЫ[Number(номер) - 1]} ${год}`;
-}
 
 /**
  * Вознаграждение босса: что выведено, за какой месяц и с каких юрлиц.
@@ -31,7 +20,11 @@ function названиеМесяца(м: string | null): string {
  * ⚠️ **«Месяц не назван» — отдельной строкой внизу, и размазывать его
  * по месяцам нельзя.** Это выплаты, про которые владелец ещё не сказала,
  * за что они. Догадка, выданная за факт, стоит здесь миллионы: на 11.09.2026
- * месяц известен у восьми выплат из ста десяти.
+ * месяц известен у семи выплат из ста десяти.
+ *
+ * 💡 Таблица месяцев и разбор выбранного месяца живут в `ВыплатыБосса` —
+ * там нужен щелчок мышью, то есть браузер. Здесь остаётся то, ради чего
+ * страница считается на сервере: проверка права смотреть и сами числа.
  */
 export default async function BossPage() {
   await требоватьВладельца();
@@ -52,7 +45,12 @@ export default async function BossPage() {
     );
   }
 
-  const юрлица = ЮРЛИЦА.filter((ю) => д.поЮрлицамВсего[ю.ключ]);
+  // Юрлицо без единой выплаты столбца не получает: пустая колонка выглядит
+  // как «оттуда не выводили», хотя на деле его просто нет в этих деньгах.
+  const юрлица = ЮРЛИЦА.filter((ю) => д.поЮрлицамВсего[ю.ключ]).map((ю) => ({
+    ключ: ю.ключ,
+    подпись: ю.подпись,
+  }));
 
   return (
     <>
@@ -76,120 +74,15 @@ export default async function BossPage() {
           </p>
         </section>
 
-        {/* ── По месяцам, за которые платили ───────────────────────────── */}
-        <h2 className="mt-8 text-lg font-medium">По месяцам, за которые платили</h2>
-        <div className="mt-3 overflow-x-auto rounded-xl border border-line">
-          <table className="w-full text-sm">
-            <thead className="text-xs text-fg-muted">
-              <tr className="border-b border-line">
-                <th className="px-4 py-2 text-left font-normal">За месяц</th>
-                <th className="px-4 py-2 text-right font-normal">Всего</th>
-                {юрлица.map((ю) => (
-                  <th key={ю.ключ} className="px-4 py-2 text-right font-normal">
-                    {ю.подпись}
-                  </th>
-                ))}
-                <th className="px-4 py-2 text-right font-normal">Выплат</th>
-              </tr>
-            </thead>
-            <tbody>
-              {д.месяцы.map((м) => (
-                <tr key={м.месяц ?? "—"} className="border-b border-line last:border-0">
-                  <td className={`px-4 py-2.5 ${м.месяц ? "" : "text-fg-muted"}`}>
-                    {названиеМесяца(м.месяц)}
-                  </td>
-                  <td className="px-4 py-2.5 text-right tabular-nums">{money(м.всего)}</td>
-                  {юрлица.map((ю) => (
-                    <td key={ю.ключ} className="px-4 py-2.5 text-right tabular-nums text-fg-muted">
-                      {/* Прочерк, а не ноль: с этого юрлица в этот месяц
-                          не выводили вовсе, и ноль читался бы как расчёт. */}
-                      {м.поЮрлицам[ю.ключ] ? money(м.поЮрлицам[ю.ключ]) : "—"}
-                    </td>
-                  ))}
-                  <td className="px-4 py-2.5 text-right tabular-nums text-fg-muted">
-                    {м.выплат}
-                  </td>
-                </tr>
-              ))}
-              <tr className="border-t-2 border-line">
-                <td className="px-4 py-2.5 font-medium">Итого</td>
-                <td className="px-4 py-2.5 text-right font-medium tabular-nums">
-                  {money(д.всего)}
-                </td>
-                {юрлица.map((ю) => (
-                  <td key={ю.ключ} className="px-4 py-2.5 text-right font-medium tabular-nums">
-                    {money(д.поЮрлицамВсего[ю.ключ] ?? 0)}
-                  </td>
-                ))}
-                <td className="px-4 py-2.5 text-right font-medium tabular-nums">
-                  {д.платежей}
-                </td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-
-        {д.безМесяца > 0 && (
-          <p className="mt-3 text-xs leading-relaxed text-fg-muted">
-            Строка «месяц не назван» — это выплаты, про которые ещё не сказано,
-            за какой месяц они. Они не размазаны по месяцам нарочно: пока месяц
-            не назван, отнести их куда-либо значит выдать догадку за факт.
-          </p>
-        )}
-
-        {/* ── Сами выплаты ─────────────────────────────────────────────── */}
-        <h2 className="mt-8 text-lg font-medium">Выплаты, свежие сверху</h2>
-        <p className="mt-1 text-xs text-fg-muted">
-          Платёж, поделённый между месяцами, стоит двумя строками — под суммой
-          подписано, из какой выплаты она взята.
-        </p>
-        <div className="mt-3 overflow-x-auto rounded-xl border border-line">
-          <table className="w-full text-sm">
-            <thead className="text-xs text-fg-muted">
-              <tr className="border-b border-line">
-                <th className="px-4 py-2 text-left font-normal">Дата</th>
-                <th className="px-4 py-2 text-left font-normal">Документ</th>
-                <th className="px-4 py-2 text-left font-normal">С кого</th>
-                <th className="px-4 py-2 text-right font-normal">Сумма</th>
-                <th className="px-4 py-2 text-left font-normal">За месяц</th>
-                <th className="px-4 py-2 text-left font-normal">Комментарий</th>
-              </tr>
-            </thead>
-            <tbody>
-              {д.выплаты.map((в) => (
-                <tr key={`${в.день}-${в.документ}-${в.сумма}`}
-                    className="border-b border-line last:border-0">
-                  <td className="whitespace-nowrap px-4 py-2.5 align-top text-fg-muted">
-                    {dayLabel(в.день)}
-                  </td>
-                  <td className="whitespace-nowrap px-4 py-2.5 align-top tabular-nums text-fg-muted">
-                    {в.документ || "—"}
-                  </td>
-                  <td className="whitespace-nowrap px-4 py-2.5 align-top">
-                    {ЮРЛИЦА.find((ю) => ю.ключ === в.юрлицо)?.подпись ?? в.юрлицо}
-                  </td>
-                  <td className="whitespace-nowrap px-4 py-2.5 text-right align-top tabular-nums">
-                    {money(в.сумма)}
-                    {/* Делёный платёж стоит двумя строками, и без этой
-                        подписи они читаются как две разные выплаты. */}
-                    {в.делёный && (
-                      <span className="block text-xs text-fg-muted">
-                        из {money(в.весьПлатёж)}
-                      </span>
-                    )}
-                  </td>
-                  <td className="whitespace-nowrap px-4 py-2.5 align-top">
-                    {в.заМесяц ? названиеМесяца(в.заМесяц)
-                               : <span className="text-fg-muted">— не назван</span>}
-                  </td>
-                  <td className="px-4 py-2.5 align-top text-fg-muted">
-                    {в.комментарий ?? "—"}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <ВыплатыБосса
+          месяцы={д.месяцы}
+          выплаты={д.выплаты}
+          юрлица={юрлица}
+          всего={д.всего}
+          платежей={д.платежей}
+          поЮрлицамВсего={д.поЮрлицамВсего}
+          безМесяца={д.безМесяца}
+        />
 
         {д.обновлено && (
           <p className="mt-8 text-xs text-fg-muted">
