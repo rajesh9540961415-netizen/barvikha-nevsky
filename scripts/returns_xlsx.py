@@ -43,7 +43,7 @@ import qr_orders  # noqa: E402 — после sys.path
 import ofd_returns as R  # noqa: E402
 import qr_cancellations as C  # noqa: E402
 
-from report_path import describe, report_dir  # noqa: E402
+from report_path import describe, фин_dir  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 КОПИИ = ROOT / "Резервные копии"
@@ -63,7 +63,7 @@ ROOT = Path(__file__).resolve().parent.parent
 #
 # ⚠️ Отсюда же берутся комментарии при пересборке. Читать из одного файла,
 # а писать в другой — это потерянные комментарии ровно один раз, молча.
-ФАЙЛ = report_dir() / "Возвраты без перебивки — 2026.xlsx"
+ФАЙЛ = фин_dir() / "Возвраты без перебивки — 2026.xlsx"
 
 ШАПКА = ["№", "Касса", "Дата", "Время", "Стол", "Смена", "Учётная запись ОФД", "Оплата",
          "Сумма чека, ₽", "Не вернулось\nза 30 мин, ₽", "Не вернулось\nза ЧАС, ₽",
