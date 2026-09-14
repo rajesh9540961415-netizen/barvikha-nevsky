@@ -616,6 +616,7 @@ type PersonRow = {
   short: string;
   hidden_at: Date | null;
   merged_into: number | null;
+  in_hookah: boolean;
 };
 
 /**
@@ -629,12 +630,20 @@ type PersonRow = {
  * Кого показывать в списке выбора, решает экран: он отбирает по `hidden`.
  * Решение «не показывать» принимается там, где показывают, а не там,
  * где читают из базы.
+ *
+ * ⚠️ Заодно считаем `вБаре` — отмечали ли человека хоть раз в составе
+ * кальянного бара. Считаем по самим сменам, а не по отдельной пометке:
+ * факт «работал в баре» уже записан в составе прошлых вечеров, и второй
+ * источник правды тут не нужен. Смен в базе десятки, проверка дешёвая.
  */
 export async function listManual(): Promise<Employee[]> {
   const sql = db();
   const rows = await sql<PersonRow[]>`
-    select id, name, short, hidden_at, merged_into
-      from manual_people order by id desc
+    select p.id, p.name, p.short, p.hidden_at, p.merged_into,
+           exists (
+             select 1 from shifts s where p.id = any(s.hookah)
+           ) as in_hookah
+      from manual_people p order by p.id desc
   `;
   return rows.map((r) => ({
     id: r.id,
@@ -642,6 +651,7 @@ export async function listManual(): Promise<Employee[]> {
     short: r.short,
     hidden: r.hidden_at !== null,
     mergedInto: r.merged_into ?? undefined,
+    вБаре: r.in_hookah,
   }));
 }
 
