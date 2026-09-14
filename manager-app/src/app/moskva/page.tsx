@@ -1,5 +1,5 @@
 import Nav from "@/components/Nav";
-import { требоватьВладельца } from "@/lib/db/managers";
+import { требоватьФинансы } from "@/lib/db/managers";
 import { заимствования, type Движение } from "@/lib/db/zaimy";
 import { dayLabel, money, moment, plural } from "@/lib/format";
 
@@ -31,7 +31,7 @@ export const dynamic = "force-dynamic";
  * говорит об этом вслух — по прямой просьбе владельца 11.09.2026.
  */
 export default async function MoskvaPage() {
-  await требоватьВладельца();
+  await требоватьФинансы();
   const д = await заимствования();
 
   if (д.движения.length === 0 && д.неЗаймы.length === 0) {

@@ -6,7 +6,7 @@ import PersonPicker from "@/components/PersonPicker";
 import PersonStatsView from "@/components/PersonStats";
 import ManualPeople from "./ManualPeople";
 import { listPeople, listManualPeople, readPerson, склейки } from "@/lib/db/people";
-import { requireManager } from "@/lib/db/managers";
+import { требоватьСмену } from "@/lib/db/managers";
 import { dayLabel } from "@/lib/format";
 import type { Employee } from "@/lib/types";
 
@@ -53,7 +53,7 @@ export default async function PeoplePage({
 }: {
   searchParams: Promise<{ id?: string; period?: string }>;
 }) {
-  const manager = await requireManager();
+  const manager = await требоватьСмену();
 
   const params = await searchParams;
   const period = params.period ?? "30";

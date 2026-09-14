@@ -13,10 +13,25 @@ import {
 } from "../auth";
 import { db } from "./sql";
 
+/**
+ * Кто заходит в бэк-офис.
+ *
+ * 🔴 Роль `finance` заведена 14.09.2026 под второго участника: ему нужна
+ * финансовая документация и больше ничего. До неё выбор был между
+ * управляющим, который финансов не видит вовсе, и владельцем, который
+ * заодно получает право переписать порог 1300 ₽ и доли — то есть зарплату
+ * смены. **Показать цифры и отдать право их менять — разные вещи.**
+ *
+ * ⚠️ Финансист не видит ни чаевых, ни людей, ни смен. Это не только про
+ * деньги: там фамилии и заработки каждого, и человеку, пришедшему считать
+ * выручку, они не нужны.
+ */
+export type Роль = "owner" | "manager" | "finance";
+
 export type Manager = {
   id: number;
   name: string;
-  role: "owner" | "manager";
+  role: Роль;
   /** Пароль выдан, своим ещё не заменён — до замены дальше входа не пускаем. */
   mustChangePassword: boolean;
 };
@@ -26,7 +41,7 @@ export type AccessPerson = {
   id: number;
   name: string;
   login: string;
-  role: "owner" | "manager";
+  role: Роль;
   active: boolean;
   mustChangePassword: boolean;
   lastSeen: string | null;
@@ -195,6 +210,33 @@ export async function requireManager(): Promise<Manager> {
 }
 
 /** То же, но пускает только владельца. */
+/**
+ * Пускает на ФИНАНСОВЫЕ экраны: владельца и финансиста.
+ *
+ * ⚠️ Только смотреть. Права на правку здесь не раздаются вовсе: всё, что
+ * меняет деньги, по-прежнему спрашивает `требоватьВладельца`, а сами
+ * финансовые числа приходят не с экрана, а от скриптов по ключу.
+ */
+export async function требоватьФинансы(): Promise<Manager> {
+  const manager = await requireManager();
+  if (manager.role !== "owner" && manager.role !== "finance") redirect("/tips");
+  return manager;
+}
+
+/**
+ * Пускает на экраны СМЕНЫ: владельца и управляющего.
+ *
+ * 🔴 Без этой проверки финансист попадал бы на чаевые и людей просто потому,
+ * что он вошёл: `requireManager` спрашивает «ты вошёл?», а не «тебе сюда?».
+ * Роль, добавленная к системе, где проверка одна на всех, открывает двери,
+ * о которых никто не думал.
+ */
+export async function требоватьСмену(): Promise<Manager> {
+  const manager = await requireManager();
+  if (manager.role === "finance") redirect("/");
+  return manager;
+}
+
 export async function требоватьВладельца(): Promise<Manager> {
   const manager = await requireManager();
   if (manager.role !== "owner") redirect("/");
@@ -322,6 +364,11 @@ export async function addPerson(_previous: Итог, form: FormData): Promise<И
   // а человек, вводя своё имя с большой буквы, не смог бы войти.
   const логин = String(form.get("login") ?? "").trim().toLowerCase();
   const роль = String(form.get("role") ?? "manager");
+  // ⚠️ Проверка ролей и здесь, а не только в списке на экране: форму можно
+  // отправить мимо экрана, а роль решает, кому видны деньги заведения.
+  if (!["owner", "manager", "finance"].includes(роль)) {
+    return { ok: false, текст: "Роль бывает владелец, управляющий или финансист" };
+  }
 
   if (!имя) return { ok: false, текст: "Не указано имя" };
   if (!/^[a-z0-9_-]{2,32}$/.test(логин)) {

@@ -1,7 +1,7 @@
 import Link from "next/link";
 import Nav from "@/components/Nav";
 import Ставки from "@/components/Ставки";
-import { requireManager } from "@/lib/db/managers";
+import { требоватьСмену } from "@/lib/db/managers";
 import { месяцыСПродажами, продажиМесяца, ставки as ставкиИзБазы } from "@/lib/db/hookah";
 import { КАТЕГОРИИ, СТАВКИ_ПО_УМОЛЧАНИЮ, посчитать } from "@/lib/hookahMotivation";
 import { dayLabel, money, plural } from "@/lib/format";
@@ -31,7 +31,7 @@ export default async function MotivaciyaPage({
 }: {
   searchParams: Promise<{ месяц?: string }>;
 }) {
-  await requireManager();
+  await требоватьСмену();
   const { месяц: выбран } = await searchParams;
 
   const месяцы = await месяцыСПродажами();

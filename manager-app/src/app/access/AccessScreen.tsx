@@ -4,6 +4,12 @@ import { useActionState } from "react";
 import Link from "next/link";
 import { addPerson, resetPassword, toggleActive, type AccessPerson } from "@/lib/db/managers";
 
+const ПОДПИСЬ_РОЛИ: Record<string, string> = {
+  owner: "владелец",
+  manager: "управляющий",
+  finance: "финансист",
+};
+
 /** Показ выданного пароля. Он приходит один раз, и это надо сказать вслух. */
 function Пароль({ логин, пароль, текст }: { логин?: string; пароль: string; текст: string }) {
   return (
@@ -75,6 +81,11 @@ export default function AccessScreen({ people }: { people: AccessPerson[] }) {
             >
               <option value="manager">управляющий</option>
               <option value="owner">владелец</option>
+              {/* Финансист видит только деньги заведения и только смотрит:
+                  ни чаевых, ни людей, ни права что-либо менять. Заведён
+                  14.09.2026 — показать цифры и отдать право их менять
+                  оказались разными вещами. */}
+              <option value="finance">финансист</option>
             </select>
           </label>
           <button
@@ -133,7 +144,7 @@ export default function AccessScreen({ people }: { people: AccessPerson[] }) {
                   {!p.active && <span className="ml-2 text-sm text-fg-muted">отключён</span>}
                 </td>
                 <td className="py-3 text-fg-muted">
-                  {p.role === "owner" ? "владелец" : "управляющий"}
+                  {ПОДПИСЬ_РОЛИ[p.role] ?? p.role}
                 </td>
                 <td className="py-3 text-fg-muted">{когда(p.lastSeen)}</td>
                 <td className="py-3">

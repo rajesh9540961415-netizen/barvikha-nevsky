@@ -1,6 +1,6 @@
 import Link from "next/link";
 import Nav from "@/components/Nav";
-import { requireManager } from "@/lib/db/managers";
+import { требоватьСмену } from "@/lib/db/managers";
 import { listShifts } from "@/lib/db/shifts";
 import { dayLabel, moneyOrDash as money } from "@/lib/format";
 
@@ -14,7 +14,7 @@ export const dynamic = "force-dynamic";
  * под дашборд, которого пока нет, — сейчас он просто перенаправляет.
  */
 export default async function TipsPage() {
-  await requireManager();
+  await требоватьСмену();
 
   const shifts = await listShifts();
 

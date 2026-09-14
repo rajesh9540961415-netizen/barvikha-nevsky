@@ -247,7 +247,9 @@ export default async function Сводка({
   searchParams: Promise<{ [k: string]: string | undefined }>;
 }) {
   const manager = await requireManager();
-  if (manager.role !== "owner") redirect("/tips");
+  // Управляющему сводка не положена: это выручка и прибыль, а его экран
+  // начинается с чаевых. Финансисту положена — ради неё он и заходит.
+  if (manager.role === "manager") redirect("/tips");
 
   const параметры = await searchParams;
   const { первый, последний, обновлено } = await состояние();
