@@ -11,14 +11,18 @@
 import { randomBytes, scryptSync } from "node:crypto";
 import postgres from "postgres";
 
+const ПОДПИСЬ = { owner: "владелец", manager: "управляющий", finance: "финансист" };
+
 const [name, login, role = "manager"] = process.argv.slice(2);
+// Роли: owner — всё; manager — чаевые и смены; finance — только финансы,
+// только смотрит (заведена 14.09.2026 под второго участника).
 
 if (!name || !login) {
-  console.error('Как пользоваться:  npm run manager:add -- "Имя Фамилия" логин [owner|manager]');
+  console.error('Как пользоваться:  npm run manager:add -- "Имя Фамилия" логин [owner|manager|finance]');
   process.exit(1);
 }
-if (role !== "owner" && role !== "manager") {
-  console.error(`Роль бывает owner или manager, а не «${role}»`);
+if (!["owner", "manager", "finance"].includes(role)) {
+  console.error(`Роль бывает owner, manager или finance, а не «${role}»`);
   process.exit(1);
 }
 
@@ -60,7 +64,7 @@ try {
     process.exit(1);
   }
 
-  console.log(`✓ Заведён: ${row.name} · ${row.role === "owner" ? "владелец" : "управляющий"}`);
+  console.log(`✓ Заведён: ${row.name} · ${ПОДПИСЬ[row.role] ?? row.role}`);
   console.log();
   console.log(`   логин:  ${row.login}`);
   console.log(`   пароль: ${password}`);

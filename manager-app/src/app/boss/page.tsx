@@ -1,6 +1,6 @@
 import Nav from "@/components/Nav";
 import ВыплатыБосса from "@/components/ВыплатыБосса";
-import { требоватьВладельца } from "@/lib/db/managers";
+import { требоватьФинансы } from "@/lib/db/managers";
 import { вознаграждение, ЮРЛИЦА } from "@/lib/db/boss";
 import { money, moment, plural } from "@/lib/format";
 
@@ -27,7 +27,7 @@ export const dynamic = "force-dynamic";
  * страница считается на сервере: проверка права смотреть и сами числа.
  */
 export default async function BossPage() {
-  await требоватьВладельца();
+  await требоватьФинансы();
   const д = await вознаграждение();
 
   if (д.выплаты.length === 0) {
