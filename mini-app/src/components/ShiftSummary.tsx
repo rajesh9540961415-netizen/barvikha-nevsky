@@ -1,6 +1,11 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { formatBusinessDay, formatMoney } from "@/lib/businessDay";
+import { посчитать } from "@/lib/hookahMotivation";
+import type { МотивацияСмены } from "@/lib/hookahMotivation";
+import { getHookahCrew } from "@/lib/people";
+import { hookahMotivation } from "@/lib/storage";
 import { THRESHOLD, adminShares, splitShift } from "@/lib/split";
 import type { SideSplit } from "@/lib/split";
 import type { Shift } from "@/lib/types";
@@ -283,6 +288,8 @@ export default function ShiftSummary({
         </>
       )}
 
+      <МотивацияБара day={day} />
+
       <div className="px-4 pb-1.5 pt-5 text-xs text-fg-muted">по официантам</div>
       <div className="flex flex-col gap-2 px-4">
         {s.waiters.map((w) => (
@@ -438,6 +445,139 @@ function clock(iso: string): string {
  * гость оставил на зальном терминале и попросил поделить. Поэтому у строки
  * терминала показаны обе суммы: дошедшая и полная.
  */
+/**
+ * Мотивация кальянного бара в итогах смены.
+ *
+ * 🔴 **Заведено 16.09.2026 по просьбе владельца:** «чтобы администратор,
+ * как за смены, видел, какой объём мотивации и по каким позициям нужно
+ * будет выплатить сотрудникам». Вид назвала она же — **разбивка
+ * по категориям: сколько в каждой продано и на какую сумму.**
+ *
+ * Экран «Мотивация бара» с теми же цифрами есть с 09.09.2026, но лежит
+ * глубоко: главный экран → «Хостес и кальянный бар» → переключить на бар →
+ * мелкая кнопка «мотивация» в углу. В конце смены администратор открывает
+ * итоги, а мотивации там не было вовсе — и выходило, что общий объём выплат
+ * за вечер в одном месте не виден.
+ *
+ * ⚠️ **Это не чаевые.** Доплату платит заведение за проданные кальяны,
+ * в суммы хостес и бара выше она не входит и в отчёт по чаевым не идёт.
+ * Поэтому блок стоит отдельно и подписан своим заголовком.
+ *
+ * ⚠️ **Свой запрос, а не общие данные экрана.** Продажи приезжают не из смены,
+ * а из кассы бара, и сеть может подвести. Не вышло — блок молчит: итоги смены
+ * это деньги людей, и падать из-за премии они не должны.
+ */
+function МотивацияБара({ day }: { day: string }) {
+  const [данные, setДанные] = useState<МотивацияСмены | null>(null);
+
+  useEffect(() => {
+    let живо = true;
+    hookahMotivation(day)
+      .then((д) => живо && setДанные(д))
+      .catch(() => {});
+    return () => {
+      живо = false;
+    };
+  }, [day]);
+
+  if (!данные || данные.день === null) return null;
+
+  const { поКатегориям, всего, штукВсего } = посчитать(
+    данные.продажи,
+    данные.ставки,
+  );
+  // Категории, которых в эту смену не продали, не показываем: строка с нулём
+  // ничего не сообщает. Пустой итог — не показываем и блок целиком.
+  const строки = поКатегориям.filter((к) => к.штук > 0);
+  if (строки.length === 0) return null;
+
+  const справочник = getHookahCrew();
+  const имя = (id: number) =>
+    справочник.find((p) => p.id === id)?.short ??
+    данные.имена[String(id)] ??
+    `№${id}`;
+
+  return (
+    <>
+      <div className="flex items-baseline justify-between px-4 pb-1.5 pt-5">
+        <span className="text-xs text-fg-muted">мотивация бара</span>
+        <span className="text-xs tabular-nums text-fg-muted">
+          {formatMoney(всего)}
+        </span>
+      </div>
+      <div className="px-4">
+        <div className="rounded-xl bg-surface p-3.5">
+          {строки.map((к) => (
+            <div
+              key={к.категория}
+              className="flex items-baseline justify-between py-1 text-sm"
+            >
+              <span>{к.категория}</span>
+              <span className="text-fg-muted">
+                <span className="tabular-nums">{к.штук.toLocaleString("ru-RU")}</span>{" "}
+                шт ·{" "}
+                <span className="tabular-nums text-fg">
+                  {formatMoney(к.мотивация)}
+                </span>
+              </span>
+            </div>
+          ))}
+          <div className="mt-1.5 flex items-baseline justify-between border-t border-line pt-2">
+            <span>Итого</span>
+            <span>
+              <span className="tabular-nums text-fg-muted">
+                {штукВсего.toLocaleString("ru-RU")}
+              </span>{" "}
+              <span className="text-fg-muted">шт ·</span>{" "}
+              <span className="tabular-nums">{formatMoney(всего)}</span>
+            </span>
+          </div>
+
+          {/* Доля и имена — та же строка, что на экране мотивации, и по той же
+              причине. Котёл считается от проданных кальянов и от числа людей
+              не зависит: забыли одного — делят на меньшее число, и доля выходит
+              БОЛЬШЕ настоящей, а забытый остаётся ни с чем. Ошибка идёт в плюс
+              и выглядит правдоподобно; поймать её можно только глазами,
+              узнав в списке всех, кто вышел. */}
+          {данные.бар.length > 0 ? (
+            <div className="mt-2.5 border-t border-line pt-2.5">
+              <div className="text-sm">
+                Поровну на {данные.бар.length}{" "}
+                {plural(данные.бар.length, "человека", "человека", "человек")} — по{" "}
+                <span className="tabular-nums">
+                  {доляДоДесятых(всего / данные.бар.length)}
+                </span>
+              </div>
+              <div className="pt-1 text-xs text-fg-muted">
+                {данные.бар.map(имя).join(", ")}
+              </div>
+            </div>
+          ) : (
+            <div className="mt-2.5 border-t border-line pt-2.5 text-xs text-fg-muted">
+              Состав бара не отмечен — делить не на кого. Кальянщиков отмечают
+              в составе смены, там же, где официантов.
+            </div>
+          )}
+        </div>
+      </div>
+    </>
+  );
+}
+
+/**
+ * «1 500 ₽», «2 266,7 ₽» — доля, округлённая до десятых рубля.
+ *
+ * Как на экране мотивации: владелец 08.09.2026 просила именно десятые,
+ * а недостачу в пару рублей закрывает из кассы на месте. Копейки беречь
+ * надо в долях ЗАЛА — там из них складывается выплата.
+ */
+function доляДоДесятых(сумма: number): string {
+  const текст = (Math.round(сумма * 10) / 10).toLocaleString("ru-RU", {
+    maximumFractionDigits: 1,
+  });
+  return `${текст.replace(/\s/g, "\u00a0")}\u00a0₽`;
+}
+
 function SidePart({ title, calc }: { title: string; calc: SideSplit }) {
   if (calc.total === 0) return null;
   return (
