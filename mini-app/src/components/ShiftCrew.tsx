@@ -132,6 +132,15 @@ export default function ShiftCrew({
 
   const ready = shift.crew.length > 0 && shift.operator !== null && !busy;
 
+  // Официанты этого вечера — из кассы и дописанные руками, в порядке состава.
+  const выбранныеОфицианты = shift.crew
+    .map(
+      (id) =>
+        FROM_QUICK_RESTO.find((p) => p.id === id) ??
+        manualВыбор.find((p) => p.id === id),
+    )
+    .filter((p): p is Employee => Boolean(p));
+
   function toggleCrew(id: number) {
     setShift((s) => ({
       ...s,
@@ -139,6 +148,31 @@ export default function ShiftCrew({
       crew: s.crew.includes(id)
         ? s.crew.filter((x) => x !== id)
         : [...s.crew, id],
+      // Сняли человека со смены — снимаем и отметку «полсмены». Отметка
+      // без человека не видна на экране вовсе, а в расчёт кассира попадает:
+      // тихая ошибка ровно того вида, из-за которого чистят состав на входе
+      // в базу.
+      halfShift: (s.halfShift ?? []).filter((x) => x !== id),
+    }));
+  }
+
+  /**
+   * Официант вышел на ЧАСТЬ смены.
+   *
+   * 🔴 Решение владельца 15.09.2026: такой официант кассиру не платит,
+   * и доля кассира на него не раскладывается — его нет в делителе. Кассир
+   * получает свою сумму целиком, а платят её те, кто отработал вечер
+   * полностью: при четырёх официантах 250 ₽ с человека вместо 187,50 ₽.
+   *
+   * ⚠️ Всё остальное у него как у всех: порог 1300 ₽ и 20 % администратору.
+   * Владелец назвала только кассира.
+   */
+  function toggleHalf(id: number) {
+    setShift((s) => ({
+      ...s,
+      halfShift: (s.halfShift ?? []).includes(id)
+        ? (s.halfShift ?? []).filter((x) => x !== id)
+        : [...(s.halfShift ?? []), id],
     }));
   }
 
@@ -288,6 +322,28 @@ export default function ShiftCrew({
                   on={shift.crew.includes(p.id)}
                   onToggle={() => toggleCrew(p.id)}
                   onRemove={() => drop(p)}
+                />
+              ))}
+            </div>
+          </>
+        )}
+
+        {/* Кто вышел на часть смены. Показываем только тех, кто уже отмечен
+            в составе: отмечать полсмены человеку, которого нет в смене,
+            бессмысленно, а список из всех подряд отвлекал бы каждый вечер
+            ради случая, который бывает изредка. */}
+        {shift.crew.length > 0 && (
+          <>
+            <div className="px-4 pb-1.5 pt-4 text-xs text-fg-muted">
+              вышли на часть смены — кассиру не платят
+            </div>
+            <div className="grid grid-cols-2 gap-2 px-4">
+              {выбранныеОфицианты.map((p) => (
+                <PersonButton
+                  key={p.id}
+                  person={p}
+                  on={(shift.halfShift ?? []).includes(p.id)}
+                  onToggle={() => toggleHalf(p.id)}
                 />
               ))}
             </div>

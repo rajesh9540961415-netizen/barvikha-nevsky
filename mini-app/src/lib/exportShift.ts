@@ -129,7 +129,7 @@ export function buildExport(
   shift: Shift,
   everyone: Employee[],
 ): ShiftExport {
-  const s = splitShift(entries, crew, day);
+  const s = splitShift(entries, crew, day, shift.halfShift ?? []);
   // Сначала справочник, потом имена, сохранённые вместе со сменой.
   // Второе важнее первого по надёжности: справочник меняется, а смена —
   // документ, и в нём записано, кто работал В ТОТ ВЕЧЕР.

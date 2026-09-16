@@ -6,7 +6,7 @@ import { посчитать } from "@/lib/hookahMotivation";
 import type { МотивацияСмены } from "@/lib/hookahMotivation";
 import { getHookahCrew } from "@/lib/people";
 import { hookahMotivation } from "@/lib/storage";
-import { THRESHOLD, adminShares, splitShift } from "@/lib/split";
+import { HOOKAH_POT_ID, THRESHOLD, adminShares, splitShift } from "@/lib/split";
 import type { SideSplit } from "@/lib/split";
 import type { Shift } from "@/lib/types";
 import type { Employee, Entry } from "@/lib/types";
@@ -61,8 +61,9 @@ export default function ShiftSummary({
   exported,
   exporting,
 }: Props) {
-  const s = splitShift(entries, crew, day);
+  const s = splitShift(entries, crew, day, shift?.halfShift ?? []);
   const paying = s.waiters.filter((w) => w.aboveThreshold).length;
+  const наПолсмены = s.waiters.filter((w) => w.halfShift).length;
   // Внизу главного экрана стоит сумма ВСЕХ полученных денег, включая хостес
   // и кальянный бар. Если бы здесь она была только зальной, два экрана
   // показывали бы разные итоги за один вечер — и объяснить это было бы нечем.
@@ -227,7 +228,16 @@ export default function ShiftSummary({
             s.crewSize > 0
               ? // Сумма кассира зависит от дня недели, поэтому показываем
                 // её целиком: видно, из чего сложилась доля.
-                `${formatMoney(s.cashierPool)} ÷ ${s.crewSize} = по ${formatMoney(s.cashierShare)} · платят ${paying}`
+                //
+                // ⚠️ Делитель — только те, кто отработал вечер целиком: вышедший
+                // на часть смены кассиру не платит и в делителе не стоит
+                // (решение владельца 15.09.2026). Поэтому, когда такие есть,
+                // говорим об этом прямо — иначе цифра «÷ 3» при четырёх
+                // официантах на экране выглядит ошибкой.
+                `${formatMoney(s.cashierPool)} ÷ ${s.crewSize} = по ${formatMoney(s.cashierShare)} · платят ${paying}` +
+                (наПолсмены > 0
+                  ? ` · ${наПолсмены} на полсмены, не платят`
+                  : "")
               : undefined
           }
         />
@@ -288,7 +298,7 @@ export default function ShiftSummary({
         </>
       )}
 
-      <МотивацияБара day={day} />
+      <МотивацияБара day={day} бар={side.hookah} />
 
       <div className="px-4 pb-1.5 pt-5 text-xs text-fg-muted">по официантам</div>
       <div className="flex flex-col gap-2 px-4">
@@ -325,7 +335,13 @@ export default function ShiftSummary({
                 ) : (
                   <div className="flex justify-between text-fg-muted">
                     <span>кассиру</span>
-                    <span>только сбор — не делится</span>
+                    {/* Причина важнее самого нуля: «полсмены» и «только сбор» —
+                        разные вещи, и спрашивают о них по-разному. */}
+                    <span>
+                      {w.halfShift
+                        ? "полсмены — не платит"
+                        : "только сбор — не делится"}
+                    </span>
                   </div>
                 )}
                 {w.staff > 0 && <Line label="питание" value={-w.staff} />}
@@ -467,7 +483,7 @@ function clock(iso: string): string {
  * а из кассы бара, и сеть может подвести. Не вышло — блок молчит: итоги смены
  * это деньги людей, и падать из-за премии они не должны.
  */
-function МотивацияБара({ day }: { day: string }) {
+function МотивацияБара({ day, бар }: { day: string; бар: SideSplit }) {
   const [данные, setДанные] = useState<МотивацияСмены | null>(null);
 
   useEffect(() => {
@@ -533,33 +549,108 @@ function МотивацияБара({ day }: { day: string }) {
             </span>
           </div>
 
-          {/* Доля и имена — та же строка, что на экране мотивации, и по той же
-              причине. Котёл считается от проданных кальянов и от числа людей
-              не зависит: забыли одного — делят на меньшее число, и доля выходит
-              БОЛЬШЕ настоящей, а забытый остаётся ни с чем. Ошибка идёт в плюс
-              и выглядит правдоподобно; поймать её можно только глазами,
-              узнав в списке всех, кто вышел. */}
-          {данные.бар.length > 0 ? (
-            <div className="mt-2.5 border-t border-line pt-2.5">
-              <div className="text-sm">
-                Поровну на {данные.бар.length}{" "}
-                {plural(данные.бар.length, "человека", "человека", "человек")} — по{" "}
-                <span className="tabular-nums">
-                  {доляДоДесятых(всего / данные.бар.length)}
-                </span>
-              </div>
-              <div className="pt-1 text-xs text-fg-muted">
-                {данные.бар.map(имя).join(", ")}
-              </div>
-            </div>
-          ) : (
-            <div className="mt-2.5 border-t border-line pt-2.5 text-xs text-fg-muted">
-              Состав бара не отмечен — делить не на кого. Кальянщиков отмечают
-              в составе смены, там же, где официантов.
-            </div>
-          )}
         </div>
       </div>
+
+      <ПоКальянщикам мотивация={всего} состав={данные.бар} имя={имя} бар={бар} />
+    </>
+  );
+}
+
+/**
+ * Сколько каждый кальянщик получит за вечер.
+ *
+ * 🔴 **Вид расчёта назвала владелец 16.09.2026:** «из общей суммы заработанных
+ * денег за счёт чаевых и мотивации нужно вычесть конкретное питание человека,
+ * тогда и получишь корректную сумму». То есть складываем ему всё, что он
+ * заработал, и только потом снимаем ЕГО обед.
+ *
+ * 🔴 **Питание не трогает общий котёл.** Первым заходом я предложил вычитать
+ * обед из общей суммы до деления — владелец: «это в корне неверный подход,
+ * питание у каждого индивидуально, они набирают на свою конкретную сумму».
+ * Так и есть: раздели мы котёл после вычета, за обед одного платили бы все.
+ *
+ * ⚠️ **Общий котёл «Весь бар» делим поровну между отмеченными** — как и
+ * мотивацию. Именных чаевых у бара почти не бывает: за сентябрь 2026 все
+ * 55 345 ₽ записаны на «Весь бар» и ни одной строки на человека. Без деления
+ * поровну личной суммы у кальянщика не вышло бы вовсе, а она и нужна — из неё
+ * вычитается обед. Личные чаевые, если их всё-таки записали, идут сверх доли.
+ *
+ * ⚠️ Человек с обедом, но без отметки в составе, всё равно показывается:
+ * иначе вычет исчез бы с экрана, оставшись в деньгах.
+ */
+function ПоКальянщикам({
+  мотивация,
+  состав,
+  имя,
+  бар,
+}: {
+  мотивация: number;
+  состав: number[];
+  имя: (id: number) => string;
+  бар: SideSplit;
+}) {
+  if (состав.length === 0) {
+    return (
+      <div className="px-4 pt-2 text-xs text-fg-muted">
+        Состав бара не отмечен — делить не на кого. Кальянщиков отмечают
+        в составе смены, там же, где официантов.
+      </div>
+    );
+  }
+
+  const котёл = бар.rows.find((r) => r.payeeId === HOOKAH_POT_ID)?.total ?? 0;
+  const доляКотла = котёл / состав.length;
+  const доляМотивации = мотивация / состав.length;
+
+  const свои = бар.rows.filter(
+    (r) => r.payeeId !== HOOKAH_POT_ID && (r.total > 0 || r.staff > 0),
+  );
+  const люди = [...new Set([...состав, ...свои.map((r) => r.payeeId)])];
+
+  return (
+    <>
+      <div className="px-4 pb-1.5 pt-4 text-xs text-fg-muted">
+        по кальянщикам — чаевые и мотивация вместе
+      </div>
+      <div className="flex flex-col gap-2 px-4">
+        {люди.map((id) => {
+          const своё = бар.rows.find((r) => r.payeeId === id);
+          const вСоставе = состав.includes(id);
+          const чаевые = (вСоставе ? доляКотла : 0) + (своё?.total ?? 0);
+          const доплата = вСоставе ? доляМотивации : 0;
+          const питание = своё?.staff ?? 0;
+          const наРуки = чаевые + доплата - питание;
+          return (
+            <div key={id} className="rounded-xl bg-surface p-3.5">
+              <div className="flex items-baseline justify-between">
+                <span className="text-base">{имя(id)}</span>
+                <span className="tabular-nums">{доляДоДесятых(наРуки)}</span>
+              </div>
+              <div className="pt-1 text-xs text-fg-muted">
+                {[
+                  доплата > 0 && `мотивация ${доляДоДесятых(доплата)}`,
+                  чаевые > 0 && `чаевые ${доляДоДесятых(чаевые)}`,
+                  питание > 0 && `питание −${formatMoney(питание)}`,
+                  !вСоставе && "в составе смены не отмечен",
+                ]
+                  .filter(Boolean)
+                  .join(" · ")}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      {/* Котёл делится поровну, и сказать об этом надо прямо: бар привык
+          делить чаевые между собой сам, и цифра на экране должна быть
+          объяснимой, а не просто правдоподобной. */}
+      {котёл > 0 && (
+        <div className="px-4 pt-1.5 text-xs text-fg-muted">
+          чаевые «Весь бар» {formatMoney(котёл)} поделены поровну на{" "}
+          {состав.length}{" "}
+          {plural(состав.length, "человека", "человека", "человек")}
+        </div>
+      )}
     </>
   );
 }

@@ -43,7 +43,10 @@ export default function ShiftScreen({ data }: { data: DayData }) {
    */
   const [openWaiter, setOpenWaiter] = useState<string | null>(null);
 
-  const split = useMemo(() => splitOffice(live, crew, day), [live, crew, day]);
+  const split = useMemo(
+    () => splitOffice(live, crew, day, shift.halfShift ?? []),
+    [live, crew, day, shift.halfShift],
+  );
 
   /**
    * Хостес и кальянный бар.
@@ -410,6 +413,7 @@ export default function ShiftScreen({ data }: { data: DayData }) {
           event={cancelling}
           live={live}
           crew={crew}
+          полсмены={shift.halfShift ?? []}
           onClose={() => setCancelling(null)}
         />
       )}
@@ -639,12 +643,15 @@ function CancelDialog({
   event,
   live,
   crew,
+  полсмены,
   onClose,
 }: {
   day: string;
   event: ShiftEvent;
   live: DayData["live"];
   crew: DayData["crew"];
+  /** Кто вышел на часть смены — им доля кассира не считается. */
+  полсмены: number[];
   onClose: () => void;
 }) {
   const router = useRouter();
@@ -652,10 +659,19 @@ function CancelDialog({
   const [busy, setBusy] = useState(false);
   const [failed, setFailed] = useState<string | null>(null);
 
-  const before = useMemo(() => splitOffice(live, crew, day), [live, crew, day]);
+  const before = useMemo(
+    () => splitOffice(live, crew, day, полсмены),
+    [live, crew, day, полсмены],
+  );
   const after = useMemo(
-    () => splitOffice(live.filter((r) => eventKey(r) !== event.key), crew, day),
-    [live, event.key, crew, day],
+    () =>
+      splitOffice(
+        live.filter((r) => eventKey(r) !== event.key),
+        crew,
+        day,
+        полсмены,
+      ),
+    [live, event.key, crew, day, полсмены],
   );
 
   async function run() {
