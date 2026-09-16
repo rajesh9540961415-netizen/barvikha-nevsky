@@ -204,6 +204,7 @@ export async function readDay(businessDay: string): Promise<DayData | null> {
       cashier_id: number | null;
       hostess: number[] | null;
       hookah: number[] | null;
+      half_shift: number[] | null;
       names: Record<string, string> | null;
     }[]
   >`select * from shifts where business_day = ${businessDay}`;
@@ -235,6 +236,10 @@ export async function readDay(businessDay: string): Promise<DayData | null> {
         cashier: shifts[0].cashier_id,
         hostess: shifts[0].hostess ?? [],
         hookah: shifts[0].hookah ?? [],
+        // Кто вышел на часть смены: кассиру они не платят и в его делителе
+        // не стоят. У смен до 16.09.2026 столбца не было — пусто значит
+        // «все отработали вечер целиком».
+        halfShift: shifts[0].half_shift ?? [],
         // Имена, сохранённые вместе со сменой. Читаются, чтобы человека,
         // которого больше нет в справочнике, звали как в тот вечер,
         // а не «№−6».

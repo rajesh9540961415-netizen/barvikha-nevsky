@@ -38,7 +38,10 @@ export default function CrewEditor({ day, shift, live, crew, people, onClose }: 
   const [busy, setBusy] = useState(false);
   const [failed, setFailed] = useState<string | null>(null);
 
-  const before = useMemo(() => splitOffice(live, crew, day), [live, crew, day]);
+  const before = useMemo(
+    () => splitOffice(live, crew, day, shift.halfShift ?? []),
+    [live, crew, day, shift.halfShift],
+  );
 
   // Официанта, которого нет в справочнике, но который стоит в смене,
   // всё равно надо посчитать: иначе доля кассира разделится на меньшее
@@ -54,8 +57,8 @@ export default function CrewEditor({ day, shift, live, crew, people, onClose }: 
   );
 
   const after = useMemo(
-    () => splitOffice(live, nextCrew, day),
-    [live, nextCrew, day],
+    () => splitOffice(live, nextCrew, day, next.halfShift ?? []),
+    [live, nextCrew, day, next.halfShift],
   );
 
   const problem =

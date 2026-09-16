@@ -64,7 +64,11 @@ export default function EventEditor({ day, event, live, crew, people, shift, onC
 
   const СТОРОНА = useMemo(() => получатели(shift, people), [shift, people]);
 
-  const before = useMemo(() => splitOffice(live, crew, day), [live, crew, day]);
+  const полсмены = shift.halfShift ?? [];
+  const before = useMemo(
+    () => splitOffice(live, crew, day, полсмены),
+    [live, crew, day, полсмены],
+  );
 
   const fresh = useMemo(
     () =>
@@ -82,8 +86,8 @@ export default function EventEditor({ day, event, live, crew, people, shift, onC
   );
 
   const after = useMemo(
-    () => splitOffice(withReplacement(live, event.key, fresh), crew, day),
-    [live, event.key, fresh, crew, day],
+    () => splitOffice(withReplacement(live, event.key, fresh), crew, day, полсмены),
+    [live, event.key, fresh, crew, day, полсмены],
   );
 
   const crewIds = new Set(crew.map((p) => p.id));

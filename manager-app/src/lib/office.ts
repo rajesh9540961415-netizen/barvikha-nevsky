@@ -126,11 +126,13 @@ export function splitOffice(
   rows: OfficeEntry[],
   crew: Employee[],
   businessDay: string,
+  halfShift: number[] = [],
 ): ShiftSplit {
   return splitShift(
     rows.map((r) => ({ ...r, operatorId: r.operatorId ?? 0 })),
     crew,
     businessDay,
+    halfShift,
   );
 }
 

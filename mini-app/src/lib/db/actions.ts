@@ -482,6 +482,7 @@ type ShiftRow = {
   cashier_id: number | null;
   hostess: number[] | null;
   hookah: number[] | null;
+  half_shift: number[] | null;
   names: Record<string, string> | null;
 };
 
@@ -495,6 +496,8 @@ function toShift(r: ShiftRow): Shift {
     // У смен до 18.08.2026 этих столбцов не было: пусто значит «никого».
     hostess: r.hostess ?? [],
     hookah: r.hookah ?? [],
+    // У смен до 16.09.2026 столбца не было: пусто значит «все полную смену».
+    halfShift: r.half_shift ?? [],
     names: r.names ?? {},
   };
 }
@@ -570,17 +573,18 @@ export async function writeShift(
     crew: [...new Set(shift.crew)],
     hostess: [...new Set(shift.hostess ?? [])],
     hookah: [...new Set(shift.hookah ?? [])],
+    halfShift: [...new Set(shift.halfShift ?? [])],
   };
 
   await sql`
     insert into shifts (
       business_day, crew, operator_id, admin_id, admin2_id, cashier_id,
-      hostess, hookah, names
+      hostess, hookah, half_shift, names
     )
     values (
       ${businessDay}, ${без_повторов.crew}, ${без_повторов.operator},
       ${без_повторов.admin}, ${без_повторов.admin2 ?? null}, ${без_повторов.cashier},
-      ${без_повторов.hostess}, ${без_повторов.hookah},
+      ${без_повторов.hostess}, ${без_повторов.hookah}, ${без_повторов.halfShift},
       ${sql.json(без_повторов.names ?? {})}
     )
     on conflict (business_day) do update set
@@ -591,6 +595,7 @@ export async function writeShift(
       cashier_id = excluded.cashier_id,
       hostess = excluded.hostess,
       hookah = excluded.hookah,
+      half_shift = excluded.half_shift,
       names = excluded.names,
       updated_at = now()
   `;

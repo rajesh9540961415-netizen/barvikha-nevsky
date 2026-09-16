@@ -757,9 +757,13 @@ export default function TipsScreen() {
     if (!operator) return;
     // Обед хостес принадлежит её котлу, а не залу: иначе он вычелся бы
     // из зальных денег, где этого человека нет вовсе, и просто пропал.
+    // То же самое с 16.09.2026 верно и для кальянщиков: их питание живёт
+    // в котле бара, где считается их заработок за вечер.
     const contour: Contour = shift.hostess.includes(waiter.id)
       ? "hostess"
-      : "hall";
+      : shift.hookah.includes(waiter.id)
+        ? "hookah"
+        : "hall";
     const entry: Entry = {
       id: crypto.randomUUID(),
       hallId: null,
@@ -1062,6 +1066,7 @@ export default function TipsScreen() {
           event={editingEvent}
           live={entries}
           crew={crew}
+          halfShift={shift.halfShift ?? []}
           // Кому можно приписать запись — зависит от того, откуда она.
           //
           // У записи СО СТОЛА получатели бывают из любого котла: гость
@@ -1157,19 +1162,29 @@ export default function TipsScreen() {
       return (
         <StaffScreen
           // Хостес едят так же, как официанты, и вычет у них такой же
-          // (решение владельца 18.08.2026). Кальянщиков здесь нет: другое
-          // юрлицо, заведение не кормит их за счёт чаевых.
-          crew={[...crew, ...hostessPeople]}
+          // (решение владельца 18.08.2026). Кальянщики здесь с 16.09.2026:
+          // прежний запрет «заведение их не кормит» владелец отменила.
+          crew={[...crew, ...hostessPeople, ...hookahPeople]}
           eaten={(id) =>
-            splitShift(entries, crew, day).waiters.find((w) => w.waiterId === id)
+            splitShift(entries, crew, day, shift.halfShift ?? []).waiters.find(
+              (w) => w.waiterId === id,
+            )
               ?.staff ??
             sideSplit.hostess.rows.find((r) => r.payeeId === id)?.staff ??
+            sideSplit.hookah.rows.find((r) => r.payeeId === id)?.staff ??
             0
           }
+          // ⚠️ У кальянщика здесь стоит ноль, и это честно: его вечер —
+          // доля общего котла плюс доля мотивации, а обе считаются на всю
+          // смену и к моменту обеда ещё не сложены. Что выйдет на руки,
+          // видно в итогах смены, где обе доли уже известны.
           payout={(id) =>
-            splitShift(entries, crew, day).waiters.find((w) => w.waiterId === id)
+            splitShift(entries, crew, day, shift.halfShift ?? []).waiters.find(
+              (w) => w.waiterId === id,
+            )
               ?.net ??
             sideSplit.hostess.rows.find((r) => r.payeeId === id)?.net ??
+            sideSplit.hookah.rows.find((r) => r.payeeId === id)?.net ??
             0
           }
           onCancel={() => setShowStaff(false)}

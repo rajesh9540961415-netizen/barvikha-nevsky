@@ -36,6 +36,7 @@ export const EMPTY_SHIFT: Shift = {
   cashier: null,
   hostess: [],
   hookah: [],
+  halfShift: [],
   names: {},
 };
 
@@ -90,7 +91,10 @@ export async function setShift(
 export async function getLastShift(): Promise<Shift> {
   const прошлая = await readLastShift();
   if (!прошлая) return EMPTY_SHIFT;
-  return { ...прошлая, hookah: [] };
+  // Отметка «полсмены» вчерашняя и к новому вечеру отношения не имеет:
+  // человек выходит на часть смены не каждый раз, а подставленная отметка
+  // молча лишила бы кассира его доли. Пусть ставят заново, как и состав бара.
+  return { ...прошлая, hookah: [], halfShift: [] };
 }
 
 /** Смена собрана, можно вводить. Проверка чистая, база для неё не нужна. */

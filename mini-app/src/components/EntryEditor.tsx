@@ -66,6 +66,14 @@ type Props = {
    * администратору и долю кассира.
    */
   people: { person: Employee; contour: Contour }[];
+  /**
+   * Официанты, вышедшие на часть смены: кассиру они не платят и в его
+   * делителе не стоят (решение владельца 15.09.2026).
+   *
+   * ⚠️ Нужен здесь ради «было / стало»: считай предпросмотр без этого списка,
+   * он показал бы долю кассира не такой, какой она станет в итогах смены.
+   */
+  halfShift?: number[];
   /** Кто правит: тот, кто отмечен вносящим записи в этой смене. */
   operator: Employee;
   halls: Hall[];
@@ -82,6 +90,7 @@ export default function EntryEditor({
   live,
   crew,
   people,
+  halfShift,
   operator,
   halls,
   day,
@@ -199,11 +208,11 @@ export default function EntryEditor({
   const totalBefore = money(live);
   const totalAfter = money(after);
   const splitBefore = useMemo(
-    () => splitShift(live, crew, day),
-    [live, crew, day],
+    () => splitShift(live, crew, day, halfShift),
+    [live, crew, day, halfShift],
   );
   const splitAfter = useMemo(
-    () => splitShift(after, crew, day),
+    () => splitShift(after, crew, day, halfShift),
     [after, crew, day],
   );
 

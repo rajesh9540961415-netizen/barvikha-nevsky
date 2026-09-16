@@ -85,7 +85,14 @@ export default function AddEntry({ day, live, crew, people, shift, onClose }: Pr
     (id: number) => crew.find((p) => p.id === id)?.short ?? `№${id}`,
     [crew],
   );
-  const before = useMemo(() => splitOffice(live, crew, day), [live, crew, day]);
+  // Полсмены — из состава: кассиру такой официант не платит и в делителе
+  // не стоит. Без этого «было / стало» показало бы одну долю кассира,
+  // а приложение смены посчитало бы другую.
+  const полсмены = shift.halfShift ?? [];
+  const before = useMemo(
+    () => splitOffice(live, crew, day, полсмены),
+    [live, crew, day, полсмены],
+  );
 
   const свежие = useMemo(
     () =>
@@ -113,8 +120,8 @@ export default function AddEntry({ day, live, crew, people, shift, onClose }: Pr
   );
 
   const after = useMemo(
-    () => splitOffice([...live, ...свежие], crew, day),
-    [live, свежие, crew, day],
+    () => splitOffice([...live, ...свежие], crew, day, полсмены),
+    [live, свежие, crew, day, полсмены],
   );
 
   const hall = HALLS.find((h) => h.id === draft.hallId) ?? null;

@@ -20,8 +20,12 @@ from openpyxl.utils import get_column_letter
 ROOT = Path(__file__).resolve().parent.parent
 ОБРАЗЕЦ = Path.home() / "Downloads" / "10.08.2026 P&L образец 2.xlsx"
 # Имя без месяца: файл живёт весь год и каждый месяц получает новый лист.
-ДИСК = (Path.home() / "Library/CloudStorage/GoogleDrive-borzovavv@gmail.com"
-        / "Мой диск" / "P&L Барвиха Невский — бюджет 2026.xlsx")
+# Папку ищет report_path.фин_dir(): адрес Диска знает он один, и знать его
+# в двух местах нельзя — 14.09.2026 финансовые файлы переехали в отдельную
+# папку, и жёсткий путь отсюда стал бы вторым мнением о том, где они лежат.
+sys.path.insert(0, str(ROOT / "scripts"))
+from report_path import фин_dir  # noqa: E402
+ДИСК = фин_dir() / "P&L Барвиха Невский — бюджет 2026.xlsx"
 КОПИИ = ROOT / "Резервные копии"
 
 sys.path.insert(0, str(ROOT / "scripts"))
