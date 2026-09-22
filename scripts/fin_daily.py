@@ -33,8 +33,19 @@ def refresh_quickresto():
     env = {**os.environ, "PYTHONIOENCODING": "utf-8"}
     for cloud in ("mav", "shalaeva"):
         try:
+            # ⚠️ 45 минут, а не 10. Внутри qr_sales.py докачка истории
+            # рассчитана на срок в 45 минут и сама следит за ним. Пока здесь
+            # стояло 600 секунд, мы обрывали её на десятой минуте — и так
+            # четыре утра подряд, 18–21.09.2026: хранилище смен росло,
+            # но до конца не доходило, а пока история не докачана, qr_sales.py
+            # намеренно НЕ переписывает qr_sales_mav.csv. Выручка в сводке
+            # четыре дня шла по одной кассе из двух — втрое меньше настоящей,
+            # и по цифре это было незаметно.
+            #
+            # 💡 Внешний срок не должен быть короче внутреннего: иначе скрипт
+            # не успевает ни доделать работу, ни сказать, что не успел.
             subprocess.run([sys.executable, str(ROOT / "scripts" / "qr_sales.py"), f"--{cloud}"],
-                           capture_output=True, timeout=600, check=True, env=env)
+                           capture_output=True, timeout=2700, check=True, env=env)
         except Exception as e:
             detail = getattr(e, "stderr", b"") or b""
             print(f"   ⚠️  касса {cloud}: не обновилась ({type(e).__name__}) "
