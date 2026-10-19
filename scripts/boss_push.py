@@ -41,7 +41,7 @@ ROOT = Path(__file__).resolve().parent.parent
 DATA = ROOT / "data" / "dds"
 МЕСЯЦЫ_ФАЙЛ = DATA / "вознаграждение.json"
 ВНЕ_БАНКА_ФАЙЛ = DATA / "вознаграждение-вне-банка.json"
-АДРЕС_ПО_УМОЛЧАНИЮ = "https://nevsky-office-borzovavv.msk1.amvera.tech"
+АДРЕС_ПО_УМОЛЧАНИЮ = "https://office.barvikha-nevsky.ru"
 
 ПОДПИСЬ = {
     "ip_shalaeva": "ИП Шалаева",

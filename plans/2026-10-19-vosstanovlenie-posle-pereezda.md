@@ -76,7 +76,9 @@ IP для собственных доменов — `185.147.26.234`. Стары
 - приложение смены: `https://chaevye-borzovavv.msk1.amvera.tech`
 - бэк-офис: `https://nevsky-office-borzovavv.msk1.amvera.tech`
 
-Свой домен — решено завести (владелец, 19.10); имя ещё не выбрано, `barvikha-nevsky.ru` свободен. A-запись `185.147.26.234` + TXT из привязки.
+**✅ Свой домен работает с 19.10, вечер:** `https://smena.barvikha-nevsky.ru` и `https://office.barvikha-nevsky.ru` отвечают `"ok":true`, сертификаты Let's Encrypt до 17.01.2027 (продлевает Amvera). Записи в Beget: CNAME `smena`/`office` → `edge.msk1.amvera.tech` (не A-запись — Amvera просит CNAME), TXT `_amvera.smena` = `borzovavv-chaevye`, `_amvera.office` = `borzovavv-nevsky-office`. Скрипты, `CLAUDE.md`, `tg-reader/README.md` переведены на свой домен. Осталось: `CHAEVYE_API` у варшавского робота, закладки у смены.
+
+История: **Свой домен `barvikha-nevsky.ru` зарегистрирован владельцем 19.10.** Задуманы `smena.barvikha-nevsky.ru` → приложение смены, `office.barvikha-nevsky.ru` → бэк-офис: A-запись `185.147.26.234` + TXT из привязки в Amvera. На 19.10, вечер, домена ещё нет в зоне `.ru` (NXDOMAIN) — нормально сразу после регистрации. Когда заработает — перевести на него `CHAEVYE_API`, скрипты и документы; бесплатные адреса оставить запасными.
 
 Где старые адреса зашиты и что менять:
 

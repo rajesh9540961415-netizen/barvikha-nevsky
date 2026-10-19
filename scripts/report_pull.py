@@ -44,7 +44,7 @@ from seti import достучаться  # noqa: E402
 ROOT = Path(__file__).resolve().parent.parent
 СКАЧАННЫЕ = ROOT / "data" / "выгрузки-смен"
 
-БОЕВОЙ_АДРЕС = "https://chaevye-borzovavv.msk1.amvera.tech"
+БОЕВОЙ_АДРЕС = "https://smena.barvikha-nevsky.ru"
 
 
 def адрес() -> str:

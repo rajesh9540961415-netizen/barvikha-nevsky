@@ -93,7 +93,7 @@
 ## Стек
 
 - **Приложение:** Next.js 16 + React 19 + Tailwind 4 + TypeScript, папка `mini-app/`
-- **Хостинг:** Amvera Cloud, регион Москва. **Опубликовано 01.08.2026, адрес с 19.10.2026: https://chaevye-borzovavv.msk1.amvera.tech** (прежний `chaevye-borzovavv.amvera.io` умер вместе с ЦОДом Яндекса, где был регион Amvera; заодно сменилось внутреннее имя базы — теперь `cnpg-chaevye1-rw`. Подробно — `plans/2026-10-19-vosstanovlenie-posle-pereezda.md`) Сборка из `Dockerfile` + `amvera.yaml` в корне. Состояние базы видно на `/api/health`
+- **Хостинг:** Amvera Cloud, регион Москва. **Опубликовано 01.08.2026. Адрес с 19.10.2026: https://smena.barvikha-nevsky.ru**, бэк-офис — **https://office.barvikha-nevsky.ru**. Домен свой, куплен на Beget (DNS там же, оплачен до 19.10.2027): `smena` и `office` — CNAME на `edge.msk1.amvera.tech`, плюс TXT `_amvera.smena` / `_amvera.office` для проверки владения; сертификаты Let's Encrypt выпускает и продлевает Amvera. Запасные бесплатные адреса Amvera: `chaevye-borzovavv.msk1.amvera.tech`, `nevsky-office-borzovavv.msk1.amvera.tech` (прежний `chaevye-borzovavv.amvera.io` умер вместе с ЦОДом Яндекса, где был регион Amvera; заодно сменилось внутреннее имя базы — теперь `cnpg-chaevye1-rw`. Подробно — `plans/2026-10-19-vosstanovlenie-posle-pereezda.md`) Сборка из `Dockerfile` + `amvera.yaml` в корне. Состояние базы видно на `/api/health`
 
 ⚠️ **Выкладка = простой.** Пока Amvera пересобирает контейнер, приложение отвечает **503 «С приложением что-то не так»** — проверено 02.08.2026, простой длился несколько минут. Поэтому «не выкладывать во время смены» — правило не про тестовые данные, а про то, что в эти минуты администратор физически не сможет внести чаевые. Смена идёт примерно с 16:00 до 06:00, значит окно для выкладки — днём.
 
@@ -129,7 +129,7 @@ cd "/Users/user/Documents/Невский" && git config core.hooksPath .githooks
 `git ls-tree --name-only amvera/master`.
 
 ⚠️ **Бэк-офис — отдельное приложение и отдельная выкладка**, ремоут
-`amvera-manager`, адрес `nevsky-office-borzovavv.msk1.amvera.tech`. Его копия
+`amvera-manager`, адрес `office.barvikha-nevsky.ru`. Его копия
 справочника `manager-app/src/data/employees.json` **скриптом
 `qr_employees.py` не обновляется**: тот пишет только в `data/` и `mini-app/`
 (строки 130–142). Приводит копии в соответствие `npm run copies` из папки
@@ -139,7 +139,7 @@ cd "/Users/user/Documents/Невский" && git config core.hooksPath .githooks
 Затем **обязательно** сверить, что в бою нужная версия — мерило одно, поле «сборка»:
 
 ```bash
-curl -s https://chaevye-borzovavv.msk1.amvera.tech/api/health
+curl -s https://smena.barvikha-nevsky.ru/api/health
 ```
 
 ⚠️ Пока идёт подмена контейнера, `/api/health` отдаёт HTML-страницу 503, а не JSON. Проверка «ответ изменился» на этом ложно срабатывает — сверять надо именно поле «сборка».

@@ -82,7 +82,7 @@ def достучаться_json(запрос, **kwargs):
 
 if __name__ == "__main__":
     # Проверка связи: сколько запросов доходит. Полезно, когда что-то отвалилось.
-    адрес = sys.argv[1] if len(sys.argv) > 1 else "https://chaevye-borzovavv.msk1.amvera.tech/api/health"
+    адрес = sys.argv[1] if len(sys.argv) > 1 else "https://smena.barvikha-nevsky.ru/api/health"
     сколько = int(sys.argv[2]) if len(sys.argv) > 2 else 10
     дошло = 0
     коды = {}
