@@ -26,13 +26,75 @@
 # это bash 3.2, кириллицу в именах он не понимает и падает с «not a valid
 # identifier». Сообщения и комментарии на это ограничение не завязаны.
 
+# ── Проверка 1: в отправке нет секретов ─────────────────────────────────
+#
+# Заведено 19.10.2026, когда серверу дали ключ выкладки в Amvera без пароля:
+# теперь отправить код можно без участия человека, и последняя преграда
+# между паролем в файле и чужим сервером — эта проверка. Смотрит ВСЕ адреса
+# (GitHub, обе Amvera), а не только боевые: утечка опасна одинаково.
+#
+# Ищет только в ДОБАВЛЕННЫХ строках отправляемых коммитов. Образцы
+# с кириллицей («пароль», «ЗАМЕНИТЕ_МЕНЯ») и тестовое «test:test» не ловит
+# нарочно — значения должны быть латиницей и длиной от 8–12 знаков.
+#
+# Ложная тревога и надо отправить всё равно:
+#     SKIP_SECRET_SCAN=1 git push …
+
+input=$(cat)
+remote_name=$1
+zero40="0000000000000000000000000000000000000000"
+
+secret_re='-----BEGIN [A-Z ]*PRIVATE KEY-----'
+secret_re="$secret_re"'|postgres(ql)?://[A-Za-z0-9_.-]+:[A-Za-z0-9_%+=!~.-]{8,}@'
+secret_re="$secret_re"'|(QR_PASSWORD|QR_[A-Z_]*PASSWORD|TG_API_HASH|TG_BOT_TOKEN|TG_SESSION|BACKUP_PASSWORD|EXPORT_KEY|CHAEVYE_EXPORT_KEY|FINANCE_KEY|TIPS_FIX_KEY|DASHBOARD_KEY|SESSION_SECRET|BOOTSTRAP_KEY|RP_API_KEY|OFD_[A-Z_]*KEY|DATABASE_URL)=[A-Za-z0-9_%+=/:.@!~-]{12,}'
+secret_re="$secret_re"'|[0-9]{8,10}:AA[A-Za-z0-9_-]{33}'
+
+if [ -z "$SKIP_SECRET_SCAN" ]; then
+	while read -r _l local_sha _r remote_sha; do
+		[ -z "$local_sha" ] && continue
+		[ "$local_sha" = "$zero40" ] && continue
+		if [ "$remote_sha" != "$zero40" ] && git cat-file -e "$remote_sha" 2>/dev/null; then
+			range="$remote_sha..$local_sha"
+		else
+			range="$local_sha --not --remotes=$remote_name"
+		fi
+		# shellcheck disable=SC2086
+		files=$(git log --format= --name-only --diff-filter=A $range 2>/dev/null \
+			| grep -E '(^|/)\.env(\.local|\.production)?$' | sort -u)
+		# shellcheck disable=SC2086
+		hits=$(git log -p --format='commit %h' $range 2>/dev/null \
+			| grep -E '^(commit |\+)' | grep -E -B200 "^\+.*($secret_re)" \
+			| grep -E "^commit |^\+.*($secret_re)" | grep -E -A1 '^commit ' \
+			| grep -vE '^--$' | sed -E 's/(=|:)[A-Za-z0-9_%+=\/:.@!~-]{6,}/\1•••/g' | head -20)
+		if [ -n "$files" ] || [ -n "$(printf '%s' "$hits" | grep '^+')" ]; then
+			{
+				echo
+				echo "  ✋ Отправка остановлена: похоже, в ней секрет."
+				[ -n "$files" ] && printf '     файл с доступами: %s\n' $files
+				printf '%s\n' "$hits" | grep '^+' | sed 's/^/     /'
+				echo
+				echo "     Уберите секрет из коммита (git commit --amend / git rebase),"
+				echo "     пароли живут в .env и в переменных панели Amvera, не в git."
+				echo "     Если это ложная тревога: SKIP_SECRET_SCAN=1 git push …"
+				echo
+			} >&2
+			exit 1
+		fi
+	done <<EOF_INPUT
+$input
+EOF_INPUT
+fi
+
+# ── Проверка 2: окно выкладки боевого приложения ────────────────────────
+
 prod_refs="refs/heads/main refs/heads/master"
 guarded_remotes="origin amvera"
 hour=$(TZ=Europe/Moscow date +%H)
 clock=$(TZ=Europe/Moscow date "+%H:%M")
 zero="0000000000000000000000000000000000000000"
 
-# Первый довод git — имя адреса, куда отправляют. Не наш адрес — не наше дело.
+# Первый довод git — имя адреса, куда отправляют. Не наш адрес — окно не наше дело
+# (секреты выше проверены для всех адресов).
 case " $guarded_remotes " in
 	*" $1 "*) ;;
 	*) exit 0 ;;
@@ -76,6 +138,8 @@ while read -r _local_ref local_sha remote_ref _remote_sha; do
 
 EOF
 	exit 1
-done
+done <<EOF_INPUT
+$input
+EOF_INPUT
 
 exit 0
