@@ -185,6 +185,7 @@ export const KIND_TITLE: Record<Kind, string> = {
   qr: "QR",
   service: "сервисный сбор",
   staff: "питание",
+  hold: "удержание",
 };
 
 /**
@@ -245,4 +246,29 @@ export function контурНового(id: number, shift: Shift): Contour {
   if (shift.crew.includes(id)) return "hall";
   if (shift.hostess.includes(id)) return "hostess";
   return "hall";
+}
+
+/**
+ * Администратор(ы) и кассир смены, которых нет среди официантов, — им можно
+ * записать вычет (питание, удержание). Решение владельца 19.10.2026: «всё,
+ * что стафф, независимо от позиции, должно вычитаться».
+ */
+export function людиРолей(
+  shift: Shift,
+  crew: Employee[],
+  people: Employee[],
+): { person: Employee; роль: string }[] {
+  const вСоставе = new Set(crew.map((p) => p.id));
+  const роли: [number | null, string][] = [
+    [shift.admin, "админ"],
+    [shift.admin2, "админ"],
+    [shift.cashier, "кассир"],
+  ];
+  const итог: { person: Employee; роль: string }[] = [];
+  for (const [id, роль] of роли) {
+    if (id === null || вСоставе.has(id) || итог.some((r) => r.person.id === id)) continue;
+    const person = people.find((p) => p.id === id);
+    if (person) итог.push({ person, роль });
+  }
+  return итог;
 }

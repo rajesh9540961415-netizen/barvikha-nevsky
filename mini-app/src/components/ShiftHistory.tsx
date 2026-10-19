@@ -28,6 +28,7 @@ const KIND_LABEL: Record<Kind, string> = {
   service: "сбор",
   qr: "QR",
   staff: "питание",
+  hold: "удержание",
 };
 
 type Loading = "loading" | "ready" | "failed";

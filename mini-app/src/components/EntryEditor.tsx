@@ -15,7 +15,7 @@ import {
   type Payee,
   type ShiftEvent,
 } from "@/lib/events";
-import { COMMISSION_RATE, netAmount, THRESHOLD, splitShift } from "@/lib/split";
+import { COMMISSION_RATE, isDeduction, netAmount, THRESHOLD, splitShift } from "@/lib/split";
 import type { Contour, Employee, Entry, Hall, Kind } from "@/lib/types";
 
 /**
@@ -42,9 +42,10 @@ const KIND_LABEL: Record<Kind, string> = {
   qr: "QR",
   service: "сбор",
   staff: "питание",
+  hold: "удержание",
 };
 
-const KINDS: Kind[] = ["cash", "terminal", "qr", "service", "staff"];
+const KINDS: Kind[] = ["cash", "terminal", "qr", "service", "staff", "hold"];
 
 type Props = {
   event: ShiftEvent<Entry>;
@@ -197,7 +198,7 @@ export default function EntryEditor({
   }, [problem, draft, day, event, people, operator]);
 
   const money = (rows: Entry[]) =>
-    rows.filter((e) => e.kind !== "staff").reduce((sum, e) => sum + e.amount, 0);
+    rows.filter((e) => !isDeduction(e.kind)).reduce((sum, e) => sum + e.amount, 0);
 
   /** Смена, какой она станет после правки. */
   const after = useMemo(

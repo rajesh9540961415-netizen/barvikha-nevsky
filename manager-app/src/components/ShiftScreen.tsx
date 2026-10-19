@@ -13,7 +13,7 @@ import {
   type OfficeEntry,
   type ShiftEvent,
 } from "@/lib/office";
-import { THRESHOLD, adminShares, cashierPool } from "@/lib/split";
+import { THRESHOLD, adminShares, cashierPool, isDeduction } from "@/lib/split";
 import Compare from "./Compare";
 import AddEntry from "./AddEntry";
 import CrewEditor from "./CrewEditor";
@@ -345,10 +345,10 @@ export default function ShiftScreen({ data }: { data: DayData }) {
           Бэк-офис показывает, сколько человеку причитается; сколько ему выдали
           на руки за вычетом съеденного, считает смена. Править запись о питании
           при этом больше негде: смена умеет отменять только последнюю. */}
-      {events.some((e) => e.kind === "staff" && !e.deletedAt) && (
+      {events.some((e) => isDeduction(e.kind) && !e.deletedAt) && (
         <p className="mt-1 text-xs text-fg-muted">
-          Питание в записях есть, в начислениях — нет: это вычет при выплате,
-          его считает смена.
+          Питание и удержания в записях есть, в начислениях — нет: это вычеты
+          при выплате, их считает смена.
         </p>
       )}
 
@@ -477,8 +477,9 @@ function WaiterEntries({
 
   // Питание считаем отдельно: это вычет при выплате, а не заработок,
   // и складывать его с чаевыми в одну сумму нельзя.
-  const чаевые = мои.filter((e) => e.kind !== "staff");
+  const чаевые = мои.filter((e) => !isDeduction(e.kind));
   const питание = мои.filter((e) => e.kind === "staff");
+  const удержания = мои.filter((e) => e.kind === "hold");
   const сложено =
     Math.round(чаевые.reduce((s, e) => s + e.amount, 0) * 100) / 100;
 
@@ -558,6 +559,15 @@ function WaiterEntries({
             .map((e) => `${clock(e.createdAt)} — ${money(e.amount)}`)
             .join(" · ")}
           . Вычитается при выплате, в заработок не входит.
+        </p>
+      )}
+      {удержания.length > 0 && (
+        <p className="mt-1 text-xs text-fg-muted">
+          Удержание:{" "}
+          {удержания
+            .map((e) => `${clock(e.createdAt)} — ${money(e.amount)}`)
+            .join(" · ")}
+          . Вычитается при выплате в этой смене, дальше не переносится.
         </p>
       )}
     </>

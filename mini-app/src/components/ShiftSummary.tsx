@@ -6,8 +6,8 @@ import { посчитать } from "@/lib/hookahMotivation";
 import type { МотивацияСмены } from "@/lib/hookahMotivation";
 import { getHookahCrew } from "@/lib/people";
 import { hookahMotivation } from "@/lib/storage";
-import { HOOKAH_POT_ID, THRESHOLD, adminShares, splitShift } from "@/lib/split";
-import type { SideSplit } from "@/lib/split";
+import { HOOKAH_POT_ID, THRESHOLD, adminShares, isDeduction, splitRoles, splitShift } from "@/lib/split";
+import type { RoleSplit, SideSplit } from "@/lib/split";
 import type { Shift } from "@/lib/types";
 import type { Employee, Entry } from "@/lib/types";
 import { BUILD } from "@/lib/version";
@@ -84,6 +84,13 @@ export default function ShiftSummary({
       (s.totalCommission + side.hostess.totalCommission + side.hookah.totalCommission) * 100,
     ) / 100;
   const админов = shift ? [shift.admin, shift.admin2].filter((x) => x !== null).length : 1;
+  // Вычеты администратора и кассира — решение владельца 19.10.2026:
+  // «всё, что стафф, независимо от позиции, должно вычитаться».
+  const роли = shift
+    ? splitRoles(entries, shift, shift.crew, s.adminTotal, s.cashierTotal)
+    : [];
+  const вычетыРоли = (role: "admin" | "admin2" | "cashier") =>
+    роли.find((r) => r.role === role);
 
   /**
    * Сходится ли разложенное по блокам с тем, что записали за вечер.
@@ -99,7 +106,7 @@ export default function ShiftSummary({
    * строка, которая висит всегда, перестаёт быть сигналом.
    */
   const recorded = entries
-    .filter((e) => e.kind !== "staff")
+    .filter((e) => !isDeduction(e.kind))
     .reduce((sum, e) => sum + e.amount, 0);
   const lost = Math.round((recorded - s.totalEarned - sideTotal) * 100) / 100;
 
@@ -221,6 +228,9 @@ export default function ShiftSummary({
         ) : (
           <Row label="Администратору" value={s.adminTotal} />
         )}
+        {(["admin", "admin2"] as const).map((role) => (
+          <RoleDeductions key={role} split={вычетыРоли(role)} />
+        ))}
         <Row
           label="Кассиру"
           value={s.cashierTotal}
@@ -241,6 +251,7 @@ export default function ShiftSummary({
               : undefined
           }
         />
+        <RoleDeductions split={вычетыРоли("cashier")} />
         {/* Питание — единственная строка, которая уменьшает выплату, а не
             распределяет её. Показываем отдельно, иначе «на руки» окажется
             меньше без объяснения. */}
@@ -249,6 +260,13 @@ export default function ShiftSummary({
             label="Удержано за питание"
             value={-s.totalStaff}
             note="вычитается из выплаты, на порог не влияет"
+          />
+        )}
+        {s.totalHold > 0 && (
+          <Row
+            label="Удержано в смене"
+            value={-s.totalHold}
+            note="вернуть в кассу в этой смене, дальше не переносится"
           />
         )}
         <Row label="Официантам на руки" value={s.waitersNet} strong />
@@ -345,6 +363,7 @@ export default function ShiftSummary({
                   </div>
                 )}
                 {w.staff > 0 && <Line label="питание" value={-w.staff} />}
+                {w.hold > 0 && <Line label="удержание" value={-w.hold} />}
                 <Payout value={w.net} />
               </div>
             ) : (
@@ -355,9 +374,10 @@ export default function ShiftSummary({
                 {/* Питание вычитается и здесь: оно не зависит от того,
                     перешагнул человек порог или нет. Без этой строки
                     вычет исчез бы с экрана, но остался в деньгах. */}
-                {w.staff > 0 && (
+                {(w.staff > 0 || w.hold > 0) && (
                   <div className="mt-1.5">
-                    <Line label="питание" value={-w.staff} />
+                    {w.staff > 0 && <Line label="питание" value={-w.staff} />}
+                    {w.hold > 0 && <Line label="удержание" value={-w.hold} />}
                     <Payout value={w.net} />
                   </div>
                 )}
@@ -431,6 +451,26 @@ function Payout({ value }: { value: number }) {
       <span className={`tabular-nums ${value < 0 ? "text-alert" : "text-sand"}`}>
         {formatMoney(value)}
       </span>
+    </div>
+  );
+}
+
+/**
+ * Вычеты администратора или кассира и сколько ему выдать.
+ *
+ * Пусто, если вычетов нет: тогда выдать ровно долю, и строка «к выдаче»
+ * повторила бы сумму над ней.
+ */
+function RoleDeductions({ split }: { split?: RoleSplit }) {
+  if (!split || (split.staff === 0 && split.hold === 0)) return null;
+  return (
+    <div className="-mt-1 mb-2 pl-3 text-sm">
+      {split.staff > 0 && <Line label="питание" value={-split.staff} />}
+      {split.hold > 0 && <Line label="удержание" value={-split.hold} />}
+      <div className="flex justify-between">
+        <span className="text-fg-muted">к выдаче</span>
+        <span className="tabular-nums">{formatMoney(split.net)}</span>
+      </div>
     </div>
   );
 }
@@ -608,7 +648,7 @@ function ПоКальянщикам({
   const доляМотивации = мотивация / состав.length;
 
   const свои = бар.rows.filter(
-    (r) => r.payeeId !== HOOKAH_POT_ID && (r.total > 0 || r.staff > 0),
+    (r) => r.payeeId !== HOOKAH_POT_ID && (r.total > 0 || r.staff > 0 || r.hold > 0),
   );
   const люди = [...new Set([...состав, ...свои.map((r) => r.payeeId)])];
 
@@ -624,7 +664,8 @@ function ПоКальянщикам({
           const чаевые = (вСоставе ? доляКотла : 0) + (своё?.total ?? 0);
           const доплата = вСоставе ? доляМотивации : 0;
           const питание = своё?.staff ?? 0;
-          const наРуки = чаевые + доплата - питание;
+          const удержание = своё?.hold ?? 0;
+          const наРуки = чаевые + доплата - питание - удержание;
           return (
             <div key={id} className="rounded-xl bg-surface p-3.5">
               <div className="flex items-baseline justify-between">
@@ -636,6 +677,7 @@ function ПоКальянщикам({
                   доплата > 0 && `мотивация ${доляДоДесятых(доплата)}`,
                   чаевые > 0 && `чаевые ${доляДоДесятых(чаевые)}`,
                   питание > 0 && `питание −${formatMoney(питание)}`,
+                  удержание > 0 && `удержание −${formatMoney(удержание)}`,
                   !вСоставе && "в составе смены не отмечен",
                 ]
                   .filter(Boolean)
@@ -712,14 +754,24 @@ function SidePart({ title, calc }: { title: string; calc: SideSplit }) {
               {/* Питание — единственное, что уменьшает выплату хостес.
                   Показываем отдельной строкой: иначе «на руки» окажется
                   меньше начисленного без единого объяснения. */}
-              {r.staff > 0 && (
+              {(r.staff > 0 || r.hold > 0) && (
                 <>
-                  <div className="mt-1 flex justify-between text-sm">
-                    <span className="text-fg-muted">удержано за питание</span>
-                    <span className="tabular-nums text-fg-muted">
-                      −{formatMoney(r.staff)}
-                    </span>
-                  </div>
+                  {r.staff > 0 && (
+                    <div className="mt-1 flex justify-between text-sm">
+                      <span className="text-fg-muted">удержано за питание</span>
+                      <span className="tabular-nums text-fg-muted">
+                        −{formatMoney(r.staff)}
+                      </span>
+                    </div>
+                  )}
+                  {r.hold > 0 && (
+                    <div className="mt-1 flex justify-between text-sm">
+                      <span className="text-fg-muted">удержание</span>
+                      <span className="tabular-nums text-fg-muted">
+                        −{formatMoney(r.hold)}
+                      </span>
+                    </div>
+                  )}
                   <div className="flex justify-between text-sm">
                     <span className="text-fg-muted">на руки</span>
                     <span className="tabular-nums">{formatMoney(r.net)}</span>

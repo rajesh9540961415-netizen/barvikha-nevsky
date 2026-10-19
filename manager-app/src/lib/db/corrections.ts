@@ -12,8 +12,8 @@ import {
   type Payee,
   type ShiftEvent,
 } from "../office";
-import { HOOKAH_POT_ID } from "../split";
-import type { Employee, Shift } from "../types";
+import { HOOKAH_POT_ID, isDeduction } from "../split";
+import type { Employee, Kind, Shift } from "../types";
 import { currentManager, type Manager } from "./managers";
 import { db } from "./sql";
 
@@ -287,9 +287,27 @@ export async function readDay(businessDay: string): Promise<DayData | null> {
  */
 function неВСоставе(
   payees: Payee[],
-  shift: { crew: number[]; hostess: number[] | null; hookah: number[] | null },
+  shift: {
+    crew: number[];
+    hostess: number[] | null;
+    hookah: number[] | null;
+    admin_id?: number | null;
+    admin2_id?: number | null;
+    cashier_id?: number | null;
+  },
+  kind?: Kind,
 ): Payee | undefined {
-  const зал = new Set(shift.crew ?? []);
+  // Вычет (питание, удержание) можно записать и на администратора или
+  // кассира смены — решение владельца 19.10.2026: «всё, что стафф,
+  // независимо от позиции, должно вычитаться». Деньги им — по-прежнему нет:
+  // их доля считается сама, а записанные на них чаевые не попали бы никуда.
+  const роли =
+    kind !== undefined && isDeduction(kind)
+      ? [shift.admin_id, shift.admin2_id, shift.cashier_id].filter(
+          (x): x is number => x !== null && x !== undefined,
+        )
+      : [];
+  const зал = new Set([...(shift.crew ?? []), ...роли]);
   const хостес = new Set(shift.hostess ?? []);
   const бар = new Set([...(shift.hookah ?? []), HOOKAH_POT_ID]);
   return payees.find((p) =>
@@ -343,11 +361,23 @@ export async function correctEvent(input: {
   // Раскладка смены перебирает состав, а не записи. Значит деньги, записанные
   // на человека вне состава, в неё просто не попадут — и пропадут молча.
   const [crewRow] = await sql<
-    { crew: number[]; hostess: number[] | null; hookah: number[] | null }[]
+    {
+      crew: number[];
+      hostess: number[] | null;
+      hookah: number[] | null;
+      admin_id: number | null;
+      admin2_id: number | null;
+      cashier_id: number | null;
+    }[]
   >`
-    select crew, hostess, hookah from shifts where business_day = ${input.businessDay}
+    select crew, hostess, hookah, admin_id, admin2_id, cashier_id
+      from shifts where business_day = ${input.businessDay}
   `;
-  const stray = неВСоставе(input.draft.payees, crewRow ?? { crew: [], hostess: [], hookah: [] });
+  const stray = неВСоставе(
+    input.draft.payees,
+    crewRow ?? { crew: [], hostess: [], hookah: [] },
+    input.draft.kind,
+  );
   if (stray !== undefined) {
     return {
       error: `В составе смены ${КОТЁЛ[stray.contour]} нет сотрудника №${stray.id} — сначала поправьте состав`,
@@ -683,16 +713,19 @@ export async function добавитьЗапись(input: {
       hostess: number[] | null;
       hookah: number[] | null;
       operator_id: number | null;
+      admin_id: number | null;
+      admin2_id: number | null;
+      cashier_id: number | null;
     }[]
   >`
-    select crew, hostess, hookah, operator_id
+    select crew, hostess, hookah, operator_id, admin_id, admin2_id, cashier_id
       from shifts where business_day = ${input.businessDay}
   `;
   if (!строка) return { error: "Смены за этот день нет — сначала соберите состав" };
 
   // Раскладка смены перебирает состав, а не записи: деньги на человека вне
   // состава не попадут никуда и пропадут молча. Та же проверка, что у правки.
-  const чужой = неВСоставе(input.draft.payees, строка);
+  const чужой = неВСоставе(input.draft.payees, строка, input.draft.kind);
   if (чужой !== undefined) {
     return {
       error: `В составе смены ${КОТЁЛ[чужой.contour]} нет сотрудника №${чужой.id} — сначала поправьте состав`,

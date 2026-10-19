@@ -276,6 +276,9 @@ export function draftError(draft: Draft): string | null {
   if (draft.kind === "staff" && draft.payees.length > 1) {
     return "Питание делить между людьми нельзя: это личный вычет";
   }
+  if (draft.kind === "hold" && draft.payees.length > 1) {
+    return "Удержание делить между людьми нельзя: это личный вычет";
+  }
   const контуры = contoursOf(draft.payees);
   // 🔴 **Питание кальянщикам вычитается — решение владельца 16.09.2026.**
   // До этого дня здесь стоял запрет: «кальянщики у другого юрлица, заведение

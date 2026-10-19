@@ -71,7 +71,21 @@ export const COMMISSION_RATE: Record<Kind, number> = {
   qr: 0,
   // Стафф — не доход, а вычет. Комиссии тут быть не может.
   staff: 0,
+  // Удержание — тоже вычет, см. `Kind`.
+  hold: 0,
 };
+
+/**
+ * Вычет из выплаты, а не деньги: питание и удержание.
+ *
+ * Оба вычитаются ПОСЛЕДНИМИ — после долей администратора и кассира — и на
+ * порог 1300 ₽ не влияют. Удержание, внесённое минусом в деньги, уменьшило
+ * бы заработок и с ним 20 % администратора: на листе 12.10.2026 админ
+ * потерял бы 700 ₽. Поэтому и отдельный вид, и одна проверка на двоих.
+ */
+export function isDeduction(kind: Kind): boolean {
+  return kind === "staff" || kind === "hold";
+}
 
 /** Сколько дойдёт до официанта из того, что оставил гость. */
 export function netAmount(gross: number, kind: Kind): number {
@@ -161,6 +175,8 @@ export type WaiterSplit = {
    * порог про то, сколько человек наработал, а обед — его личная трата.
    */
   staff: number;
+  /** Удержание в рамках смены — вычитается так же, как питание. */
+  hold: number;
   /** Вышел на часть смены: кассиру не платит и в его делителе не стоит. */
   halfShift: boolean;
   /** Сколько оставили гости — до комиссии Сбера. */
@@ -181,7 +197,7 @@ export type WaiterSplit = {
    * краснеет ровно на размер питания каждую смену, где кто-то поел.
    */
   accrued: number;
-  /** Начислено минус питание — столько человек получает на руки в конце смены. */
+  /** Начислено минус питание и удержание — столько человек получает на руки в конце смены. */
   net: number;
 };
 
@@ -208,6 +224,8 @@ export type ShiftSplit = {
   totalService: number;
   /** Сколько всего удержано за питание сотрудников. */
   totalStaff: number;
+  /** Сколько всего удержано у официантов в рамках смены. */
+  totalHold: number;
   totalEarned: number;
   /** Сколько оставили гости за смену — до комиссии. */
   totalGross: number;
@@ -325,6 +343,7 @@ export function splitShift(
     // сколько человек оставил себе после обеда.
     const aboveThreshold = total >= THRESHOLD;
     const staff = by("staff");
+    const hold = by("hold");
 
     // Что оставили гости — до комиссии. Питание сюда не входит: это вычет,
     // а не деньги гостя, и попав в эту сумму оно выглядело бы комиссией.
@@ -332,7 +351,7 @@ export function splitShift(
     // ровно столько, сколько оставили.
     const gross = money(
       mine
-        .filter((e) => e.kind !== "staff")
+        .filter((e) => !isDeduction(e.kind))
         .reduce((sum, e) => sum + (e.gross ?? e.amount), 0),
     );
 
@@ -356,6 +375,7 @@ export function splitShift(
       tips,
       total,
       staff,
+      hold,
       gross,
       commission: money(gross - total),
       aboveThreshold,
@@ -363,9 +383,10 @@ export function splitShift(
       toAdmin,
       toCashier,
       accrued: money(total - toAdmin - toCashier),
-      // Питание вычитается последним, из того, что осталось. Может увести
-      // в минус — тогда так и показываем: обнулять значит скрыть долг.
-      net: money(total - toAdmin - toCashier - staff),
+      // Питание и удержание вычитаются последними, из того, что осталось.
+      // Могут увести в минус — тогда так и показываем: обнулять значит
+      // скрыть долг.
+      net: money(total - toAdmin - toCashier - staff - hold),
     };
   });
 
@@ -386,6 +407,7 @@ export function splitShift(
     totalTips: sum((w) => w.tips),
     totalService: sum((w) => w.service),
     totalStaff: sum((w) => w.staff),
+    totalHold: sum((w) => w.hold),
     totalEarned: sum((w) => w.total),
     totalGross: sum((w) => w.gross),
     totalCommission: sum((w) => w.commission),
@@ -464,7 +486,9 @@ export type PayeeSplit = {
    * на свою конкретную сумму», — и общий котёл бара на него не уменьшается.
    */
   staff: number;
-  /** Начислено минус питание — столько человек получает на руки. */
+  /** Удержание в рамках смены — как у официантов. */
+  hold: number;
+  /** Начислено минус питание и удержание — столько человек получает на руки. */
   net: number;
 };
 
@@ -493,6 +517,8 @@ export type SideSplit = {
   totalCommission: number;
   /** Удержано за питание по всему контуру. У кальянного бара всегда ноль. */
   totalStaff: number;
+  /** Удержано в рамках смены по всему контуру. */
+  totalHold: number;
   /** Начислено минус питание. */
   totalNet: number;
 };
@@ -547,12 +573,13 @@ export function splitSide(
     // Питание вычитается из того, что человек получил. Может увести в минус —
     // тогда так и показываем: обнулять значит скрыть долг, как и у официантов.
     const staff = by("staff");
+    const hold = by("hold");
     const total = money(tips + service);
     // Что оставили гости — до комиссии. Питание сюда не входит: это вычет,
     // а не деньги гостя, и попав в эту сумму оно выглядело бы комиссией.
     const gross = money(
       his
-        .filter((e) => e.kind !== "staff")
+        .filter((e) => !isDeduction(e.kind))
         .reduce((sum, e) => sum + (e.gross ?? e.amount), 0),
     );
 
@@ -569,7 +596,8 @@ export function splitSide(
       gross,
       commission: money(gross - total),
       staff,
-      net: money(total - staff),
+      hold,
+      net: money(total - staff - hold),
     };
   });
 
@@ -590,6 +618,64 @@ export function splitSide(
     totalGross: sum((r) => r.gross),
     totalCommission: sum((r) => r.commission),
     totalStaff: sum((r) => r.staff),
+    totalHold: sum((r) => r.hold),
     totalNet: sum((r) => r.net),
   };
+}
+
+/**
+ * Администратор(ы) и кассир смены: доля, вычеты и сколько выдать.
+ *
+ * 🔴 Решение владельца 19.10.2026: «всё, что стафф, независимо от позиции,
+ * должно вычитаться и показываться чистый итог в деньгах, который кассир
+ * выплатит к концу смены». До этого у ролей вычетов не было вовсе: обед
+ * администратора и кассира писали только на бумаге, и приложение выдавало
+ * им долю целиком.
+ *
+ * Вычеты роли — зальные записи `staff` и `hold`, заведённые на её номер.
+ * ⚠️ Человек, стоящий в составе официантом, здесь не считается: его вычеты
+ * уже ушли в его строку в `splitShift`, и второй раз вычесть их нельзя.
+ */
+export type RoleSplit = {
+  role: "admin" | "admin2" | "cashier";
+  personId: number;
+  /** Доля за смену: 20 % с официантов или сумма кассира. */
+  share: number;
+  staff: number;
+  hold: number;
+  /** Доля минус вычеты — столько выдать на руки. Может уйти в минус. */
+  net: number;
+};
+
+export function splitRoles(
+  entries: Entry[],
+  roles: { admin: number | null; admin2: number | null; cashier: number | null },
+  crewIds: number[],
+  adminTotal: number,
+  cashierTotal: number,
+): RoleSplit[] {
+  const вСоставе = new Set(crewIds);
+  const админы = [roles.admin, roles.admin2].filter((x): x is number => x !== null);
+  const доли = adminShares(adminTotal, админы.length);
+
+  const вычет = (id: number, kind: Kind) =>
+    вСоставе.has(id)
+      ? 0
+      : money(
+          entries
+            .filter((e) => contourOf(e) === "hall" && e.waiterId === id && e.kind === kind)
+            .reduce((sum, e) => sum + e.amount, 0),
+        );
+
+  const строка = (role: RoleSplit["role"], personId: number, share: number): RoleSplit => {
+    const staff = вычет(personId, "staff");
+    const hold = вычет(personId, "hold");
+    return { role, personId, share, staff, hold, net: money(share - staff - hold) };
+  };
+
+  const итог: RoleSplit[] = [];
+  if (roles.admin !== null) итог.push(строка("admin", roles.admin, доли[0] ?? 0));
+  if (roles.admin2 !== null) итог.push(строка("admin2", roles.admin2, доли[1] ?? 0));
+  if (roles.cashier !== null) итог.push(строка("cashier", roles.cashier, cashierTotal));
+  return итог;
 }

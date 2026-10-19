@@ -20,8 +20,9 @@ import {
   type Draft,
   type OfficeEntry,
   type ShiftEvent,
+  людиРолей,
 } from "@/lib/office";
-import { netAmount } from "@/lib/split";
+import { isDeduction, netAmount } from "@/lib/split";
 import type { Contour, Employee, Kind, Scheme, Shift } from "@/lib/types";
 import Compare from "./Compare";
 
@@ -39,7 +40,7 @@ import Compare from "./Compare";
  */
 
 const HALLS = (scheme as Scheme).halls;
-const KINDS: Kind[] = ["cash", "terminal", "qr", "service", "staff"];
+const KINDS: Kind[] = ["cash", "terminal", "qr", "service", "staff", "hold"];
 
 type Props = {
   day: string;
@@ -90,7 +91,12 @@ export default function EventEditor({ day, event, live, crew, people, shift, onC
     [live, event.key, fresh, crew, day, полсмены],
   );
 
-  const crewIds = new Set(crew.map((p) => p.id));
+  // Вычет можно записать и на администратора с кассиром (19.10.2026) —
+  // для вычета они «в составе».
+  const crewIds = new Set([
+    ...crew.map((p) => p.id),
+    ...(isDeduction(draft.kind) ? людиРолей(shift, crew, people).map((r) => r.person.id) : []),
+  ]);
   // Официант не в составе смены — деньги за ним просто не попадут в раскладку:
   // она перебирает состав, а не записи. Молча потерять их нельзя.
   //
@@ -117,7 +123,7 @@ export default function EventEditor({ day, event, live, crew, people, shift, onC
         ? {}
         : { hallId: null, hallTitle: null, tableId: null, tableTitle: null }),
       // Питание — личный вычет, делить его между людьми нельзя.
-      ...(kind === "staff" && d.payees.length > 1
+      ...(isDeduction(kind) && d.payees.length > 1
         ? { payees: d.payees.slice(0, 1) }
         : {}),
     }));
@@ -131,7 +137,7 @@ export default function EventEditor({ day, event, live, crew, people, shift, onC
       // ещё нет. У тех, кто в событии уже есть, котёл переезжает из самой
       // записи и правкой не меняется.
       const свежий = { id, contour: контурНового(id, shift) };
-      return { ...d, payees: d.kind === "staff" ? [свежий] : [...d.payees, свежий] };
+      return { ...d, payees: isDeduction(d.kind) ? [свежий] : [...d.payees, свежий] };
     });
   }
 
@@ -189,9 +195,23 @@ export default function EventEditor({ day, event, live, crew, people, shift, onC
               Питание — не доход, а вычет: сколько человек проел за смену.
             </p>
           )}
+          {draft.kind === "hold" && (
+            <p className="mt-1.5 text-xs text-fg-muted">
+              Удержание — вычет в рамках этой смены: человек возвращает деньги
+              в кассу. Дальше никуда не переносится.
+            </p>
+          )}
         </Field>
 
-        <Field label={draft.kind === "staff" ? "Сколько проел" : "Сколько оставил гость"}>
+        <Field
+          label={
+            draft.kind === "staff"
+              ? "Сколько проел"
+              : draft.kind === "hold"
+                ? "Сколько удержать"
+                : "Сколько оставил гость"
+          }
+        >
           <input
             type="number"
             inputMode="decimal"
@@ -264,7 +284,7 @@ export default function EventEditor({ day, event, live, crew, people, shift, onC
 
         <Field
           label={
-            draft.kind === "staff"
+            isDeduction(draft.kind)
               ? "Кому вычесть"
               : draft.payees.length > 1
                 ? `Кому — поровну на ${draft.payees.length}`
@@ -281,6 +301,18 @@ export default function EventEditor({ day, event, live, crew, people, shift, onC
                 {p.short}
               </Chip>
             ))}
+            {/* Вычет — и на администратора с кассиром: решение владельца
+                19.10.2026. Деньги им сюда не пишут — их доля считается сама. */}
+            {isDeduction(draft.kind) &&
+              людиРолей(shift, crew, people).map(({ person, роль }) => (
+                <Chip
+                  key={person.id}
+                  on={draft.payees.some((x) => x.id === person.id)}
+                  onClick={() => toggleWaiter(person.id)}
+                >
+                  {person.short} · {роль}
+                </Chip>
+              ))}
             {/* Официант не из состава смены: показываем, но помечаем — иначе
                 непонятно, почему кнопка «сохранить» не работает. */}
             {outside.map((id) => (

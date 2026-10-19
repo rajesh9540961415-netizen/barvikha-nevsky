@@ -90,7 +90,9 @@ update entries set gross = amount where gross is null;
 -- и то же место в истории.
 alter table entries drop constraint if exists entries_kind_check;
 alter table entries add constraint entries_kind_check
-  check (kind in ('cash', 'terminal', 'service', 'qr', 'staff'));
+-- 'hold' — удержание в рамках смены, вычет как питание (19.10.2026,
+-- plans/2026-10-19-vychety-uderzhanie-i-roli.md).
+  check (kind in ('cash', 'terminal', 'service', 'qr', 'staff', 'hold'));
 
 -- У QR-чаевых стола нет: гость платит по чеку, а не за столом.
 -- Поэтому стол перестаёт быть обязательным. У всех остальных видов он

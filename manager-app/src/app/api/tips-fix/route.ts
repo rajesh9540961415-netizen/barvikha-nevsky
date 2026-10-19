@@ -43,8 +43,9 @@ import type { Manager } from "@/lib/db/managers";
  *   {"вид":"зал","день":"2026-10-13","кто":915,"деньги":"terminal",
  *    "дошло":8183,"почему":"…"}
  *      — запись официанту зала по бумажному листу, стол №0 «по листу».
- *        Деньги: cash / service / staff — полем «сумма»; terminal —
+ *        Деньги: cash / service / staff / hold — полем «сумма»; terminal —
  *        «суммой» гостя или «дошло» после комиссии, как пишут на листе.
+ *        Вычет (staff, hold) можно записать и на админа или кассира смены.
  *        Заведено 19.10.2026.
  *
  *   {"вид":"склейка","кто":-12,"на":947,"почему":"…"}
@@ -237,8 +238,8 @@ export async function POST(request: Request) {
       // Ставим условный стол №0 «по листу» — честнее, чем выдумать номер:
       // по нему такие записи и отличаются от внесённых за столом.
       const вид = String(оп.деньги ?? "");
-      if (!["cash", "terminal", "service", "staff"].includes(вид)) {
-        итог.отказы.push(`для зала вид денег — cash, terminal, service или staff, а не «${вид}»`);
+      if (!["cash", "terminal", "service", "staff", "hold"].includes(вид)) {
+        итог.отказы.push(`для зала вид — cash, terminal, service, staff или hold, а не «${вид}»`);
         continue;
       }
       const кто = Number(оп.кто);

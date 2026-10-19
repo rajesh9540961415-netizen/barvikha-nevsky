@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { formatMoney } from "@/lib/businessDay";
-import type { Employee } from "@/lib/types";
+import type { Employee, Kind } from "@/lib/types";
 
 /**
  * Питание сотрудников — вычет из выплаты.
@@ -27,7 +27,29 @@ import type { Employee } from "@/lib/types";
  * ⚠️ **Вычет личный и у них.** Владелец 16.09.2026: «питание у каждого
  * индивидуально, они набирают на свою конкретную сумму». Уменьшать на обед
  * общий котёл нельзя — за чужой обед платили бы все, кто вышел в смену.
+ *
+ * 🔴 **С 19.10.2026 — администратор и кассир, и второй вид вычета.**
+ * Владелец: «всё, что стафф, независимо от позиции, должно вычитаться».
+ * И «Удержание» — деньги, которые человек возвращает в кассу в этой же
+ * смене (лист 12.10: «3 720 − 3 500 = 220»). Считается как питание,
+ * но в итогах своей строкой, чтобы не выдавать себя за обед.
  */
+
+/** Вычеты, которые вносят на этом экране. */
+type Deduction = Extract<Kind, "staff" | "hold">;
+
+const ВЫЧЕТ: Record<Deduction, { заголовок: string; кто: string; подсказка: string }> = {
+  staff: {
+    заголовок: "Питание",
+    кто: "кто ел",
+    подсказка: "вычитается из выплаты, на порог 1 300 ₽ не влияет",
+  },
+  hold: {
+    заголовок: "Удержание",
+    кто: "у кого удержать",
+    подсказка: "вернуть в кассу в этой смене — вычитается из выплаты, дальше не переносится",
+  },
+};
 
 const KEYS = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "00", "0", "⌫"];
 
@@ -35,18 +57,21 @@ const KEYS = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "00", "0", "⌫"];
 const MAX_AMOUNT = 50_000;
 
 type Props = {
-  /** Кто мог поесть: официанты смены, хостес и кальянный бар. */
+  /** У кого может быть вычет: официанты, хостес, бар, админ и кассир смены. */
   crew: Employee[];
-  /** Сколько человек уже проел за смену — чтобы не внести обед дважды. */
-  eaten: (id: number) => number;
+  /** Подпись роли рядом с именем: «админ», «кассир». */
+  roleOf?: (id: number) => string | null;
+  /** Сколько у человека уже вычтено этим видом — чтобы не внести дважды. */
+  eaten: (id: number, kind: Deduction) => number;
   /** Сколько ему причитается на руки сейчас, до этого вычета. */
   payout: (id: number) => number;
   onCancel: () => void;
-  onConfirm: (amount: number, waiter: Employee) => Promise<void>;
+  onConfirm: (amount: number, waiter: Employee, kind: Deduction) => Promise<void>;
 };
 
 export default function StaffScreen({
   crew,
+  roleOf,
   eaten,
   payout,
   onCancel,
@@ -56,13 +81,15 @@ export default function StaffScreen({
   const [waiterId, setWaiterId] = useState<number | null>(null);
   const [saving, setSaving] = useState(false);
   const [failed, setFailed] = useState(false);
+  const [kind, setKind] = useState<Deduction>("staff");
+  const вид = ВЫЧЕТ[kind];
 
   const amount = Number(digits || "0");
   const waiter = crew.find((w) => w.id === waiterId) ?? null;
   const ready = amount > 0 && waiter !== null && !saving;
 
-  /** Что у человека уже записано — чтобы не вносить обед дважды. */
-  const already = eaten;
+  /** Что у человека уже записано этим видом — чтобы не вносить дважды. */
+  const already = (id: number) => eaten(id, kind);
 
   function press(key: string) {
     setFailed(false);
@@ -79,7 +106,7 @@ export default function StaffScreen({
     setSaving(true);
     setFailed(false);
     try {
-      await onConfirm(amount, waiter);
+      await onConfirm(amount, waiter, kind);
     } catch {
       setFailed(true);
     } finally {
@@ -99,8 +126,27 @@ export default function StaffScreen({
         >
           ‹
         </button>
-        <div className="text-base">Питание сотрудников</div>
+        <div className="text-base">Вычеты сотрудников</div>
       </header>
+
+      <div className="flex gap-2 px-4 pt-3">
+        {(Object.keys(ВЫЧЕТ) as Deduction[]).map((k) => (
+          <button
+            key={k}
+            onClick={() => {
+              setFailed(false);
+              setKind(k);
+            }}
+            className={`flex-1 rounded-lg border px-3 py-2 text-sm ${
+              k === kind
+                ? "border-sand bg-sand/10 text-fg"
+                : "border-line bg-surface text-fg-muted active:bg-surface-2"
+            }`}
+          >
+            {ВЫЧЕТ[k].заголовок}
+          </button>
+        ))}
+      </div>
 
       <div className="flex flex-1 flex-col items-center justify-center gap-1 py-6">
         <span
@@ -119,7 +165,7 @@ export default function StaffScreen({
 
       <div className="px-4 pb-3">
         <div className="mb-1.5 text-xs text-fg-muted">
-          {waiter ? "кто ел" : "выберите сотрудника"}
+          {waiter ? вид.кто : "выберите сотрудника"}
         </div>
         <div className="flex flex-wrap gap-2">
           {crew.map((w) => {
@@ -139,6 +185,9 @@ export default function StaffScreen({
                 }`}
               >
                 {w.short}
+                {roleOf?.(w.id) && (
+                  <span className="ml-1 text-xs text-fg-muted">· {roleOf(w.id)}</span>
+                )}
                 {had > 0 && (
                   <span className="ml-1.5 text-xs text-fg-muted">
                     −{formatMoney(had)}
@@ -170,7 +219,7 @@ export default function StaffScreen({
             ? "сохраняю…"
             : failed
               ? "не сохранилось — проверьте связь и повторите"
-              : "вычитается из выплаты, на порог 1 300 ₽ не влияет"}
+              : вид.подсказка}
         </div>
         <button
           disabled={!ready}

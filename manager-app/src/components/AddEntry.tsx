@@ -17,8 +17,9 @@ import {
   получатели,
   type Draft,
   type OfficeEntry,
+  людиРолей,
 } from "@/lib/office";
-import { netAmount } from "@/lib/split";
+import { isDeduction, netAmount } from "@/lib/split";
 import type { Contour, Employee, Kind, Shift } from "@/lib/types";
 import Compare from "./Compare";
 import { Chip, Field, Overlay } from "./EventEditor";
@@ -44,7 +45,7 @@ import { Chip, Field, Overlay } from "./EventEditor";
 
 type Scheme = { halls: { id: number; title: string; tables: { id: number; title: string }[] }[] };
 const HALLS = (scheme as Scheme).halls;
-const KINDS: Kind[] = ["cash", "terminal", "qr", "service", "staff"];
+const KINDS: Kind[] = ["cash", "terminal", "qr", "service", "staff", "hold"];
 
 const ПУСТОЙ: Draft = {
   kind: "cash",
@@ -139,7 +140,7 @@ export default function AddEntry({ day, live, crew, people, shift, onClose }: Pr
       ...(needsTable(kind, contoursOf(d.payees))
         ? {}
         : { hallId: null, hallTitle: null, tableId: null, tableTitle: null }),
-      ...(kind === "staff" && d.payees.length > 1
+      ...(isDeduction(kind) && d.payees.length > 1
         ? { payees: d.payees.slice(0, 1) }
         : {}),
     }));
@@ -150,7 +151,7 @@ export default function AddEntry({ day, live, crew, people, shift, onClose }: Pr
       ...d,
       payees: d.payees.some((p) => p.id === id)
         ? d.payees.filter((p) => p.id !== id)
-        : d.kind === "staff"
+        : isDeduction(d.kind)
           ? [{ id, contour: контурНового(id, shift) }]
           : [...d.payees, { id, contour: контурНового(id, shift) }],
     }));
@@ -204,7 +205,15 @@ export default function AddEntry({ day, live, crew, people, shift, onClose }: Pr
           </div>
         </Field>
 
-        <Field label={draft.kind === "staff" ? "Сколько проел" : "Сколько оставил гость"}>
+        <Field
+          label={
+            draft.kind === "staff"
+              ? "Сколько проел"
+              : draft.kind === "hold"
+                ? "Сколько удержать"
+                : "Сколько оставил гость"
+          }
+        >
           <input
             type="number"
             inputMode="decimal"
@@ -271,7 +280,7 @@ export default function AddEntry({ day, live, crew, people, shift, onClose }: Pr
 
         <Field
           label={
-            draft.kind === "staff"
+            isDeduction(draft.kind)
               ? "Кому вычесть"
               : draft.payees.length > 1
                 ? `Кому — поровну на ${draft.payees.length}`
@@ -289,6 +298,18 @@ export default function AddEntry({ day, live, crew, people, shift, onClose }: Pr
                 {twinHint(p, crew)}
               </Chip>
             ))}
+            {/* Вычет — и на администратора с кассиром: решение владельца
+                19.10.2026. Деньги им сюда не пишут — их доля считается сама. */}
+            {isDeduction(draft.kind) &&
+              людиРолей(shift, crew, people).map(({ person, роль }) => (
+                <Chip
+                  key={person.id}
+                  on={draft.payees.some((x) => x.id === person.id)}
+                  onClick={() => toggleWaiter(person.id)}
+                >
+                  {person.short} · {роль}
+                </Chip>
+              ))}
           </div>
 
           {/* Хостес и кальянный бар. Отдельными рядами с подписями, а не

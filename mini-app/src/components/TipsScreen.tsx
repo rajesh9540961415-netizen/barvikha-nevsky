@@ -31,7 +31,7 @@ import QrTipScreen from "@/components/QrTipScreen";
 import MotivationScreen from "@/components/MotivationScreen";
 import SideScreen from "@/components/SideScreen";
 import StaffScreen from "@/components/StaffScreen";
-import { COMMISSION_RATE, netAmount, shares, splitShift, splitSide } from "@/lib/split";
+import { COMMISSION_RATE, isDeduction, netAmount, shares, splitRoles, splitShift, splitSide } from "@/lib/split";
 import {
   flushQueue,
   isStaleDeploy,
@@ -74,6 +74,7 @@ const KIND_LABEL: Record<Kind, string> = {
   service: "сервисный сбор",
   qr: "QR",
   staff: "питание",
+  hold: "удержание",
 };
 
 /**
@@ -443,6 +444,18 @@ export default function TipsScreen() {
     return [HOOKAH_POT, ...onShift];
   }, [shift.hookah]);
 
+  /**
+   * Администратор(ы) и кассир — для вычетов (решение владельца 19.10.2026).
+   * Кто уже стоит в составе официантом, второй раз не нужен.
+   */
+  const rolePeople = useMemo(() => {
+    const ids = [shift.admin, shift.admin2, shift.cashier].filter(
+      (x): x is number => x !== null && !shift.crew.includes(x),
+    );
+    return everyone.filter((p) => ids.includes(p.id));
+  }, [everyone, shift.admin, shift.admin2, shift.cashier, shift.crew]);
+  const rolesSplit = (split: ReturnType<typeof splitShift>) =>
+    splitRoles(entries, shift, shift.crew, split.adminTotal, split.cashierTotal);
   const sideSplit = useMemo(
     () => ({
       hostess: splitSide(entries, "hostess", hostessPeople),
@@ -456,7 +469,7 @@ export default function TipsScreen() {
   const total = useMemo(
     () =>
       entries
-        .filter((e) => e.kind !== "staff")
+        .filter((e) => !isDeduction(e.kind))
         .reduce((sum, e) => sum + e.amount, 0),
     [entries],
   );
@@ -477,7 +490,7 @@ export default function TipsScreen() {
     const groups = new Set<string>();
     let count = 0;
     for (const e of entries) {
-      if (e.kind === "staff") continue;
+      if (isDeduction(e.kind)) continue;
       if (!e.splitGroup) {
         count += 1;
       } else if (!groups.has(e.splitGroup)) {
@@ -753,7 +766,11 @@ export default function TipsScreen() {
    * то же место в истории. Стола у неё нет — питание пробивают отдельным
    * чеком, а не за столом в зале.
    */
-  async function addStaff(amount: number, waiter: Employee) {
+  async function addStaff(
+    amount: number,
+    waiter: Employee,
+    kind: "staff" | "hold" = "staff",
+  ) {
     if (!operator) return;
     // Обед хостес принадлежит её котлу, а не залу: иначе он вычелся бы
     // из зальных денег, где этого человека нет вовсе, и просто пропал.
@@ -775,7 +792,7 @@ export default function TipsScreen() {
       amount,
       gross: amount,
       commissionRate: 0,
-      kind: "staff",
+      kind,
       contour,
       operatorId: operator.id,
       operatorName: operator.name,
@@ -788,7 +805,7 @@ export default function TipsScreen() {
     void refresh();
     setToast({
       text:
-        `Питание: −${formatMoney(amount)} · ${waiter.short}` +
+        `${kind === "hold" ? "Удержание" : "Питание"}: −${formatMoney(amount)} · ${waiter.short}` +
         (queueState().items.length > 0 ? " · ждёт отправки" : ""),
       bad: false,
     });
@@ -1164,29 +1181,45 @@ export default function TipsScreen() {
           // Хостес едят так же, как официанты, и вычет у них такой же
           // (решение владельца 18.08.2026). Кальянщики здесь с 16.09.2026:
           // прежний запрет «заведение их не кормит» владелец отменила.
-          crew={[...crew, ...hostessPeople, ...hookahPeople]}
-          eaten={(id) =>
-            splitShift(entries, crew, day, shift.halfShift ?? []).waiters.find(
-              (w) => w.waiterId === id,
-            )
-              ?.staff ??
-            sideSplit.hostess.rows.find((r) => r.payeeId === id)?.staff ??
-            sideSplit.hookah.rows.find((r) => r.payeeId === id)?.staff ??
-            0
+          // Администратор и кассир — с 19.10.2026: «всё, что стафф,
+          // независимо от позиции, должно вычитаться».
+          crew={[...crew, ...hostessPeople, ...hookahPeople, ...rolePeople]}
+          roleOf={(id) =>
+            crew.some((p) => p.id === id)
+              ? null
+              : id === shift.cashier
+                ? "кассир"
+                : id === shift.admin || id === shift.admin2
+                  ? "админ"
+                  : null
           }
+          eaten={(id, kind) => {
+            const split = splitShift(entries, crew, day, shift.halfShift ?? []);
+            const pick = (r: { staff: number; hold: number }) =>
+              kind === "hold" ? r.hold : r.staff;
+            const w = split.waiters.find((x) => x.waiterId === id);
+            if (w) return pick(w);
+            const side =
+              sideSplit.hostess.rows.find((r) => r.payeeId === id) ??
+              sideSplit.hookah.rows.find((r) => r.payeeId === id);
+            if (side) return pick(side);
+            const role = rolesSplit(split).find((r) => r.personId === id);
+            return role ? pick(role) : 0;
+          }}
           // ⚠️ У кальянщика здесь стоит ноль, и это честно: его вечер —
           // доля общего котла плюс доля мотивации, а обе считаются на всю
           // смену и к моменту обеда ещё не сложены. Что выйдет на руки,
           // видно в итогах смены, где обе доли уже известны.
-          payout={(id) =>
-            splitShift(entries, crew, day, shift.halfShift ?? []).waiters.find(
-              (w) => w.waiterId === id,
-            )
-              ?.net ??
-            sideSplit.hostess.rows.find((r) => r.payeeId === id)?.net ??
-            sideSplit.hookah.rows.find((r) => r.payeeId === id)?.net ??
-            0
-          }
+          payout={(id) => {
+            const split = splitShift(entries, crew, day, shift.halfShift ?? []);
+            return (
+              split.waiters.find((w) => w.waiterId === id)?.net ??
+              sideSplit.hostess.rows.find((r) => r.payeeId === id)?.net ??
+              sideSplit.hookah.rows.find((r) => r.payeeId === id)?.net ??
+              rolesSplit(split).find((r) => r.personId === id)?.net ??
+              0
+            );
+          }}
           onCancel={() => setShowStaff(false)}
           onConfirm={addStaff}
         />
