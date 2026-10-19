@@ -40,7 +40,7 @@ from seti import достучаться  # noqa: E402 — после sys.path
 
 ROOT = Path(__file__).resolve().parent.parent
 DDS = ROOT / "data" / "dds"
-АДРЕС_ПО_УМОЛЧАНИЮ = "https://nevsky-office-borzovavv.amvera.io"
+АДРЕС_ПО_УМОЛЧАНИЮ = "https://nevsky-office-borzovavv.msk1.amvera.tech"
 
 # Имена строк для денег, которые ушли со счёта, но расходом не являются.
 #

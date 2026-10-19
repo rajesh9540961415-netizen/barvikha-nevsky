@@ -26,7 +26,7 @@ import { BUILD_RAW } from "@/lib/version";
  *
  * Проверка сборки, как её ставить:
  *
- *     curl -s https://nevsky-office-borzovavv.amvera.io/api/health
+ *     curl -s https://nevsky-office-borzovavv.msk1.amvera.tech/api/health
  *
  * Поле «сборка» новее времени вашей выкладки — код в бою новый.
  */

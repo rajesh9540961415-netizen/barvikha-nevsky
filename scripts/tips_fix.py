@@ -36,7 +36,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 from seti import достучаться  # noqa: E402
 
-АДРЕС = "https://nevsky-office-borzovavv.amvera.io/api/tips-fix"
+АДРЕС = "https://nevsky-office-borzovavv.msk1.amvera.tech/api/tips-fix"
 
 ПОЧЕМУ = (
     "Сверка 06.09.2026 с листом управляющего. Решение владельца: эталон "

@@ -43,7 +43,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 DATA = ROOT / "data" / "dds"
 КОММЕНТАРИИ = DATA / "заимствования.json"
-АДРЕС_ПО_УМОЛЧАНИЮ = "https://nevsky-office-borzovavv.amvera.io"
+АДРЕС_ПО_УМОЛЧАНИЮ = "https://nevsky-office-borzovavv.msk1.amvera.tech"
 
 
 def из_env(имя: str, запасное: str = "") -> str:

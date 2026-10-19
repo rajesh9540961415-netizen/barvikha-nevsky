@@ -142,7 +142,7 @@ python3 "/Users/user/Documents/Невский/scripts/tg_session_export.py"
 
 | Имя | Значение |
 |---|---|
-| `CHAEVYE_API` | `https://chaevye-borzovavv.amvera.io` — включает передачу по https |
+| `CHAEVYE_API` | `https://chaevye-borzovavv.msk1.amvera.tech` — включает передачу по https |
 | `CHAEVYE_EXPORT_KEY` | то же значение, что `EXPORT_KEY` у приложения `chaevye` |
 
 ⚠️ **Ключ только латиницей.** Он едет в заголовке HTTP, а там кириллица

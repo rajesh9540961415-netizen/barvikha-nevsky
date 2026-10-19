@@ -53,7 +53,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 # на 12–18 часов. Порог в 10 часов (то есть 21:00) берёт это с запасом:
 # ниже него смена почти наверняка не доехала целиком.
 СМЕНА_ПОЛНА_ЧЕРЕЗ = 10
-АДРЕС_ПО_УМОЛЧАНИЮ = "https://nevsky-office-borzovavv.amvera.io"
+АДРЕС_ПО_УМОЛЧАНИЮ = "https://nevsky-office-borzovavv.msk1.amvera.tech"
 
 
 def торговый_день(время: str) -> str:
