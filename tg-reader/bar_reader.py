@@ -63,6 +63,23 @@ def _подпись(entity) -> str:
     return getattr(entity, "title", None) or "—"
 
 
+# Латинские буквы, неотличимые на глаз от русских. 20.10.2026 робот не нашёл
+# «НЕВСКИЙ | ОБЩИЙ ЧАТ» по названию, хотя владелец подтвердила, что аккаунт
+# в группе: «HEBCKИЙ» с латинскими H, E, B, C выглядит так же, а поиск
+# по «невск» его не видит.
+_ДВОЙНИКИ = str.maketrans("aeopcxykmthbABEKMHOPCTXY", "аеорсхукмтнвАВЕКМНОРСТХУ")
+
+
+def _ключ(название: str) -> str:
+    """Название для сравнения: строчные, латинские двойники — русскими, ё → е."""
+    return " ".join(название.translate(_ДВОЙНИКИ).lower().replace("ё", "е").split())
+
+
+def _общий_чат(название: str) -> bool:
+    к = _ключ(название)
+    return "общ" in к and "чат" in к and "невск" in к
+
+
 def _свежесть(dialog) -> str | None:
     when = getattr(dialog, "date", None)
     return when.astimezone(timezone.utc).isoformat() if when else None
@@ -114,8 +131,7 @@ def find_groups(client, log) -> dict:
             (
                 d
                 for d in groups
-                if "общий чат" in _подпись(d.entity).lower()
-                and "невск" in _подпись(d.entity).lower()
+                if _общий_чат(_подпись(d.entity))
             ),
             key=lambda d: d.date or datetime.min.replace(tzinfo=timezone.utc),
             reverse=True,
@@ -130,12 +146,18 @@ def find_groups(client, log) -> dict:
                 f"{d.id} ({_свежесть(d)})" for d in candidates
             )
     else:
-        # Какие похожие группы аккаунт видит — только с «невск» в названии:
-        # список всех его групп сюда не нужен.
-        near = [_подпись(d.entity) for d in groups if "невск" in _подпись(d.entity).lower()]
+        # Какие похожие группы аккаунт видит — с «невск», «общ» или «чат»
+        # в названии, с номером. Все группы аккаунта сюда не нужны: у него
+        # есть и чужие переписки (замер 04.08.2026).
+        near = [
+            f"«{_подпись(d.entity)}» {d.id}"
+            for d in groups
+            if any(с in _ключ(_подпись(d.entity)) for с in ("невск", "общ", "чат"))
+        ]
         note = (
-            f"не найдена ({how}) — аккаунт робота в группе не состоит, нужно добавить. "
-            f"Видны группы с «Невск»: {', '.join(near) or 'ни одной'}"
+            f"не найдена ({how}): ни у одной из {len(groups)} групп аккаунта нет в названии "
+            f"«Невск», «общ» и «чат» сразу. Похожие: {'; '.join(near) or 'ни одной'}. "
+            "Если общий чат среди них — задать его номер в TG_CREW_GROUP_ID"
         )
     found["состав"] = (
         crew.entity if crew else None,
