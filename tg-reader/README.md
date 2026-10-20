@@ -218,6 +218,20 @@ cd "/Users/user/Documents/Невский" && git remote add amvera-reader ssh://
 
 **Выкладка читателя безопасна в любое время** — приложение смены она не трогает.
 
+⚠️ **С 20.10.2026, с VPS — по-другому.** Роботов два, и git у каждого свой:
+
+| Ремоут | Адрес | Робот |
+|---|---|---|
+| `amvera-reader` | `git@git.msk1.amvera.ru:borzovavv/chaevye-reader` | Москва, копия базы |
+| `amvera-reader-var` | `git@git.waw0.amvera.ru:borzovavv/chaevye-reader-var` | **Варшава, читает Telegram** |
+
+У варшавского своя история коммитов (сверху «Initial commit» от 14.08.2026),
+`subtree push` туда не пройдёт. Выкладывать новым коммитом поверх боя:
+
+```bash
+git fetch amvera-reader-var && C=$(git commit-tree work:tg-reader -p amvera-reader-var/master -m "Выкладка робота") && git push amvera-reader-var $C:refs/heads/master
+```
+
 ## Как проверить, что работает
 
 В журнале приложения в панели Amvera должно быть:
