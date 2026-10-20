@@ -784,3 +784,157 @@ export async function добавитьЗапись(input: {
   revalidatePath("/");
   return { ok: true };
 }
+
+/** Поступление по QR, которое ещё никто не разнёс. */
+export type НеразнесённоеQr = {
+  сообщение: number;
+  день: string;
+  сумма: number;
+  котёл: string;
+  пришло: string;
+};
+
+/**
+ * Все неразнесённые поступления по QR, от старых к новым.
+ *
+ * То же, что полоса «ждут разноски» в приложении смены, — но видно и тем,
+ * у кого приложения смены под рукой нет. Понадобилось 20.10.2026: за неделю
+ * без приложения робот довёз поступления, а смен, на которые их разносить,
+ * в базе не было, — их заводили задним числом по бумажным листам.
+ */
+export async function неразнесённыеQr(): Promise<НеразнесённоеQr[]> {
+  const строки = await db()<
+    { message_id: string; business_day: string; amount: string; team: string; received_at: Date }[]
+  >`
+    select message_id, business_day, amount, team, received_at
+      from qr_tips
+     where distributed_at is null
+     order by received_at
+  `;
+  return строки.map((r) => ({
+    сообщение: Number(r.message_id),
+    день: r.business_day,
+    сумма: Number(r.amount),
+    котёл: r.team,
+    пришло: r.received_at.toISOString(),
+  }));
+}
+
+/**
+ * Разносит поступление по QR на официантов зала — на ЕГО день, не на сегодня.
+ *
+ * Повторяет разноску в приложении смены: сумма уже чистая (Сбер удержал
+ * комиссию до уведомления), несколько получателей делят её поровну, время
+ * записи — время поступления. Отличия только в следе: `source = 'office'`,
+ * подписано управляющим и с пояснением, как у любой записи задним числом.
+ *
+ * ⚠️ Отметка «разнесено» и записи — одной транзакцией, с условием
+ * `distributed_at is null`. Иначе поступление, разнесённое с телефона
+ * в ту же минуту, легло бы людям второй раз.
+ */
+export async function разнестиQr(input: {
+  сообщение: number;
+  кому: number[];
+  note: string;
+  manager?: Manager;
+}): Promise<Answer> {
+  const manager = await ктоПравит(input.manager);
+  if (!manager) return { error: "Вход истёк — войдите заново" };
+  const пояснение = input.note.trim();
+  if (пояснение.length < 3) {
+    return { error: "Напишите, откуда эта разноска — без пояснения её не отличить от выдумки" };
+  }
+
+  const sql = db();
+  const [поступление] = await sql<
+    { business_day: string; amount: string; received_at: Date }[]
+  >`
+    select business_day, amount, received_at
+      from qr_tips
+     where message_id = ${input.сообщение} and distributed_at is null
+  `;
+  if (!поступление) return { error: `Поступления №${input.сообщение} среди неразнесённых нет` };
+  const день = поступление.business_day;
+
+  const draft: Draft = {
+    kind: "qr",
+    gross: Number(поступление.amount),
+    hallId: null,
+    hallTitle: null,
+    tableId: null,
+    tableTitle: null,
+    payees: input.кому.map((id) => ({ id, contour: "hall" as const })),
+  };
+  const bad = draftError(draft);
+  if (bad) return { error: bad };
+
+  const [смена] = await sql<
+    {
+      crew: number[];
+      hostess: number[] | null;
+      hookah: number[] | null;
+      operator_id: number | null;
+      admin_id: number | null;
+      admin2_id: number | null;
+      cashier_id: number | null;
+    }[]
+  >`
+    select crew, hostess, hookah, operator_id, admin_id, admin2_id, cashier_id
+      from shifts where business_day = ${день}
+  `;
+  if (!смена) return { error: `Смены за ${день} нет — разносить не на кого` };
+  const чужой = неВСоставе(draft.payees, смена, draft.kind);
+  if (чужой !== undefined) {
+    return { error: `В составе смены ${день} нет сотрудника №${чужой.id}` };
+  }
+  if (смена.operator_id === null) {
+    return { error: "У смены не указано, кто вносил записи — поправьте состав" };
+  }
+
+  const people = await allPeople();
+  const имя = (id: number) => people.find((p) => p.id === id)?.name ?? `№${id}`;
+  const строки = rowsFromDraft(draft, {
+    businessDay: день,
+    createdAt: поступление.received_at.toISOString(),
+    operatorId: смена.operator_id,
+    operatorName: имя(смена.operator_id),
+    managerId: manager.id,
+    corrects: null,
+    note: пояснение,
+    nameOf: имя,
+  });
+
+  try {
+    await sql.begin(async (tx) => {
+      const отмечено = await tx`
+        update qr_tips
+           set distributed_at = now(), distributed_by = ${manager.name}
+         where message_id = ${input.сообщение} and distributed_at is null
+        returning message_id
+      `;
+      if (отмечено.length === 0) throw new Error("Это поступление уже разнесли");
+      for (const e of строки) {
+        await tx`
+          insert into entries (
+            id, business_day, hall_id, hall_title, table_id, table_title,
+            waiter_id, waiter_name, amount, kind, contour, operator_id, operator_name,
+            created_at, split_group, gross, commission_rate,
+            corrects, source, manager_id, note
+          ) values (
+            ${e.id}, ${e.businessDay}, ${e.hallId}, ${e.hallTitle},
+            ${e.tableId}, ${e.tableTitle}, ${e.waiterId}, ${e.waiterName},
+            ${e.amount}, ${e.kind}, ${e.contour ?? "hall"}, ${e.operatorId}, ${e.operatorName},
+            ${e.createdAt}, ${e.splitGroup ?? null}, ${e.gross}, ${e.commissionRate},
+            ${null}, 'office', ${e.managerId}, ${e.note}
+          )
+        `;
+      }
+    });
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : "Не получилось сохранить" };
+  }
+
+  revalidatePath(`/shift/${день}`);
+  revalidatePath("/");
+  return { ok: true };
+}
