@@ -620,3 +620,71 @@ create table if not exists hookah_rates (
   updated_at timestamptz   not null default now(),
   updated_by text
 );
+
+-- ─── Состав и мотивация кальянного бара из Telegram ─────────────────────
+--
+-- Заведено 20.10.2026, план `plans/2026-10-20-bar-iz-telegram.md`.
+-- Мотивацию бара делят поровну между теми, кто работал вечером (так считает
+-- таблица УК), а состав бара в приложении отмечают не всегда — а 8–19.10.2026
+-- приложение не работало вовсе. Администратор же каждый вечер пишет в два чата,
+-- и их читает варшавский робот (`tg-reader/bar_reader.py`).
+--
+-- ⚠️ Это ЧТО НАПИСАНО В ЧАТЕ, а не состав смены. В `shifts.hookah` отсюда
+-- ничего само не переезжает: что из этого считать составом — решает человек.
+--
+-- По строке на день: последнее сообщение дня главнее (`message_id` больше),
+-- правка того же сообщения перезаписывает строку.
+
+-- «РАСПРЕДЕЛЕНИЕ ДД.ММ.ГГ» из «НЕВСКИЙ | ОБЩИЙ ЧАТ»: раздел «КАЛЬЯННЫЙ БАР»
+-- и строка «КМ». Человек на нескольких зонах — один раз.
+create table if not exists bar_crew_chat (
+  business_day   text        primary key,
+  message_id     bigint      not null,
+  posted_at      timestamptz not null,
+  edited_at      timestamptz,
+  -- Дата взята из текста («РАСПРЕДЕЛЕНИЕ 08.10.26»), а не по времени отправки.
+  day_from_text  boolean     not null,
+  -- Строки раздела как в чате: [{"зона": "VIP", "текст": "Айнур"}, …].
+  lines          jsonb       not null,
+  -- Сообщение без имён: подписи зон и разделов. По нему видно, где разбор
+  -- ошибся, если формат поменяли. Имён в нём нет.
+  skeleton       text        not null default '',
+  section_found  boolean     not null,
+  zones          integer     not null,
+  -- Опознанные по справочнику бара (`src/data/hookah.json`) номера и имена.
+  crew           integer[]   not null default '{}',
+  names          jsonb       not null default '{}'::jsonb,
+  -- Что опознать не вышло — как написано в чате. Пусто — опознаны все.
+  unknown        text[]      not null default '{}',
+  received_at    timestamptz not null default now()
+);
+
+-- «Мотивация кальянного бара» из «НЕВСКИЙ | АДМИН»: продажи бара по типам.
+-- Сверять с нашими продажами (`hookah_sales`) ПО ТИПАМ, а не по итогу:
+-- итог сходится и при двух ошибках, гасящих друг друга (08.09.2026).
+create table if not exists bar_motivation_chat (
+  business_day   text          primary key,
+  message_id     bigint        not null,
+  posted_at      timestamptz   not null,
+  edited_at      timestamptz,
+  day_from_text  boolean       not null,
+  -- [{"тип": "Perfume чаша", "штук": 18, "ставка": 200, "сумма": 3600}, …]
+  items          jsonb         not null,
+  total          numeric(12,2),
+  -- Где не сходится арифметика самого отчёта (18×200 ≠ 3500).
+  remarks        text[]        not null default '{}',
+  text           text          not null,
+  received_at    timestamptz   not null default now()
+);
+
+-- Видит ли робот эти группы. Аккаунт робота мог в них не состоять: раньше
+-- оба чата читали с Мака под другим аккаунтом. Ответ виден служебной дверью
+-- бэк-офиса, без панели Amvera.
+create table if not exists tg_sources (
+  source      text        primary key,   -- 'состав' | 'мотивация'
+  chat_id     bigint,
+  title       text,
+  seen        boolean     not null,
+  note        text        not null default '',
+  checked_at  timestamptz not null default now()
+);

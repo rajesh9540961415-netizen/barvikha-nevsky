@@ -25,6 +25,7 @@ import time
 from datetime import datetime, timedelta, timezone
 
 import backup
+import bar_reader
 import jobs
 import probe
 import qr_reader as core
@@ -339,6 +340,8 @@ def main():
 
     client = None
     group = None
+    bar_groups = None
+    bar_checked_at = None
     picture = None
     tried_at = None
     reconnect_after = RECONNECT_SECONDS
@@ -378,6 +381,10 @@ def main():
                     picture = None
                     said_about_telegram = None
                     reconnect_after = RECONNECT_SECONDS
+                    # Группы бара ищем заново на каждом подключении: аккаунт
+                    # могли добавить в группу, пока робот жил без связи.
+                    bar_groups = None
+                    bar_checked_at = None
                 except ConnectionError as error:
                     client = None
                     # Не вышло — ждём вдвое дольше, но не дольше четверти часа.
@@ -423,6 +430,23 @@ def main():
                     except Exception:
                         pass
                     client = None
+
+            # 2а. Состав и мотивация кальянного бара — раз в четверть часа.
+            #
+            # Отдельно от QR и со своей ловушкой ошибок: QR — деньги смены
+            # прямо сейчас, и сбой чтения бара не должен их останавливать.
+            if (
+                client is not None
+                and getattr(storage, "reads_bar", False)
+                and (bar_checked_at is None or now_utc - bar_checked_at >= bar_reader.EVERY)
+            ):
+                bar_checked_at = now_utc
+                try:
+                    if bar_groups is None:
+                        bar_groups = bar_reader.find_groups(client, log)
+                    bar_reader.one_pass(client, bar_groups, storage, log)
+                except Exception as error:
+                    log.error("бар: заход не удался: %s: %s", type(error).__name__, error)
 
             # 3. Расписание — всегда, когда есть база: оно не зависит
             #    от связи с Telegram. Без базы дел у расписания нет вовсе,

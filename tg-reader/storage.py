@@ -40,6 +40,10 @@ class Database:
 
     # У этого способа есть база, значит ему можно поручать копию базы.
     has_database = True
+    # Состав и мотивацию бара прямо в базу не пишем: имена опознаёт
+    # приложение по своему справочнику, второй копии опознания здесь нет.
+    # Да и не нужно: Telegram из Москвы не читается (с 13.08.2026).
+    reads_bar = False
     описание = "пишу прямо в базу"
 
     def known_state(self):
@@ -62,20 +66,22 @@ class Relay:
 
     # Базы у этого способа нет: копию базы делает московский робот.
     has_database = False
+    reads_bar = True
 
     def __init__(self, base: str, key: str):
-        self.url = base.rstrip("/") + "/api/qr-tips"
+        self.base = base.rstrip("/")
+        self.url = self.base + "/api/qr-tips"
         self.key = key
         self.описание = f"отдаю приложению {base}"
 
-    def _call(self, method: str, payload=None):
+    def _call(self, method: str, payload=None, url: str | None = None):
         body = None if payload is None else json.dumps(payload).encode("utf-8")
         headers = {"X-Export-Key": self.key}
         if body is not None:
             headers["Content-Type"] = "application/json"
 
         request = urllib.request.Request(
-            self.url, data=body, headers=headers, method=method
+            url or self.url, data=body, headers=headers, method=method
         )
         try:
             with urllib.request.urlopen(request, timeout=TIMEOUT) as answer:
@@ -113,6 +119,15 @@ class Relay:
         ]
         answer = self._call("POST", {"tips": tips})
         return int(answer.get("добавлено", 0))
+
+    # Состав и мотивация кальянного бара, с 20.10.2026. См. bar_reader.py.
+
+    def bar_state(self) -> dict:
+        """По какой день у приложения уже есть состав и мотивация."""
+        return self._call("GET", url=self.base + "/api/bar-chat")
+
+    def bar_store(self, payload: dict) -> dict:
+        return self._call("POST", payload, url=self.base + "/api/bar-chat")
 
 
 def choose(log):
