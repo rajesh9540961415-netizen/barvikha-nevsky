@@ -214,8 +214,11 @@ export async function POST(request: Request) {
           gross: сумма,
           hallId: null,
           hallTitle: null,
-          tableId: null,
-          tableTitle: null,
+          // Своего терминала у бара нет (решение владельца 18.08.2026):
+          // б/нал бара — это часть оплаты за столом зала. Стола на листе нет,
+          // поэтому, как у «зала», условный №0 «по листу». 20.10.2026.
+          tableId: вид === "terminal" ? 0 : null,
+          tableTitle: вид === "terminal" ? "по листу" : null,
           payees: [{ id: HOOKAH_POT_ID, contour: "hookah" }],
         },
       });
