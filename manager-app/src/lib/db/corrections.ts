@@ -12,7 +12,7 @@ import {
   type Payee,
   type ShiftEvent,
 } from "../office";
-import { HOOKAH_POT_ID, isDeduction } from "../split";
+import { HOOKAH_POT_ID, HOOKAH_POT_NAME, isDeduction } from "../split";
 import type { Employee, Kind, Shift } from "../types";
 import { currentManager, type Manager } from "./managers";
 import { db } from "./sql";
@@ -736,7 +736,12 @@ export async function добавитьЗапись(input: {
   }
 
   const people = await allPeople();
-  const имя = (id: number) => people.find((p) => p.id === id)?.name ?? `№${id}`;
+  // Котёл бара в справочнике людей не живёт — без этого запись в него
+  // подписывалась «№1000000», а приложение смены пишет «Весь бар».
+  const имя = (id: number) =>
+    id === HOOKAH_POT_ID
+      ? HOOKAH_POT_NAME
+      : (people.find((p) => p.id === id)?.name ?? `№${id}`);
 
   const [часы, минуты] = input.время.split(":").map(Number);
   if (часы > 23 || минуты > 59) return { error: "Такого времени не бывает" };
@@ -821,7 +826,8 @@ export async function неразнесённыеQr(): Promise<Неразнесё
 }
 
 /**
- * Разносит поступление по QR на официантов зала — на ЕГО день, не на сегодня.
+ * Разносит поступление по QR на официантов зала или в котёл бара — на ЕГО
+ * день, не на сегодня.
  *
  * Повторяет разноску в приложении смены: сумма уже чистая (Сбер удержал
  * комиссию до уведомления), несколько получателей делят её поровну, время
@@ -834,7 +840,14 @@ export async function неразнесённыеQr(): Promise<Неразнесё
  */
 export async function разнестиQr(input: {
   сообщение: number;
+  /** Номера официантов зала. Пусто — если `вБар`. */
   кому: number[];
+  /**
+   * Всё поступление — в общий котёл кальянного бара («Весь бар»), как
+   * в приложении смены: QR бара не делят между кальянщиками, его пишут
+   * в котёл (правило владельца, подтверждено 20.10.2026).
+   */
+  вБар?: boolean;
   note: string;
   manager?: Manager;
 }): Promise<Answer> {
@@ -863,7 +876,9 @@ export async function разнестиQr(input: {
     hallTitle: null,
     tableId: null,
     tableTitle: null,
-    payees: input.кому.map((id) => ({ id, contour: "hall" as const })),
+    payees: input.вБар
+      ? [{ id: HOOKAH_POT_ID, contour: "hookah" as const }]
+      : input.кому.map((id) => ({ id, contour: "hall" as const })),
   };
   const bad = draftError(draft);
   if (bad) return { error: bad };
@@ -892,7 +907,12 @@ export async function разнестиQr(input: {
   }
 
   const people = await allPeople();
-  const имя = (id: number) => people.find((p) => p.id === id)?.name ?? `№${id}`;
+  // Котёл бара в справочнике людей не живёт — без этого запись в него
+  // подписывалась «№1000000», а приложение смены пишет «Весь бар».
+  const имя = (id: number) =>
+    id === HOOKAH_POT_ID
+      ? HOOKAH_POT_NAME
+      : (people.find((p) => p.id === id)?.name ?? `№${id}`);
   const строки = rowsFromDraft(draft, {
     businessDay: день,
     createdAt: поступление.received_at.toISOString(),
