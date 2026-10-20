@@ -442,7 +442,12 @@ def main():
             ):
                 bar_checked_at = now_utc
                 try:
-                    if bar_groups is None:
+                    # Пока какая-то группа не видна — ищем заново на каждом
+                    # заходе: 20.10.2026 аккаунт добавили в общий чат, когда
+                    # робот уже работал, и без перезапуска он бы этого не узнал.
+                    if bar_groups is None or not all(
+                        report["видна"] for _e, report in bar_groups.values()
+                    ):
                         bar_groups = bar_reader.find_groups(client, log)
                     bar_reader.one_pass(client, bar_groups, storage, log)
                 except Exception as error:
