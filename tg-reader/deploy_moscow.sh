@@ -12,22 +12,23 @@
 #
 # Только печатает номер коммита, ничего не отправляет. Выкладка — отдельно:
 #   C=$(tg-reader/deploy_moscow.sh) && git push amvera-reader "$C":refs/heads/master
+# ⚠️ Имена переменных — латиницей: bash русских не понимает (наступали 20.10 и 21.10).
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
 
-ветка=${1:-work}
-индекс=$(mktemp -u)
-trap 'rm -f "$индекс"' EXIT
-export GIT_INDEX_FILE="$индекс"
+BRANCH=${1:-work}
+INDEX=$(mktemp -u)
+trap 'rm -f "$INDEX"' EXIT
+export GIT_INDEX_FILE="$INDEX"
 
-git read-tree "$ветка:tg-reader"
-git read-tree --prefix=scripts/ "$ветка:scripts"
-git read-tree --prefix=mini-app/src/data/ "$ветка:mini-app/src/data"
-for файл in "mini-app/src/lib/split.ts" "data/кальяны-категории.json"; do
-  git update-index --add --cacheinfo "100644,$(git rev-parse "$ветка:$файл"),$файл"
+git read-tree "$BRANCH:tg-reader"
+git read-tree --prefix=scripts/ "$BRANCH:scripts"
+git read-tree --prefix=mini-app/src/data/ "$BRANCH:mini-app/src/data"
+for FILE in "mini-app/src/lib/split.ts" "data/кальяны-категории.json"; do
+  git update-index --add --cacheinfo "100644,$(git rev-parse "$BRANCH:$FILE"),$FILE"
 done
 
-дерево=$(git write-tree)
+TREE=$(git write-tree)
 git fetch -q amvera-reader
-git commit-tree "$дерево" -p amvera-reader/master \
-  -m "Робот: $(git log -1 --format=%s "$ветка") ($(git rev-parse --short "$ветка"))"
+git commit-tree "$TREE" -p amvera-reader/master \
+  -m "Робот: $(git log -1 --format=%s "$BRANCH") ($(git rev-parse --short "$BRANCH"))"
