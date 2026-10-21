@@ -29,6 +29,7 @@ import bar_reader
 import jobs
 import probe
 import report_job
+import stoly_job
 import qr_reader as core
 import storage as storage_module
 import tgbot
@@ -281,6 +282,15 @@ def schedule_pass(now):
                     minute=30,
                     do=lambda: report_job.run(now, log),
                 ),
+                # Каждый день в 11:00, до отчёта. Рестоплейс помнит ~33 дня,
+                # пропуск дольше стирает посадки навсегда; час не важен, важно
+                # не пропускать (21.10.2026, `stoly_job.py`).
+                jobs.Job(
+                    name="столы из Рестоплейс",
+                    weekday=None,
+                    hour=11,
+                    do=lambda: stoly_job.run(conn, now, log),
+                ),
             ),
             now,
             log,
@@ -325,6 +335,10 @@ def announce_schedule(storage):
         log.warning("⚠️  отчёта по чаевым НЕ будет: в панели не заданы %s", ", ".join(нет))
     else:
         log.info("расписание: отчёт по чаевым и мотивации — каждый день в 11:30")
+    if not os.environ.get(stoly_job.KEY, "").strip():
+        log.warning("⚠️  столов из Рестоплейс НЕ будет: в панели не задан %s", stoly_job.KEY)
+    else:
+        log.info("расписание: столы из Рестоплейс — каждый день в 11:00")
 
 
 def main():

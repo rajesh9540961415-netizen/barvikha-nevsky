@@ -24,7 +24,7 @@ export GIT_INDEX_FILE="$INDEX"
 git read-tree "$BRANCH:tg-reader"
 git read-tree --prefix=scripts/ "$BRANCH:scripts"
 git read-tree --prefix=mini-app/src/data/ "$BRANCH:mini-app/src/data"
-for FILE in "mini-app/src/lib/split.ts" "data/кальяны-категории.json"; do
+for FILE in "mini-app/src/lib/split.ts" "data/кальяны-категории.json" "data/столы-рестоплейс.json"; do
   git update-index --add --cacheinfo "100644,$(git rev-parse "$BRANCH:$FILE"),$FILE"
 done
 
