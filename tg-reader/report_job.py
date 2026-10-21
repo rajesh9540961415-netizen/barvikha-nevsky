@@ -77,12 +77,31 @@ def _write_secrets() -> None:
              if k != "GOOGLE_ROBOT_JSON" and os.environ.get(k, "").strip()]
     ENV_FILE.write_text("\n".join(lines) + "\n", encoding="utf-8")
     ENV_FILE.chmod(0o600)
-    ключ = json.loads(os.environ["GOOGLE_ROBOT_JSON"])
+    ключ = google_key(os.environ["GOOGLE_ROBOT_JSON"])
     if ключ.get("type") != "service_account":
         raise ValueError("GOOGLE_ROBOT_JSON — не ключ сервисного аккаунта Google")
     GOOGLE_KEY.parent.mkdir(parents=True, exist_ok=True)
     GOOGLE_KEY.write_text(json.dumps(ключ), encoding="utf-8")
     GOOGLE_KEY.chmod(0o600)
+
+
+def google_key(сырое: str) -> dict:
+    """Ключ Google из переменной: как есть (JSON) или упакованный.
+
+    Упакованный — `gzip -c google-robot.json | base64`: одна строка из букв
+    и цифр. Заведено 21.10.2026: панель Amvera не приняла JSON ключа целиком —
+    кавычки, переносы внутри закрытого ключа и длина в 2,3 тыс. знаков.
+    """
+    import base64
+    import gzip
+
+    сырое = сырое.strip()
+    if сырое.startswith("{"):
+        return json.loads(сырое)
+    данные = base64.b64decode("".join(сырое.split()))
+    if данные[:2] == b"\x1f\x8b":
+        данные = gzip.decompress(данные)
+    return json.loads(данные)
 
 
 def _wipe_secrets() -> None:
