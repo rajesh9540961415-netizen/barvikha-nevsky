@@ -39,7 +39,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from db import load_env  # noqa: E402
-from seti import достучаться  # noqa: E402
+from seti import ПОПЫТОК, достучаться  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 СКАЧАННЫЕ = ROOT / "data" / "выгрузки-смен"
