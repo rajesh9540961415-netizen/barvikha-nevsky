@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import quickResto from "@/data/employees.json";
+import hookahList from "@/data/hookah.json";
 import { crewPeople } from "../crewPeople";
 import {
   buildEvents,
@@ -653,6 +654,88 @@ export async function saveCrew(input: {
 
   revalidatePath(`/shift/${input.businessDay}`);
   revalidatePath("/");
+  return { ok: true };
+}
+
+/**
+ * Состав кальянного бара смены — задним числом, только служебной дверью.
+ *
+ * Заведено 21.10.2026. Состав бара отмечает приложение смены, а `saveCrew`
+ * столбец `hookah` не пишет вовсе (экрана для него в бэк-офисе нет). Но
+ * 8–19.10.2026 приложение не работало, смены завели по бумажным листам —
+ * без бара, а мотивация делится поровну именно на этот состав. Взят он
+ * из «РАСПРЕДЕЛЕНИЙ» общего чата и согласован с владельцем.
+ *
+ * Остальные поля смены не трогает. Список заменяет прежний целиком: состав —
+ * это «кто был», а не «кого добавить». Пустой не принимается — стереть бар
+ * опечаткой в запросе не должно получиться.
+ */
+export async function сохранитьСоставБара(input: {
+  businessDay: string;
+  hookah: number[];
+  note: string;
+  manager?: Manager;
+}): Promise<Answer> {
+  const manager = await ктоПравит(input.manager);
+  if (!manager) return { error: "Вход истёк — войдите заново" };
+  if (!DAY.test(input.businessDay)) return { error: "Непонятная смена" };
+  if (!input.note.trim()) return { error: "Нужно пояснение: откуда взят состав" };
+
+  const состав = [...new Set(input.hookah)];
+  if (состав.length === 0 || состав.some((id) => !Number.isInteger(id))) {
+    return { error: "Состав бара — непустой список номеров" };
+  }
+  const справочник = new Set((hookahList as Employee[]).map((p) => p.id));
+  const чужой = состав.find((id) => !справочник.has(id));
+  if (чужой != null) return { error: `№${чужой} нет в справочнике кальянного бара` };
+
+  const sql = db();
+  try {
+    const нет = await sql.begin(async (tx) => {
+      const before = await tx<
+        {
+          crew: number[];
+          operator_id: number | null;
+          admin_id: number | null;
+          admin2_id: number | null;
+          cashier_id: number | null;
+          hostess: number[] | null;
+          hookah: number[] | null;
+        }[]
+      >`select * from shifts where business_day = ${input.businessDay} for update`;
+      if (!before[0]) return true;
+
+      const was: Shift = {
+        crew: before[0].crew,
+        operator: before[0].operator_id,
+        admin: before[0].admin_id,
+        admin2: before[0].admin2_id,
+        cashier: before[0].cashier_id,
+        hostess: before[0].hostess ?? [],
+        hookah: before[0].hookah ?? [],
+      };
+      const after: Shift = { ...was, hookah: состав };
+
+      await tx`
+        update shifts set hookah = ${состав}, updated_at = now()
+         where business_day = ${input.businessDay}
+      `;
+      await tx`
+        insert into shift_changes (
+          business_day, manager_id, manager_name, before_state, after_state, note
+        ) values (
+          ${input.businessDay}, ${manager.id}, ${manager.name},
+          ${tx.json(was)}, ${tx.json(after)}, ${input.note.trim()}
+        )
+      `;
+      return false;
+    });
+    if (нет) return { error: "Смены за этот день нет" };
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : "Не получилось сохранить" };
+  }
+
+  revalidatePath(`/shift/${input.businessDay}`);
   return { ok: true };
 }
 
