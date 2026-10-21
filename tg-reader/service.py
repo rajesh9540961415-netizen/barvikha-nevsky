@@ -311,6 +311,15 @@ def announce_schedule(storage):
         log.warning("⚠️  копии базы НЕ будет: не задано %s", ", ".join(missing))
     else:
         log.info("расписание: копия базы — по понедельникам в 5 утра")
+    # Каким ботом шлём — вслух. 21.10.2026 владелец написала не тому боту
+    # и полчаса ждала, а ключ в панели не прочитать ни ей, ни нам: секрет.
+    if tgbot.token():
+        try:
+            имя = tgbot.call("getMe", {}).get("username")
+            log.info("расписание: копию базы и сверку шлёт бот @%s — "
+                     "напишите ему, чтобы он узнал, куда слать", имя)
+        except Exception as error:
+            log.warning("⚠️  ключ бота не принят Telegram: %s", error)
     нет = report_job.missing()
     if нет:
         log.warning("⚠️  отчёта по чаевым НЕ будет: в панели не заданы %s", ", ".join(нет))
