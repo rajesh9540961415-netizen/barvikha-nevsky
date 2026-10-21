@@ -16,8 +16,14 @@
   2. `report_pull.py --month` — смены месяца из приложения → отчёт → лист УК.
      Блок мотивации лист берёт из бэк-офиса, куда только что залил шаг 1.
 
+  3. Сверка мотивации за вчера с отчётом администратора из чата «НЕВСКИЙ |
+     АДМИН» — по типам кальянов, штуками. Считаем по чекам, а отчёт
+     администратора — проверка (владелец 21.10.2026). Итог — в журнал
+     и сообщением в Telegram тому же получателю, что и копия базы.
+
 Шаг 1 упал — шаг 2 всё равно идёт: чаевые важнее мотивации, а мотивация
-в листе тогда просто останется вчерашней.
+в листе тогда просто останется вчерашней. Сверка ничего не меняет и ни на что
+не влияет: не вышла — дело всё равно считается сделанным.
 
 ⚠️ Скрипты читают ключи из файла `.env` в корне и Google-ключ из
 `data/certs/google-robot.json`. В образе их нет и быть не должно: оба файла
@@ -115,6 +121,68 @@ def _step(args: list[str], log) -> tuple[bool, str]:
     return итог.returncode == 0, хвост
 
 
+def _office(путь: str) -> dict:
+    """GET в бэк-офис ключом правок."""
+    import urllib.request
+
+    адрес = os.environ.get("OFFICE_URL", "https://office.barvikha-nevsky.ru").rstrip("/")
+    запрос = urllib.request.Request(адрес + путь,
+                                    headers={"X-Tips-Fix-Key": os.environ["TIPS_FIX_KEY"]})
+    with urllib.request.urlopen(запрос, timeout=60) as ответ:
+        return json.loads(ответ.read().decode("utf-8"))
+
+
+def сверка_текстом(день: str, данные: dict, ставки: dict) -> str:
+    """Сверка дня одной человеческой строкой (или несколькими)."""
+    дата = f"{день[8:10]}.{день[5:7]}"
+    дни = данные.get("дни") or []
+    д = next((x for x in дни if x["день"] == день), None)
+    if not д or not д.get("мотивация"):
+        return f"Мотивация бара {дата}: отчёта администратора в чате нет — сверить не с чем"
+    его = д["мотивация"].get("итог")
+    сверка = д.get("сверка")
+    if not isinstance(сверка, list):
+        return (f"Мотивация бара {дата}: продаж по чекам за этот день нет — сверить не с чем "
+                f"(у администратора {его if его is None else f'{его:,.0f}'.replace(',', ' ')} ₽)")
+    def руб(v) -> str:
+        return f"{v:,.0f}".replace(",", " ") if isinstance(v, (int, float)) else "?"
+
+    наш = sum(с["уНас"] * ставки.get(с["тип"], 0) for с in сверка)
+    разные = [с for с in сверка if с["разница"]]
+    if not разные:
+        return f"Мотивация бара {дата}: по чекам {руб(наш)} ₽ — с отчётом администратора сходится"
+    строки = [f"⚠️ Мотивация бара {дата}: по чекам {руб(наш)} ₽, у администратора {руб(его)} ₽"]
+    for с in разные:
+        строки.append(f"  {с['тип']}: по чекам {с['уНас']:g}, у администратора {с['уАдминистратора']:g}")
+    строки.append("В лист УК ушло по чекам.")
+    return "\n".join(строки)
+
+
+def _сверить(when: datetime, log) -> None:
+    """Сверка вчерашней мотивации с отчётом администратора. Ничего не меняет."""
+    from datetime import timedelta
+
+    import tgbot
+
+    вчера = (when - timedelta(days=1)).strftime("%Y-%m-%d")
+    try:
+        ставки = _office(f"/api/hookah-sales?month={вчера[:7]}").get("ставки") or {}
+        данные = _office(f"/api/bar-chat?from={вчера}&to={вчера}")
+        текст = сверка_текстом(вчера, данные, ставки)
+    except Exception as error:  # noqa: BLE001 — сверка не должна ронять дело
+        log.warning("⚠️  сверка с отчётом администратора не вышла: %s: %s",
+                    type(error).__name__, error)
+        return
+    for строка in текст.splitlines():
+        log.info("  %s", строка)
+    чат = (os.environ.get("TG_BACKUP_CHAT") or "").strip()
+    if tgbot.token() and чат:
+        try:
+            tgbot.call("sendMessage", {"chat_id": чат, "text": текст})
+        except Exception as error:  # noqa: BLE001
+            log.warning("⚠️  сверку не отправить в Telegram: %s", error)
+
+
 def run(when: datetime, log) -> str | None:
     """Дело для расписания. None — отложено (нет ключей), строка — сделано."""
     нет = missing()
@@ -130,6 +198,7 @@ def run(when: datetime, log) -> str | None:
         отчёт_ок, отчёт = _step(["scripts/report_pull.py", "--month"], log)
     finally:
         _wipe_secrets()
+    _сверить(when, log)
 
     if not отчёт_ок:
         # Исключение, а не None: расписание запишет неудачу и повторит через час.
