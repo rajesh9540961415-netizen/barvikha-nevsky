@@ -1,4 +1,4 @@
-import { принятьПродажи } from "@/lib/db/hookah";
+import { принятьПродажи, продажиМесяца, ставки } from "@/lib/db/hookah";
 import type { ПродажаДня } from "@/lib/hookahMotivation";
 import { отказПоКлючуПравок } from "@/lib/tipsFixKey";
 
@@ -57,6 +57,33 @@ function разобрать(сырое: unknown, ошибки: string[]): Про
     qty: п.qty as number,
     amount: п.amount as number,
   };
+}
+
+/**
+ * Продажи месяца и ставки — для листа УК, который собирает робот.
+ *
+ *   GET /api/hookah-sales?month=2026-10        ключ X-Tips-Fix-Key
+ *
+ * Заведено 21.10.2026: блок мотивации в таблице УК берётся отсюда, а не
+ * считается роботом по чекам заново. Тогда источник один — эта база, — и дни,
+ * посчитанные по отчёту администратора (8–19.10.2026), в листе не затираются.
+ * Ставки — из базы, те же, что на странице «Мотивация».
+ */
+export async function GET(request: Request) {
+  const отказ = отказПоКлючуПравок(request);
+  if (отказ) return отказ;
+
+  const месяц = new URL(request.url).searchParams.get("month") ?? "";
+  if (!/^\d{4}-\d{2}$/.test(месяц)) {
+    return Response.json({ ok: false, причина: "month вида 2026-10" }, { status: 400 });
+  }
+  try {
+    const [продажи, ставкиСейчас] = await Promise.all([продажиМесяца(месяц), ставки()]);
+    return Response.json({ ok: true, месяц, продажи, ставки: ставкиСейчас });
+  } catch (е) {
+    return Response.json({ ok: false, причина: `база не ответила: ${(е as Error).message}` },
+                         { status: 500 });
+  }
 }
 
 export async function POST(request: Request) {

@@ -28,6 +28,7 @@ import backup
 import bar_reader
 import jobs
 import probe
+import report_job
 import qr_reader as core
 import storage as storage_module
 import tgbot
@@ -270,6 +271,16 @@ def schedule_pass(now):
                     hour=5,
                     do=lambda: backup.run(conn, schema, now, log),
                 ),
+                # Каждый день в 11:30: к этому часу смена закрыта, отчёт
+                # администратора написан, ночные правки внесены. Так было
+                # на Маке до переезда (решение владельца 21.10.2026).
+                jobs.Job(
+                    name="отчёт по чаевым",
+                    weekday=None,
+                    hour=11,
+                    minute=30,
+                    do=lambda: report_job.run(now, log),
+                ),
             ),
             now,
             log,
@@ -300,6 +311,11 @@ def announce_schedule(storage):
         log.warning("⚠️  копии базы НЕ будет: не задано %s", ", ".join(missing))
     else:
         log.info("расписание: копия базы — по понедельникам в 5 утра")
+    нет = report_job.missing()
+    if нет:
+        log.warning("⚠️  отчёта по чаевым НЕ будет: в панели не заданы %s", ", ".join(нет))
+    else:
+        log.info("расписание: отчёт по чаевым и мотивации — каждый день в 11:30")
 
 
 def main():

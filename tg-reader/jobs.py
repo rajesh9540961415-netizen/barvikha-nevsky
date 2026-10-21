@@ -51,6 +51,7 @@ class Job:
     weekday: int | None  # день недели, 0 — понедельник; None — каждый день
     hour: int  # с какого часа по Москве можно браться
     do: Callable[[], str]  # что сделать; возвращает строку для журнала
+    minute: int = 0  # и с какой минуты этого часа (отчёт — в 11:30, как было на Маке)
 
 
 def setup(conn) -> None:
@@ -131,7 +132,7 @@ def due(job: Job, now: datetime, state) -> bool:
     if job.weekday is not None and now.weekday() != job.weekday and not overdue:
         return False
 
-    return now.hour >= job.hour
+    return (now.hour, now.minute) >= (job.hour, job.minute)
 
 
 def tick(conn, schedule, now: datetime, log) -> None:
