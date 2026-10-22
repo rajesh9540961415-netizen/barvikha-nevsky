@@ -290,7 +290,12 @@ def tax_reserve_report(reg, by_account, out):
     на депозит; к сроку платежа деньги возвращаются. В ДДС движения по депозиту
     не показываем — это свои же деньги.
     """
-    deposits = {num for num, (_, t) in by_account.items() if t == "deposit"}
+    # Депозит счёта, учёт по которому кончился (`в_учёте_до`), в копилку
+    # не входит: 22.10.2026 закрыли ИП Хисамова, а его последний остаток
+    # 111 011 ₽ на 05.10 так и считался бы деньгами на налог навсегда.
+    отсечки = в_учёте_до(reg)
+    deposits = {num for num, (_, t) in by_account.items()
+                if t == "deposit" and num not in отсечки}
     if not deposits:
         return
     balances = DATA / "bank_balances.csv"
