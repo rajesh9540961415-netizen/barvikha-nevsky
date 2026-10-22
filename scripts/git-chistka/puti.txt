@@ -1,0 +1,11 @@
+Резервные копии/
+regex:^data/листы-смен/(?!README\.md$)
+glob:data/*.pdf
+data/снимки-облака/
+data/листы-бумага.json
+data/вердикт-листа.json
+data/отмены.json
+data/отмены-суммы.json
+data/чат-кассы.json
+glob:.~lock.*#
+Свод вознаграждений и зарплат 2025-2026.xlsx
