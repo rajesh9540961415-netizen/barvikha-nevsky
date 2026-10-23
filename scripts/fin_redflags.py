@@ -288,12 +288,17 @@ def check_moscow(out):
     """
     import json
     reg = json.loads((DATA / "registry.json").read_text(encoding="utf-8"))
-    acc = reg["rules"].get("moscow_account")
-    if not acc:
+    # Московских счетов два (…9299, с 23.10.2026 и …5339) — список общий
+    # с разметкой, см. other_site_accounts в fin_classify.py.
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from fin_classify import other_site_accounts
+    счета = other_site_accounts(reg)
+    if not счета:
         return
+    acc = ", ".join(f"…{с[-4:]}" for с in sorted(счета))
     hits = []
     for r in csv.DictReader((DATA / "bank_classified.csv").open(encoding="utf-8")):
-        if r.get("counter_account") == acc or r["account"] == acc:
+        if r.get("counter_account") in счета or r["account"] in счета:
             hits.append(r)
     if not hits:
         return
@@ -340,7 +345,7 @@ def check_moscow(out):
                      f"не заём: {r.get('why', '')}")
 
     out.append((total, "🔴 ЗАИМСТВОВАНИЯ МЕЖДУ ПЛОЩАДКАМИ",
-                f"счёт {acc} — московское заведение, не Невский. "
+                f"счета {acc} — московское заведение, не Невский. "
                 f"Сейчас за Москвой {M(остаток)} ₽",
                 lines,
                 "Считаем это займом, а не расходом: деньги уходят на другое "

@@ -70,9 +70,16 @@ def ключ(дата: str, документ, сумма) -> str:
 
 def собрать() -> list[dict]:
     реестр = json.loads((DATA / "registry.json").read_text(encoding="utf-8"))
-    счёт = реестр["rules"].get("moscow_account")
-    if not счёт:
-        sys.exit("✗ В registry.json нет rules.moscow_account — не с чем сверять.")
+    # ⚠️ Московских счетов два: …9299 и с 23.10.2026 …5339 — владелец назвала
+    # его, когда 2 030 880,68 ₽ от 08.10 не нашлись в бэк-офисе. Один номер
+    # в rules.moscow_account второй счёт молча терял. Список — тот же, что
+    # у разметки (`в_учёт_невского: false` в справочнике), чтобы страница и
+    # разметка не расходились.
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from fin_classify import other_site_accounts
+    счета = other_site_accounts(реестр)
+    if not счета:
+        sys.exit("✗ В registry.json нет московских счетов — не с чем сверять.")
 
     # Разобранное — не заём. Правила лежат в registry.json, там же записано,
     # ЗА ЧТО. Отличать по колонке `why` нельзя: она заполнена у всех, но
@@ -89,7 +96,7 @@ def собрать() -> list[dict]:
     движения = []
     файл = DATA / "bank_classified.csv"
     for r in csv.DictReader(файл.open(encoding="utf-8")):
-        if r.get("counter_account") != счёт and r.get("account") != счёт:
+        if r.get("counter_account") not in счета and r.get("account") not in счета:
             continue
         к = ключ(r["date"], r.get("doc_no", ""), r["amount"])
         движения.append({
