@@ -5,6 +5,8 @@
 # Сбер шлёт два письма в день со ссылкой на выписку за вчерашний день:
 # ≈06:22 МСК — ООО «МАВ» (р/с и депозит), 10:00 МСК — ИП Шалаева (р/с).
 # Ссылка живёт сутки — пропущенный день потом только руками из СберБизнеса.
+# Скачав, пересобирает таблицы и с 23.10.2026 отправляет финансы в бэк-офис
+# (fin_push, zaimy_push, boss_push) — по «да» владельца.
 #
 # ⚠️ Разделение ролей намеренное. Claude (без окна, с коннектором почты)
 # только ЧИТАЕТ письма и печатает ссылки — ни команд, ни файлов у него нет.
@@ -64,11 +66,28 @@ while IFS= read -r link; do
 done <<<"$LINKS"
 chmod 600 data/dds/выписки/* 2>/dev/null
 
+PUSH_FAILED=0
 if [ $COUNT -gt 0 ]; then
-  python3 scripts/bank_import.py >/dev/null && python3 scripts/fin_classify.py >/dev/null \
-    && echo "✓ таблицы пересобраны" || echo "✗ пересборка таблиц упала"
+  if python3 scripts/bank_import.py >/dev/null && python3 scripts/fin_classify.py >/dev/null; then
+    echo "✓ таблицы пересобраны"
+    # В бэк-офис — сразу за пересборкой. До 23.10.2026 задача только качала,
+    # и банк в бэк-офисе застрял на 06.10, хотя выписки на VPS были по 22.10.
+    # Все три отправки повторяемы: бэк-офис сам отсеивает уже принятое.
+    # fin_push без аргументов — текущий месяц, а в первые дни и прошлый.
+    for push in "fin_push.py" "zaimy_push.py --залить" "boss_push.py --залить"; do
+      if OUT="$(timeout 600 python3 scripts/$push 2>&1)"; then
+        echo "✓ бэк-офис: $push — $(printf '%s\n' "$OUT" | grep -E '✓|заполнено по' | tr '\n' ' ' | head -c 300)"
+      else
+        PUSH_FAILED=1
+        echo "✗ бэк-офис: $push упал: $(printf '%s\n' "$OUT" | tail -3 | tr '\n' ' ')"
+      fi
+    done
+  else
+    echo "✗ пересборка таблиц упала — в бэк-офис не отправляю"
+    PUSH_FAILED=1
+  fi
 fi
 
 # Ожидаем два письма: МАВ и Шалаева. Одно — значит второе не пришло или не скачалось.
-echo "итог: скачано $COUNT, не скачано $FAILED"
-[ $COUNT -ge 2 ] && [ $FAILED -eq 0 ]
+echo "итог: скачано $COUNT, не скачано $FAILED, отправка в бэк-офис $([ $PUSH_FAILED -eq 0 ] && echo ок || echo 'с ошибкой')"
+[ $COUNT -ge 2 ] && [ $FAILED -eq 0 ] && [ $PUSH_FAILED -eq 0 ]
