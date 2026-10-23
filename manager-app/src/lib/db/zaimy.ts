@@ -26,12 +26,20 @@ export type Движение = {
   /** Разобрано и оказалось НЕ займом: уходит из долга, см. `settled`. */
   неЗаём: boolean;
   почему: string | null;
+  /**
+   * Вывод на ИП Шалаеву лично, а не движение между площадками (`kind = 'owner'`).
+   * Владелец 23.10.2026: такие выводы — сюда же, для ручной проверки.
+   * В долг Москвы не входят ни в одну сторону.
+   */
+  выводНаИП: boolean;
 };
 
 export type Заимствования = {
   движения: Движение[];
   /** Разобранные — те, что оказались не займом. Показываем отдельно. */
   неЗаймы: Движение[];
+  /** Выводы на ИП Шалаеву — отдельным блоком, вне долга. */
+  выводы: Движение[];
   выдано: number;
   возвращено: number;
   /** Выдано минус возвращено по тем движениям, что остаются займами. */
@@ -53,6 +61,7 @@ type Строка = {
   settled: boolean;
   settled_why: string | null;
   updated_at: string | null;
+  kind: string | null;
 };
 
 const ч = (v: unknown): number => (v === null ? 0 : Number(v));
@@ -70,7 +79,7 @@ function ключДня(v: unknown): string {
 export async function заимствования(): Promise<Заимствования> {
   const sql = db();
   const строки = await sql<Строка[]>`
-    select day, doc_no, amount, direction, comment, settled, settled_why, updated_at
+    select day, doc_no, amount, direction, comment, settled, settled_why, updated_at, kind
       from interbranch_moves
      order by day, doc_no
   `;
@@ -83,10 +92,14 @@ export async function заимствования(): Promise<Заимствова
     комментарий: с.comment?.trim() ? с.comment.trim() : null,
     неЗаём: Boolean(с.settled),
     почему: с.settled_why?.trim() ? с.settled_why.trim() : null,
+    выводНаИП: с.kind === "owner",
   }));
 
-  const движения = все.filter((д) => !д.неЗаём);
-  const неЗаймы = все.filter((д) => д.неЗаём);
+  // Выводы на ИП отделяем первыми: ни в движения, ни в разобранные они
+  // не попадают, иначе 1 300 000 ₽ собственнику тихо выросли бы в долг Москвы.
+  const выводы = все.filter((д) => д.выводНаИП);
+  const движения = все.filter((д) => !д.выводНаИП && !д.неЗаём);
+  const неЗаймы = все.filter((д) => !д.выводНаИП && д.неЗаём);
 
   const выдано = движения.filter((д) => д.выдали)
     .reduce((s, д) => s + д.сумма, 0);
@@ -108,6 +121,7 @@ export async function заимствования(): Promise<Заимствова
   return {
     движения,
     неЗаймы,
+    выводы,
     выдано,
     возвращено,
     остаток: выдано - возвращено,
@@ -135,6 +149,7 @@ export async function залитьДвижения(движения: {
   комментарий: string | null;
   неЗаём: boolean;
   почему: string | null;
+  выводНаИП: boolean;
 }[]): Promise<number> {
   if (движения.length === 0) return 0;
   const sql = db();
@@ -145,15 +160,17 @@ export async function залитьДвижения(движения: {
     for (const д of движения) {
       await sql`
         insert into interbranch_moves
-          (day, doc_no, amount, direction, comment, settled, settled_why, updated_at)
+          (day, doc_no, amount, direction, comment, settled, settled_why, updated_at, kind)
         values
           (${д.день}::date, ${д.документ}, ${д.сумма}, ${д.направление},
-           ${д.комментарий}, ${д.неЗаём}, ${д.почему}, now())
+           ${д.комментарий}, ${д.неЗаём}, ${д.почему}, now(),
+           ${д.выводНаИП ? "owner" : "interbranch"})
         on conflict (day, doc_no, amount) do update set
           direction   = excluded.direction,
           comment     = excluded.comment,
           settled     = excluded.settled,
           settled_why = excluded.settled_why,
+          kind        = excluded.kind,
           updated_at  = now()
       `;
     }
